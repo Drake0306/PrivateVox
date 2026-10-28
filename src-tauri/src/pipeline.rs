@@ -799,6 +799,8 @@ impl Coordinator {
             duration_ms,
             raw_text: text.clone(),
             polished_text: None,
+            polished_by: None,
+            polish_status: "none".into(),
             status: status.into(),
             timing_json: Some(timing.to_string()),
         };

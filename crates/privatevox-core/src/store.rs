@@ -14,6 +14,10 @@ pub struct NewDictation {
     pub duration_ms: u32,
     pub raw_text: String,
     pub polished_text: Option<String>,
+    /// Endpoint id that produced `polished_text`, when an LLM did.
+    pub polished_by: Option<String>,
+    /// `none` (no LLM step), `ok`, or `unpolished` (every endpoint failed; raw text was pasted).
+    pub polish_status: String,
     pub status: String,
     pub timing_json: Option<String>,
 }
@@ -29,6 +33,8 @@ pub struct Dictation {
     pub duration_ms: u32,
     pub raw_text: String,
     pub polished_text: Option<String>,
+    pub polished_by: Option<String>,
+    pub polish_status: String,
     pub status: String,
     pub timing_json: Option<String>,
     pub pinned: bool,
@@ -56,7 +62,8 @@ CREATE TABLE IF NOT EXISTS dictations (
   audio_path TEXT,
   timing_json TEXT,
   pinned INTEGER NOT NULL DEFAULT 0,
-  deleted_at_ms INTEGER
+  deleted_at_ms INTEGER,
+  polish_status TEXT NOT NULL DEFAULT 'none'
 );
 CREATE INDEX IF NOT EXISTS dictations_created ON dictations(created_at_ms DESC);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL);
@@ -77,11 +84,29 @@ pub struct ModelStats {
     pub mem_bytes: Option<u64>,
 }
 
+/// Forward migrations, each idempotent so a crash between a step and the version write is harmless.
+fn migrate(conn: &Connection, from: i64) -> Result<()> {
+    if from < 2 {
+        let has_column: bool = conn
+            .prepare("PRAGMA table_info(dictations)")?
+            .query_map([], |r| r.get::<_, String>(1))?
+            .filter_map(|r| r.ok())
+            .any(|c| c == "polish_status");
+        if !has_column {
+            conn.execute("ALTER TABLE dictations ADD COLUMN polish_status TEXT NOT NULL DEFAULT 'none'", [])?;
+        }
+    }
+    conn.execute("UPDATE schema_version SET version = ?1", params![SCHEMA_VERSION])?;
+    Ok(())
+}
+
 fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
-const COLUMNS: &str = "id, created_at_ms, app_name, mode, model, language, duration_ms, raw_text, polished_text, status, timing_json, pinned";
+const COLUMNS: &str = "id, created_at_ms, app_name, mode, model, language, duration_ms, raw_text, polished_text, status, timing_json, pinned, polished_by, polish_status";
+/// Current schema version; `open` migrates older files forward.
+pub const SCHEMA_VERSION: i64 = 2;
 
 fn map_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Dictation> {
     Ok(Dictation {
@@ -97,6 +122,8 @@ fn map_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Dictation> {
         status: r.get(9)?,
         timing_json: r.get(10)?,
         pinned: r.get::<_, i64>(11)? != 0,
+        polished_by: r.get(12)?,
+        polish_status: r.get(13)?,
     })
 }
 
@@ -111,10 +138,18 @@ impl Store {
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.execute_batch(SCHEMA)?;
         let version: Option<i64> = conn.query_row("SELECT version FROM schema_version LIMIT 1", [], |r| r.get(0)).optional()?;
-        if version.is_none() {
-            conn.execute("INSERT INTO schema_version(version) VALUES (1)", [])?;
+        match version {
+            None => {
+                conn.execute("INSERT INTO schema_version(version) VALUES (?1)", params![SCHEMA_VERSION])?;
+            }
+            Some(v) if v < SCHEMA_VERSION => migrate(&conn, v)?,
+            Some(_) => {}
         }
         Ok(Store { conn })
+    }
+
+    pub fn schema_version(&self) -> Result<i64> {
+        Ok(self.conn.query_row("SELECT version FROM schema_version LIMIT 1", [], |r| r.get(0))?)
     }
 
     pub fn journal_mode(&self) -> Result<String> {
@@ -125,9 +160,9 @@ impl Store {
     pub fn insert(&mut self, d: &NewDictation) -> Result<i64> {
         let tx = self.conn.transaction()?;
         tx.execute(
-            "INSERT INTO dictations(created_at_ms, app_name, mode, model, language, duration_ms, raw_text, polished_text, status, timing_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            params![now_ms(), d.app_name, d.mode, d.model, d.language, d.duration_ms as i64, d.raw_text, d.polished_text, d.status, d.timing_json],
+            "INSERT INTO dictations(created_at_ms, app_name, mode, model, language, duration_ms, raw_text, polished_text, status, timing_json, polished_by, polish_status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![now_ms(), d.app_name, d.mode, d.model, d.language, d.duration_ms as i64, d.raw_text, d.polished_text, d.status, d.timing_json, d.polished_by, d.polish_status],
         )?;
         let id = tx.last_insert_rowid();
         tx.commit()?;
@@ -149,6 +184,20 @@ impl Store {
         let mut st = self.conn.prepare_cached(&sql)?;
         let rows = st.query_map(params![like, limit as i64], map_row)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn get(&self, id: i64) -> Result<Option<Dictation>> {
+        let sql = format!("SELECT {COLUMNS} FROM dictations WHERE id = ?1 AND deleted_at_ms IS NULL");
+        Ok(self.conn.query_row(&sql, params![id], map_row).optional()?)
+    }
+
+    /// Re-polish result: new mode, text, producing endpoint and status; `raw_text` is untouched.
+    pub fn update_polish(&mut self, id: i64, mode: &str, polished_text: Option<&str>, polished_by: Option<&str>, polish_status: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE dictations SET mode = ?1, polished_text = ?2, polished_by = ?3, polish_status = ?4 WHERE id = ?5",
+            params![mode, polished_text, polished_by, polish_status, id],
+        )?;
+        Ok(())
     }
 
     pub fn update_text(&mut self, id: i64, polished_text: &str) -> Result<()> {
@@ -223,6 +272,8 @@ mod tests {
             duration_ms: 1200,
             raw_text: text.into(),
             polished_text: None,
+            polished_by: None,
+            polish_status: "none".into(),
             status: "ok".into(),
             timing_json: Some(r#"{"decode_ms":1030}"#.into()),
         }
@@ -323,5 +374,71 @@ mod tests {
         }
         let s = Store::open(&p).unwrap();
         assert_eq!(s.count().unwrap(), 1);
+    }
+
+    /// The schema as shipped in 0.2.0 (version 1): no `polish_status` column.
+    const V1_SCHEMA: &str = "
+CREATE TABLE schema_version (version INTEGER NOT NULL);
+INSERT INTO schema_version(version) VALUES (1);
+CREATE TABLE dictations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, created_at_ms INTEGER NOT NULL, app_name TEXT, mode TEXT NOT NULL, model TEXT NOT NULL,
+  engine_kind TEXT NOT NULL DEFAULT 'local', language TEXT, duration_ms INTEGER NOT NULL, raw_text TEXT NOT NULL, polished_text TEXT,
+  polished_by TEXT, status TEXT NOT NULL, audio_path TEXT, timing_json TEXT, pinned INTEGER NOT NULL DEFAULT 0, deleted_at_ms INTEGER);
+CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL);
+CREATE TABLE models (id TEXT PRIMARY KEY, load_ms INTEGER, speed_x REAL, mem_bytes INTEGER);
+INSERT INTO dictations(created_at_ms, mode, model, duration_ms, raw_text, status) VALUES (1, 'raw', 'large-v3-turbo', 500, 'old row', 'ok');
+";
+
+    #[test]
+    fn migrates_v1_database_to_v2() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("privatevox.sqlite");
+        {
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch(V1_SCHEMA).unwrap();
+        }
+        let s = Store::open(&path).unwrap();
+        assert_eq!(s.schema_version().unwrap(), 2);
+        let rows = s.list(10, 0).unwrap();
+        assert_eq!(rows[0].raw_text, "old row");
+        assert_eq!(rows[0].polish_status, "none");
+        assert_eq!(rows[0].polished_by, None);
+        // Opening again is idempotent.
+        drop(s);
+        let s = Store::open(&path).unwrap();
+        assert_eq!(s.schema_version().unwrap(), 2);
+    }
+
+    #[test]
+    fn fresh_database_is_version_2() {
+        let (_d, s) = fresh();
+        assert_eq!(s.schema_version().unwrap(), 2);
+    }
+
+    #[test]
+    fn insert_stores_polish_fields() {
+        let (_d, mut s) = fresh();
+        let mut r = row("raw");
+        r.polished_text = Some("Raw.".into());
+        r.polished_by = Some("ep-1".into());
+        r.polish_status = "ok".into();
+        let id = s.insert(&r).unwrap();
+        let d = s.get(id).unwrap().unwrap();
+        assert_eq!(d.polished_by.as_deref(), Some("ep-1"));
+        assert_eq!(d.polish_status, "ok");
+        assert!(s.get(9999).unwrap().is_none());
+    }
+
+    #[test]
+    fn update_polish_changes_mode_text_and_status() {
+        let (_d, mut s) = fresh();
+        let id = s.insert(&row("raw")).unwrap();
+        s.update_polish(id, "email", Some("Dear all,"), Some("ep-1"), "ok").unwrap();
+        let d = s.get(id).unwrap().unwrap();
+        assert_eq!(d.mode, "email");
+        assert_eq!(d.polished_text.as_deref(), Some("Dear all,"));
+        assert_eq!(d.polished_by.as_deref(), Some("ep-1"));
+        assert_eq!(d.polish_status, "ok");
+        assert_eq!(d.raw_text, "raw");
     }
 }

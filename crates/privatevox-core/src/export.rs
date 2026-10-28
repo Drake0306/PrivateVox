@@ -32,11 +32,13 @@ pub fn to_markdown(rows: &[Dictation]) -> String {
         let text = r.polished_text.as_deref().unwrap_or(&r.raw_text);
         out.push_str(&format!("## {} · {}\n", stamp(r.created_at_ms), r.app_name.as_deref().unwrap_or("unknown app")));
         out.push_str(&format!(
-            "_{} · {} · {:.1} s · {}{}_\n\n",
+            "_{} · {} · {} · {:.1} s · {}{}{}_\n\n",
+            r.mode,
             r.model,
             r.language.as_deref().unwrap_or("auto"),
             r.duration_ms as f32 / 1000.0,
             r.status,
+            if r.polish_status == "unpolished" { " · unpolished" } else { "" },
             if r.pinned { " · pinned" } else { "" }
         ));
         out.push_str(text);
@@ -73,6 +75,8 @@ mod tests {
             duration_ms: 1500,
             raw_text: text.into(),
             polished_text: None,
+            polished_by: None,
+            polish_status: "none".into(),
             status: "ok".into(),
             timing_json: None,
             pinned: id == 2,
