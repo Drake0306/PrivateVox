@@ -190,6 +190,20 @@ pub fn history_stats(state: State<'_, AppState>) -> Result<HistoryStats, String>
     Ok(HistoryStats { count: rows.len() as u32, words })
 }
 
+/// One row as a Markdown document in ~/Downloads (the long-form view's Export). Returns the path.
+#[tauri::command]
+pub fn export_row(state: State<'_, AppState>, id: i64) -> Result<String, String> {
+    let row = state.store.lock().map_err(|e| e.to_string())?.get(id).map_err(|e| e.to_string())?.ok_or("Row not found")?;
+    let text = row.polished_text.clone().unwrap_or_else(|| row.raw_text.clone());
+    let body = format!("# Dictation {}\n\n{}\n", row.id, privatevox_core::export::paragraphs(&text, 80).join("\n\n"));
+    let dir = dirs_download().ok_or("no Downloads folder")?;
+    let path = dir.join(format!("privatevox-dictation-{}.md", row.id));
+    std::fs::write(&path, body).map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg("-R").arg(&path).spawn();
+    Ok(path.to_string_lossy().to_string())
+}
+
 /// Whisper's language table for the Settings picker.
 #[tauri::command]
 pub fn whisper_languages() -> Vec<(String, String)> {

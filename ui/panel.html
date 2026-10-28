@@ -27,6 +27,10 @@
         <div class="tiles" id="memVerdict"></div>
       </div>
       <div id="rows"></div>
+      <div id="doc" hidden>
+        <div class="dochead"><button class="btn" id="docBack">← Back</button><span class="muted" id="docMeta"></span><span style="flex:1"></span><button class="btn" id="docCopy">Copy all</button><button class="btn" id="docExport">Export .md</button></div>
+        <div class="docbody" id="docBody"></div>
+      </div>
     </section>
 
     <section class="tab" id="tab-models" hidden><div class="pad" id="modelCards"></div></section>
@@ -196,11 +200,13 @@
       el.classList.toggle('pinned', !!d.pinned);
       el.innerHTML = `<div class="meta">${d.pinned ? '<span class="pinbadge" title="Pinned: stays at the top">📌 pinned</span>' : ''}${kindChip(d.engine_kind)}<span>${esc(ago(d.created_at_ms))}</span><span>${esc(d.app_name || 'unknown app')}</span><span>${esc(modeLabel(d.mode))}</span><span>${esc(short(d.model))}</span><span>${dur(d.duration_ms)}</span>${d.status !== 'ok' ? `<span>${esc(d.status.replace('_', ' '))}</span>` : ''}${d.polish_status === 'unpolished' ? '<span class="unp" title="No LLM answered; this is Whisper\'s text">unpolished</span>' : ''}</div>
         <div class="txt" tabindex="0">${esc(text)}</div>
-        <div class="acts"><button class="btn" data-copy>Copy</button><button class="btn" data-edit>Edit</button><button class="btn" data-raw ${hasRaw ? '' : 'disabled title="Same as Whisper\'s text"'}>Raw</button><span class="repol"><select data-mode aria-label="Mode for re-polish" title="Mode to re-polish this row with">${rowModes.map(m => `<option value="${m.id}" ${m.id === d.mode ? 'selected' : ''}>${esc(m.label)}</option>`).join('')}</select><button class="btn" data-repolish title="Run this row through the LLM again with the chosen mode">Re-polish</button></span>${d.audio_path ? '<button class="btn" data-play title="Play the kept clip">▶ Play</button><span class="repol"><select data-rerun-model aria-label="Model for re-run">' + models.filter(m => m.downloaded).map(m => `<option value="${m.id}" ${m.id === d.model ? 'selected' : ''}>${esc(short(m.id))}</option>`).join('') + '</select><button class="btn" data-rerun title="Decode the kept clip again with this model">Re-run</button></span>' : ''}<button class="btn ${d.pinned ? 'active' : ''}" data-pin title="${d.pinned ? 'Unpin: back to its place in time' : 'Pin: keep at the top'}">${d.pinned ? 'Pinned' : 'Pin'}</button><button class="btn" data-del>Delete</button></div>`;
+        <div class="acts"><button class="btn" data-copy>Copy</button><button class="btn" data-edit>Edit</button><button class="btn" data-raw ${hasRaw ? '' : 'disabled title="Same as Whisper\'s text"'}>Raw</button><span class="repol"><select data-mode aria-label="Mode for re-polish" title="Mode to re-polish this row with">${rowModes.map(m => `<option value="${m.id}" ${m.id === d.mode ? 'selected' : ''}>${esc(m.label)}</option>`).join('')}</select><button class="btn" data-repolish title="Run this row through the LLM again with the chosen mode">Re-polish</button></span>${(text.length > 600 || d.duration_ms > 60000) ? '<button class="btn" data-doc title="Read the whole dictation as a document">Open as document</button>' : ''}${d.audio_path ? '<button class="btn" data-play title="Play the kept clip">▶ Play</button><span class="repol"><select data-rerun-model aria-label="Model for re-run">' + models.filter(m => m.downloaded).map(m => `<option value="${m.id}" ${m.id === d.model ? 'selected' : ''}>${esc(short(m.id))}</option>`).join('') + '</select><button class="btn" data-rerun title="Decode the kept clip again with this model">Re-run</button></span>' : ''}<button class="btn ${d.pinned ? 'active' : ''}" data-pin title="${d.pinned ? 'Unpin: back to its place in time' : 'Pin: keep at the top'}">${d.pinned ? 'Pinned' : 'Pin'}</button><button class="btn" data-del>Delete</button></div>`;
       const txt = el.querySelector('.txt');
       el.querySelector('[data-copy]').onclick = async () => { try { await navigator.clipboard.writeText(txt.innerText); flash('Copied'); } catch { flash('Copy blocked'); } };
       el.querySelector('[data-del]').onclick = async () => { await inv('delete_history', { id: d.id }); loadHistory(); };
       el.querySelector('[data-pin]').onclick = async () => { await inv('pin_history', { id: d.id, pinned: !d.pinned }); flash(d.pinned ? 'Unpinned' : 'Pinned to the top'); loadHistory(); };
+      const docBtn = el.querySelector('[data-doc]');
+      if (docBtn) docBtn.onclick = () => openDoc(d, text);
       const playBtn = el.querySelector('[data-play]');
       if (playBtn) playBtn.onclick = async () => {
         try {
@@ -239,6 +245,26 @@
     }
   }
   $('q').addEventListener('input', loadHistory);
+
+  // ---------- long-form document view ----------
+  function paragraphs(text, per) {
+    const words = text.split(/\s+/).filter(Boolean); const out = []; let start = 0;
+    while (start < words.length) {
+      const limit = Math.min(start + per, words.length); let cut = limit;
+      if (limit < words.length) { for (let i = limit; i > start + per / 2; i--) { if (/[.!?]$/.test(words[i - 1])) { cut = i; break; } } }
+      out.push(words.slice(start, cut).join(' ')); start = cut;
+    }
+    return out;
+  }
+  function openDoc(d, text) {
+    $('rows').hidden = true; $('gpu').hidden = true; $('doc').hidden = false;
+    const words = text.split(/\s+/).filter(Boolean).length;
+    $('docMeta').textContent = `${ago(d.created_at_ms)} · ${esc(d.app_name || 'unknown app')} · ${modeLabel(d.mode)} · ${dur(d.duration_ms)} · ${words} words`;
+    $('docBody').innerHTML = paragraphs(text, 80).map(p => `<p>${esc(p)}</p>`).join('');
+    $('docCopy').onclick = async () => { try { await navigator.clipboard.writeText(text); flash('Copied'); } catch { flash('Copy blocked'); } };
+    $('docExport').onclick = async () => { try { flash('Saved ' + await inv('export_row', { id: d.id })); } catch (e) { flash(String(e)); } };
+  }
+  $('docBack').onclick = () => { $('doc').hidden = true; $('rows').hidden = false; $('gpu').hidden = false; };
 
   // ---------- memory strip + models ----------
   let memTimer = null;

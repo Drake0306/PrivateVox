@@ -52,6 +52,28 @@ pub fn to_json(rows: &[Dictation]) -> String {
 }
 
 /// `privatevox-history-YYYYMMDD-HHMM.<ext>` for the given UTC time.
+/// Split a long transcript into paragraphs of about `words_per` words, cutting at the last sentence end before the
+/// limit (hard wrap when a run of text has no sentence end at all).
+pub fn paragraphs(text: &str, words_per: usize) -> Vec<String> {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let mut out = Vec::new();
+    let mut start = 0;
+    while start < words.len() {
+        let end_limit = (start + words_per).min(words.len());
+        let mut cut = end_limit;
+        if end_limit < words.len() {
+            // Prefer the last sentence end within the window, but not so early that paragraphs become tiny.
+            let min_cut = start + words_per / 2;
+            if let Some(i) = (min_cut..=end_limit).rev().find(|&i| words[i - 1].ends_with(['.', '!', '?'])) {
+                cut = i;
+            }
+        }
+        out.push(words[start..cut].join(" "));
+        start = cut;
+    }
+    out
+}
+
 pub fn export_filename(ext: &str, now_ms: i64) -> String {
     let secs = now_ms / 1000;
     let (y, m, d) = civil_from_days(secs.div_euclid(86_400));
@@ -111,5 +133,21 @@ mod tests {
         let n = export_filename("md", 1_761_600_000_000);
         assert!(n.starts_with("privatevox-history-2025"), "{n}");
         assert!(n.ends_with(".md"));
+    }
+
+    #[test]
+    fn paragraphs_split_every_80_words() {
+        let sentence = "This is a sentence of exactly eight words.";
+        let text = std::iter::repeat(sentence).take(30).collect::<Vec<_>>().join(" ");
+        let paras = paragraphs(&text, 80);
+        assert_eq!(paras.len(), 3, "{paras:?}");
+        for p in &paras {
+            let words = p.split_whitespace().count();
+            assert!(words == 80, "paragraphs end at a sentence boundary near 80 words: {words}");
+            assert!(p.ends_with('.'));
+        }
+        assert_eq!(paragraphs("short text.", 80), vec!["short text.".to_string()]);
+        assert_eq!(paragraphs("no punctuation at all but many words ".repeat(30).trim(), 80).len(), 3, "without sentence ends, hard-wrap at the limit");
+        assert!(paragraphs("", 80).is_empty());
     }
 }

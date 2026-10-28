@@ -83,6 +83,7 @@ pub fn run() {
             commands::search_history,
             commands::delete_history,
             commands::read_audio,
+            commands::export_row,
             commands::rerun_history,
             commands::history_count,
             commands::history_stats,

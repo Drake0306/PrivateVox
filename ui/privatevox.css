@@ -130,3 +130,8 @@ form.settings input, form.settings select { font: 15px var(--body); padding: 8px
 .chip { display: inline-block; font: 600 11px var(--mono); letter-spacing: .04em; padding: 2px 7px; border-radius: 4px; background: var(--surface-2); color: var(--muted); }
 .chip.remote { background: var(--accent-soft); color: var(--accent-fg); }
 .chip.host { background: var(--warn-soft); color: var(--warn); }
+
+/* long-form document view */
+.dochead { display: flex; gap: 10px; align-items: center; padding: 14px 22px; border-bottom: 1px solid var(--line); background: var(--surface-2); position: sticky; top: 0; }
+.docbody { padding: 22px; max-width: 72ch; font-size: 18px; line-height: 1.6; }
+.docbody p { margin: 0 0 1em; }
