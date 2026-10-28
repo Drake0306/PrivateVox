@@ -110,7 +110,36 @@ pub fn budget(input: &MemoryInput) -> MemoryReport {
 pub fn system_memory() -> (u64, u64) {
     let mut sys = sysinfo::System::new();
     sys.refresh_memory();
-    (sys.total_memory(), sys.used_memory())
+    let total = sys.total_memory();
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(used) = macos_memory_used() {
+            return (total, used);
+        }
+    }
+    (total, sys.used_memory())
+}
+
+/// Activity Monitor's "Memory Used": app memory (anonymous pages minus purgeable) + wired + compressed.
+/// sysinfo's `used_memory` also counts active file-cache pages, which churn with every build or download and
+/// hide what the models actually take.
+#[cfg(target_os = "macos")]
+#[allow(deprecated)] // libc::mach_host_self is marked deprecated in favour of the mach2 crate; one call is not worth a dependency.
+fn macos_memory_used() -> Option<u64> {
+    use std::mem::MaybeUninit;
+    let mut stats = MaybeUninit::<libc::vm_statistics64>::uninit();
+    let mut count = (std::mem::size_of::<libc::vm_statistics64>() / std::mem::size_of::<libc::integer_t>()) as libc::mach_msg_type_number_t;
+    // SAFETY: host_statistics64 fills `stats` with exactly `count` integers for HOST_VM_INFO64; we check the return code.
+    let (stats, page_size) = unsafe {
+        let kr = libc::host_statistics64(libc::mach_host_self(), libc::HOST_VM_INFO64, stats.as_mut_ptr() as *mut libc::integer_t, &mut count);
+        if kr != libc::KERN_SUCCESS {
+            return None;
+        }
+        (stats.assume_init(), libc::sysconf(libc::_SC_PAGESIZE) as u64)
+    };
+    let app = (stats.internal_page_count as u64).saturating_sub(stats.purgeable_count as u64);
+    let used = (app + stats.wire_count as u64 + stats.compressor_page_count as u64) * page_size;
+    Some(used)
 }
 
 #[cfg(test)]
@@ -184,5 +213,24 @@ mod tests {
         let (total, used) = system_memory();
         assert!(total > 1 * GB);
         assert!(used > 0 && used <= total);
+    }
+
+    #[test]
+    fn used_memory_is_plausible() {
+        let (total, used) = system_memory();
+        assert!(total > 1_000_000_000);
+        assert!(used > 100_000_000 && used < total, "used={used} total={total}");
+        let (_, again) = system_memory();
+        assert!(again > 0, "every call samples afresh");
+    }
+
+    /// `cargo test -p privatevox-core prints_live_system_memory -- --ignored --nocapture`: eyeball the sampled numbers.
+    #[test]
+    #[ignore]
+    fn prints_live_system_memory() {
+        let (total, used) = system_memory();
+        let mut sys = sysinfo::System::new();
+        sys.refresh_memory();
+        println!("SYSMEM total={} used={} free={} available={}", total, used, sys.free_memory(), sys.available_memory());
     }
 }

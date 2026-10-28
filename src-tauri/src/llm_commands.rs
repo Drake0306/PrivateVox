@@ -274,10 +274,15 @@ pub fn set_llm_endpoint_preferred(state: State<'_, AppState>, id: String) -> Res
     }
 }
 
+/// Shared by the panel command and the debug script hook.
+pub fn set_polish_enabled_inner(state: &AppState, enabled: bool) -> Result<(), String> {
+    edit_settings(state, |s| s.polish_enabled = enabled)?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn set_polish_enabled(state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
-    edit_settings(&state, |s| s.polish_enabled = enabled)?;
-    Ok(())
+    set_polish_enabled_inner(&state, enabled)
 }
 
 #[tauri::command]

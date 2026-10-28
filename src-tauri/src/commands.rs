@@ -309,9 +309,10 @@ pub fn build_memory_input(store: &privatevox_core::store::Store, selected: &str,
             }
         }
     }
+    // `llm_bytes` is the local LLM already resident, so it is ours too; without this it would count twice.
     privatevox_core::memory::MemoryInput {
         total: system.0,
-        used_by_others: system.1.saturating_sub(ours_resident),
+        used_by_others: system.1.saturating_sub(ours_resident).saturating_sub(llm_bytes),
         footprints,
         llm_bytes,
         selected: selected.to_string(),
@@ -453,6 +454,18 @@ mod memory_tests {
         // With turbo resident (703 MB counted in `used`), others must exclude it.
         let input2 = build_memory_input(&store, "large-v3-turbo", 703_000_000, (16_000_000_000, 4_000_000_000), 0);
         assert_eq!(input2.used_by_others, 4_000_000_000 - 703_000_000);
+    }
+
+    #[test]
+    fn resident_llm_is_not_counted_twice() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("privatevox.sqlite")).unwrap();
+        // 2 GB of the 6 GB in use is the local LLM; it must move from "other apps" into the LLM segment, not be added on top.
+        let input = build_memory_input(&store, "large-v3-turbo", 700_000_000, (8_000_000_000, 6_000_000_000), 2_000_000_000);
+        assert_eq!(input.used_by_others, 6_000_000_000 - 700_000_000 - 2_000_000_000);
+        assert_eq!(input.llm_bytes, 2_000_000_000);
+        let report = privatevox_core::memory::budget(&input);
+        assert!(report.projected <= 6_000_000_000 + 100_000_000, "projected must not exceed what is actually in use plus the unloaded Whisper estimate: {}", report.projected);
     }
 }
 

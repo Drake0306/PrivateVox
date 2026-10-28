@@ -302,6 +302,7 @@ pub fn run() {
 
             if let Ok(script) = std::env::var("PRIVATEVOX_DEBUG_SCRIPT") {
                 let tx = tx.clone();
+                let dbg_app = app.handle().clone();
                 std::thread::spawn(move || {
                     let t0 = std::time::Instant::now();
                     for step in script.split(',') {
@@ -314,6 +315,13 @@ pub fn run() {
                             "start" => Cmd::Start,
                             "stop" => Cmd::Stop,
                             "cancel" => Cmd::Cancel,
+                            "polish_off" | "polish_on" => {
+                                let state = dbg_app.state::<AppState>();
+                                if let Err(e) = llm_commands::set_polish_enabled_inner(&state, what == "polish_on") {
+                                    log::warn!("debug {what}: {e}");
+                                }
+                                continue;
+                            }
                             _ => continue,
                         };
                         let _ = tx.send(cmd);

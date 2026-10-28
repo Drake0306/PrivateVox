@@ -30,6 +30,7 @@ tiny_http = "0.12"
 # GPU backend per platform: Metal on Apple Silicon, Vulkan on Windows and Linux (any recent AMD/NVIDIA/Intel GPU).
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.16.0", features = ["metal"] }
+libc = "0.2"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 whisper-rs = { version = "0.16.0", features = ["vulkan"] }

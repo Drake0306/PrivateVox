@@ -209,18 +209,58 @@ impl Polisher {
             // Only runtimes on this machine: the Mac's idle timer must not evict a model other tools on the PC may be using.
             reg.endpoints().iter().filter(|e| super::is_local(&e.base_url)).filter_map(|e| reg.health(&e.id).filter(|h| !h.loaded_models.is_empty()).map(|h| (e.clone(), h.loaded_models.clone()))).collect()
         };
+        if targets.is_empty() {
+            log::info!("unload_all: no resident local models known");
+        }
         for (ep, models) in targets {
             for m in models {
-                if let Err(e) = self.client.unload(&ep, &m) {
-                    log::warn!("llm unload of {m} on {} failed: {e}", ep.label);
+                match self.client.unload(&ep, &m) {
+                    Ok(()) => log::info!("unloaded {m} on {}", ep.label),
+                    Err(e) => log::warn!("llm unload of {m} on {} failed: {e}", ep.label),
                 }
             }
             self.registry.lock().unwrap().clear_loaded(&ep.id);
         }
     }
 
-    /// Bytes the selected endpoint's loaded model takes on this machine; 0 when it is remote or nothing is selected (§9).
+    /// Unload every resident model on this machine except the one the next polish would use. Called after the
+    /// user switches endpoint or model, so the old model does not sit in memory pinned by our keep-alive.
+    pub fn unload_unused(&self, now: Instant) {
+        let keep: Option<(String, String)> = self.selected(now).and_then(|ep| self.active_model(&ep).map(|m| (ep.id.clone(), m)));
+        let targets: Vec<(Endpoint, Vec<String>)> = {
+            let reg = self.registry.lock().unwrap();
+            reg.endpoints()
+                .iter()
+                .filter(|e| super::is_local(&e.base_url))
+                .filter_map(|e| {
+                    let h = reg.health(&e.id)?;
+                    let models: Vec<String> = h.loaded_models.iter().filter(|m| keep.as_ref() != Some(&(e.id.clone(), (*m).clone()))).cloned().collect();
+                    (!models.is_empty()).then(|| (e.clone(), models))
+                })
+                .collect()
+        };
+        for (ep, models) in targets {
+            for m in models {
+                match self.client.unload(&ep, &m) {
+                    Ok(()) => log::info!("unloaded {m} on {} (no longer in use)", ep.label),
+                    Err(e) => log::warn!("llm unload of {m} on {} failed: {e}", ep.label),
+                }
+            }
+            self.registry.lock().unwrap().clear_loaded(&ep.id);
+        }
+    }
+
+    /// Make every endpoint due for a probe on the next `check_due`, so loaded-model figures refresh right away.
+    pub fn recheck_soon(&self) {
+        self.registry.lock().unwrap().clear_next_checks();
+    }
+
+    /// Bytes the selected endpoint's loaded model takes on this machine; 0 when it is remote, nothing is selected,
+    /// or polish is off (§9).
     pub fn resident_local_bytes(&self, now: Instant) -> u64 {
+        if !self.enabled() {
+            return 0;
+        }
         let reg = self.registry.lock().unwrap();
         reg.active_local(now).and_then(|e| reg.health(&e.id).map(|h| h.loaded_bytes)).unwrap_or(0)
     }
@@ -556,5 +596,49 @@ mod tests {
         p.check_due(t);
         let h = p.health_of("local-ollama").unwrap();
         assert!(h.last_ok.unwrap() >= t + Duration::from_millis(250), "last_ok must reflect when the probe answered");
+    }
+
+    #[test]
+    fn unload_unused_keeps_the_active_model_only() {
+        let spy = Arc::new(SpyClient::new(Duration::ZERO));
+        let eps = local_candidates();
+        let p = Polisher::new(spy.clone(), eps, Duration::from_secs(1));
+        let now = Instant::now();
+        p.check_due(now); // spy reports model "m" loaded on every endpoint
+        p.unload_unused(now);
+        let unloaded = spy.unloads.lock().unwrap().clone();
+        assert!(!unloaded.contains(&"http://127.0.0.1:11434".to_string()), "the selected endpoint's active model stays: {unloaded:?}");
+        assert!(unloaded.contains(&"http://127.0.0.1:1234".to_string()));
+        assert!(unloaded.contains(&"http://127.0.0.1:8080".to_string()));
+        // Switch the preferred model: the old one is now unused.
+        let mut eps = local_candidates();
+        eps[0].model = Some("other".into());
+        p.set_endpoints(eps);
+        p.unload_unused(now);
+        assert!(spy.unloads.lock().unwrap().contains(&"http://127.0.0.1:11434".to_string()));
+    }
+
+    #[test]
+    fn resident_bytes_are_zero_while_polish_is_off() {
+        let s = FakeLlm::start(Behaviour::Ollama { reply: "x".into(), loaded_bytes: 3_000_000_000 });
+        let p = polisher(vec![s.endpoint(Flavor::Ollama)], 1000);
+        let now = Instant::now();
+        p.check_due(now);
+        assert_eq!(p.resident_local_bytes(now), 3_000_000_000);
+        p.set_enabled(false);
+        assert_eq!(p.resident_local_bytes(now), 0);
+    }
+
+    #[test]
+    fn recheck_soon_makes_every_endpoint_due() {
+        let s = FakeLlm::start(Behaviour::OpenAi { reply: "x".into() });
+        let p = polisher(vec![s.endpoint(Flavor::OpenAi)], 1000);
+        let now = Instant::now();
+        p.check_due(now);
+        assert!(!p.check_due(now), "just checked, nothing due");
+        p.recheck_soon();
+        let before = s.hits.lock().unwrap().len();
+        p.check_due(now);
+        assert!(s.hits.lock().unwrap().len() > before, "probed again right away");
     }
 }

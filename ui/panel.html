@@ -170,7 +170,7 @@
       <div class="tile"><span class="k">Recommended</span><span class="v">${mem.recommended ? esc(mem.recommended) : 'Nothing fits'}</span><span class="s">Fastest that fits with 20% spare</span></div>
       <div class="tile"><span class="k">Best accuracy that fits</span><span class="v">${mem.best ? esc(mem.best) : 'Nothing fits'}</span><span class="s">${mem.best === 'large-v3' ? 'Full large-v3, 100 languages' : mem.best ? 'large-v3 would exceed 80%' : 'Reduce what else is running'}</span></div>`;
     clearTimeout(memTimer);
-    if (!$('tab-history').hidden && !document.hidden) memTimer = setTimeout(loadMemory, 5000);
+    if (!$('tab-history').hidden && !document.hidden) memTimer = setTimeout(loadMemory, 3000);
     return { models, mem };
   }
   async function loadModels() {

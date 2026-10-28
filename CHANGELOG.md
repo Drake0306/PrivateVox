@@ -12,6 +12,8 @@ All notable changes to PrivateVox. Versions follow the plans in `docs/superpower
 - Polish LLM selector in the memory strip; a local model's resident size counts against the budget.
 - Filler words removed before saving and before the LLM (language-gated), with a toggle.
 - History database migrates to schema v2 (`polish_status`).
+- Turning polish off, or switching the endpoint or model, unloads the local models PrivateVox kept alive, so memory goes back to the system right away.
+- The memory strip on macOS now shows Activity Monitor's "Memory Used" (app memory + wired + compressed) instead of a figure that counted file cache, refreshes every 3 s, and no longer counts a resident local LLM twice.
 
 ## 0.2.0-alpha.1 — 2026-10-28
 

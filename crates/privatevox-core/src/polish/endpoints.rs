@@ -180,6 +180,13 @@ impl Registry {
         h.last_error = Some(error);
     }
 
+    /// Make every endpoint due for a probe on the next pass (after an unload, or a settings change).
+    pub fn clear_next_checks(&mut self) {
+        for h in self.health.values_mut() {
+            h.next_check = None;
+        }
+    }
+
     /// Forget resident models after an unload, without touching the health verdict.
     pub fn clear_loaded(&mut self, id: &str) {
         if let Some(h) = self.health.get_mut(id) {
