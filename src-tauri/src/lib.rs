@@ -283,7 +283,7 @@ pub fn run() {
                 }
             }
 
-            let tray = tray::build(app.handle())?;
+            let tray = tray::build(app.handle(), current.mode)?;
             let tray_for_idle = tray.clone();
             lifecycle::spawn_idle_watch(engine.clone(), idle.clone(), tx.clone(), Box::new(move |remaining| {
                 let text = match remaining {

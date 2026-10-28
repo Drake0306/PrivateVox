@@ -82,7 +82,7 @@ pub fn prefer_or_adopt(list: &mut Vec<Endpoint>, id: &str, candidates: &[Endpoin
     true
 }
 
-fn edit_settings(state: &State<'_, AppState>, f: impl FnOnce(&mut Settings)) -> Result<Settings, String> {
+fn edit_settings(state: &AppState, f: impl FnOnce(&mut Settings)) -> Result<Settings, String> {
     let mut s = state.settings.lock().map(|s| s.clone()).map_err(|e| e.to_string())?;
     f(&mut s);
     crate::commands::apply_settings(&state.settings, &state.paths.settings(), s.clone())?;
@@ -90,7 +90,7 @@ fn edit_settings(state: &State<'_, AppState>, f: impl FnOnce(&mut Settings)) -> 
     Ok(s)
 }
 
-fn view(state: &State<'_, AppState>, ep: &Endpoint, selected: Option<&str>, now: Instant) -> EndpointView {
+fn view(state: &AppState, ep: &Endpoint, selected: Option<&str>, now: Instant) -> EndpointView {
     let h = state.polisher.health_of(&ep.id);
     EndpointView {
         id: ep.id.clone(),
@@ -123,12 +123,18 @@ pub fn list_modes(state: State<'_, AppState>) -> Result<Vec<ModeInfo>, String> {
         .collect())
 }
 
+/// Shared by the panel command and the tray menu.
+pub fn set_mode_inner(state: &AppState, mode: Mode) -> Result<(), String> {
+    edit_settings(state, |s| s.mode = mode)?;
+    state.send(Cmd::SetMode(mode));
+    crate::tray::sync_mode(mode);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn set_mode(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let mode = Mode::parse(&id).ok_or_else(|| format!("Unknown mode {id:?}"))?;
-    edit_settings(&state, |s| s.mode = mode)?;
-    state.send(Cmd::SetMode(mode));
-    Ok(())
+    set_mode_inner(&state, mode)
 }
 
 /// `None` or an empty prompt resets the mode to its default prompt.

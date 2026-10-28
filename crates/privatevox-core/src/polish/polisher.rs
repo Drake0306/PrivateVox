@@ -5,8 +5,12 @@ use super::endpoints::{Endpoint, Health, Registry};
 use super::modes::{effective_prompt, Mode};
 use serde::Serialize;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// While a warm-up request is still loading a cold model, a polish may wait this long instead of the configured timeout.
+pub const COLD_START_GRACE: Duration = Duration::from_secs(25);
 
 /// Health checks use this timeout (§8.2: 1 s).
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -46,11 +50,13 @@ pub struct Polisher {
     registry: Mutex<Registry>,
     client: Arc<dyn LlmClient>,
     config: Mutex<Config>,
+    /// True while `warm` is waiting on the runtime (a cold model is loading).
+    warming: AtomicBool,
 }
 
 impl Polisher {
     pub fn new(client: Arc<dyn LlmClient>, endpoints: Vec<Endpoint>, timeout: Duration) -> Self {
-        Polisher { registry: Mutex::new(Registry::new(endpoints)), client, config: Mutex::new(Config { timeout, prompts: HashMap::new(), enabled: true }) }
+        Polisher { registry: Mutex::new(Registry::new(endpoints)), client, config: Mutex::new(Config { timeout, prompts: HashMap::new(), enabled: true }), warming: AtomicBool::new(false) }
     }
 
     pub fn set_endpoints(&self, endpoints: Vec<Endpoint>) {
@@ -91,22 +97,29 @@ impl Polisher {
         ep.model.clone().or_else(|| self.health_of(&ep.id).and_then(|h| h.models.first().cloned()))
     }
 
-    /// Probe every endpoint whose check is due; returns true when any endpoint changed healthy/unhealthy state.
+    /// Probe every endpoint whose check is due; returns true when any endpoint flipped between reachable and not.
+    /// "Reachable" here is the last verdict, not the time-limited `healthy`, so a routine re-check of a fine endpoint is not a change.
     pub fn check_due(&self, now: Instant) -> bool {
         let due = self.registry.lock().unwrap().due_for_check(now);
         let mut changed = false;
         for ep in due {
-            let before = self.health_of(&ep.id).map(|h| h.healthy(now));
+            let reachable = |h: Option<Health>| h.map(|h| h.failures == 0 && h.last_ok.is_some());
+            let before = reachable(self.health_of(&ep.id));
             let result = self.client.probe(&ep, PROBE_TIMEOUT);
             let mut reg = self.registry.lock().unwrap();
             match result {
                 Ok(p) => reg.mark_ok(&ep.id, now, p.models, p.loaded_models, p.loaded_bytes),
                 Err(e) => reg.mark_failure(&ep.id, now, e),
             }
-            let after = reg.health(&ep.id).map(|h| h.healthy(now));
+            let after = reachable(reg.health(&ep.id).cloned());
             changed |= before != after;
         }
         changed
+    }
+
+    /// True while a warm-up request is in flight.
+    pub fn warming(&self) -> bool {
+        self.warming.load(Ordering::SeqCst)
     }
 
     pub fn polish(&self, mode: Mode, raw: &str, now: Instant) -> PolishOutcome {
@@ -124,8 +137,10 @@ impl Polisher {
         let mut last_error: Option<String> = None;
         for ep in candidates.iter() {
             let Some(model) = self.active_model(ep) else { continue };
+            // A cold model still loading behind the warm-up gets more time than the steady-state budget.
+            let budget = if self.warming() { timeout.max(COLD_START_GRACE) } else { timeout };
             let t = Instant::now();
-            match self.client.chat(ep, &model, &system, raw, timeout) {
+            match self.client.chat(ep, &model, &system, raw, budget) {
                 Ok(text) if !text.trim().is_empty() => {
                     let ms = t.elapsed().as_millis() as u64;
                     let notice = preferred.as_ref().filter(|p| p.id != ep.id).map(|p| failover_notice(p, ep));
@@ -153,8 +168,13 @@ impl Polisher {
         }
         let Some(ep) = self.selected(now) else { return };
         let Some(model) = self.active_model(&ep) else { return };
-        if let Err(e) = self.client.warm(&ep, &model) {
-            log::warn!("llm warm-up on {} failed: {e}", ep.label);
+        self.warming.store(true, Ordering::SeqCst);
+        let t = Instant::now();
+        let r = self.client.warm(&ep, &model);
+        self.warming.store(false, Ordering::SeqCst);
+        match r {
+            Ok(()) => log::info!("llm warm-up on {} took {:?}", ep.label, t.elapsed()),
+            Err(e) => log::warn!("llm warm-up on {} failed: {e}", ep.label),
         }
     }
 
@@ -185,8 +205,8 @@ impl Polisher {
 mod tests {
     use super::*;
     use crate::polish::fake_server::{Behaviour, FakeLlm};
-    use crate::polish::{local_candidates, Endpoint, Flavor, HttpLlmClient, Mode};
-    use std::sync::Arc;
+    use crate::polish::{local_candidates, Endpoint, Flavor, HttpLlmClient, LlmClient, Mode};
+    use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
     fn polisher(eps: Vec<Endpoint>, timeout_ms: u64) -> Polisher {
@@ -370,5 +390,55 @@ mod tests {
         assert!(o.text == "ok" || matches!(o.status, PolishStatus::Unpolished { .. }));
         assert!(p.endpoints().is_empty());
         assert!(matches!(p.polish(Mode::Clean, "r", now).status, PolishStatus::Unpolished { .. }));
+    }
+
+    #[test]
+    fn check_due_reports_no_change_when_still_reachable() {
+        let s = FakeLlm::start(Behaviour::OpenAi { reply: "x".into() });
+        let p = polisher(vec![s.endpoint(Flavor::OpenAi)], 1000);
+        let t0 = Instant::now();
+        assert!(p.check_due(t0), "first probe is a change (unknown → reachable)");
+        assert!(!p.check_due(t0 + Duration::from_secs(10)), "routine re-check of a fine endpoint is not a change");
+        assert!(!p.check_due(t0 + Duration::from_secs(20)));
+    }
+
+    /// A spy client that records the timeout each chat was given and can simulate a slow warm-up.
+    struct SpyClient {
+        chat_timeouts: Mutex<Vec<Duration>>,
+        warm_delay: Duration,
+    }
+    impl LlmClient for SpyClient {
+        fn probe(&self, _ep: &Endpoint, _t: Duration) -> Result<crate::polish::Probe, String> {
+            Ok(crate::polish::Probe { models: vec!["m".into()], loaded_models: vec![], loaded_bytes: 0 })
+        }
+        fn chat(&self, _ep: &Endpoint, _m: &str, _s: &str, _u: &str, timeout: Duration) -> Result<String, String> {
+            self.chat_timeouts.lock().unwrap().push(timeout);
+            Ok("ok".into())
+        }
+        fn warm(&self, _ep: &Endpoint, _m: &str) -> Result<(), String> {
+            std::thread::sleep(self.warm_delay);
+            Ok(())
+        }
+        fn unload(&self, _ep: &Endpoint, _m: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn polish_waits_longer_while_warm_up_is_in_flight() {
+        let spy = Arc::new(SpyClient { chat_timeouts: Mutex::new(vec![]), warm_delay: Duration::from_millis(400) });
+        let p = Arc::new(Polisher::new(spy.clone(), local_candidates(), Duration::from_secs(8)));
+        let now = Instant::now();
+        p.check_due(now);
+        let p2 = p.clone();
+        let warm = std::thread::spawn(move || p2.warm(now));
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(p.warming());
+        p.polish(Mode::Clean, "a", now);
+        warm.join().unwrap();
+        assert!(!p.warming());
+        p.polish(Mode::Clean, "a", now);
+        let t = spy.chat_timeouts.lock().unwrap().clone();
+        assert_eq!(t, vec![COLD_START_GRACE, Duration::from_secs(8)]);
     }
 }

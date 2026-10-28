@@ -10,6 +10,7 @@
   <header class="hdr">
     <h1>History</h1>
     <input id="q" type="search" placeholder="Search dictations…" aria-label="Search dictations">
+    <select id="modePick" title="Polish mode for the next dictation" aria-label="Mode"></select>
     <select id="modelPick" title="Whisper model in use" aria-label="Whisper model"></select>
     <span class="stats" id="stats"></span>
   </header>
@@ -18,7 +19,7 @@
   <div class="scroll">
     <section class="tab" id="tab-history">
       <div class="gpu" id="gpu">
-        <div class="head"><h2>GPU memory</h2><span class="lab">Detected</span><span class="box" id="machine">…</span><span class="lab">Polish LLM</span><select class="box" id="llmPick" disabled title="Arrives with the polish update"><option>Off (coming next)</option></select></div>
+        <div class="head"><h2>GPU memory</h2><span class="lab">Detected</span><span class="box" id="machine">…</span><span class="lab">Polish LLM</span><select class="box" id="llmPick" title="Which LLM cleans up the text"><option value="off">Off</option></select></div>
         <div class="meter" id="meter" role="img" aria-label="Memory usage"><i class="o"></i><i class="w"></i><i class="l"></i></div>
         <div class="ticks"><span>0</span><span id="tickMid"></span><span id="tickMax"></span></div>
         <div class="leg" id="memLeg"></div>
@@ -46,6 +47,26 @@
           <div style="grid-column:1/-1;display:flex;gap:10px;align-items:center"><button class="btn primary" type="submit">Save</button><span id="settingsErr" class="err"></span><span id="settingsOk" class="muted"></span></div>
         </form>
         <p class="muted">Changes apply on Save without a restart. "Record key" captures the next combination you press.</p>
+        <div class="card" id="polishCard">
+          <h3>Polish</h3>
+          <div class="inline" style="margin-bottom:8px">
+            <label><input type="checkbox" id="polishOn"> Clean up text with an LLM</label>
+            <label>Wait up to <input type="number" id="llmTimeout" min="1" max="60" style="width:64px"> s, then paste the raw text</label>
+            <label><input type="checkbox" id="fillersOn"> Remove filler words (uh, hmm; um in English)</label>
+          </div>
+          <div id="prompts"></div>
+        </div>
+        <div class="card" id="endpointsCard">
+          <h3>LLM endpoints <span class="muted" style="font-weight:400">· tried top to bottom; local runtimes are found automatically</span></h3>
+          <div id="eplist"></div>
+          <div class="inline" style="margin-top:10px">
+            <input type="text" id="epInput" placeholder="192.168.1.20:1234" style="width:200px" aria-label="Address">
+            <input type="text" id="epLabel" placeholder="Label (optional)" style="width:160px" aria-label="Label">
+            <button class="btn" id="epAdd">Add endpoint</button>
+            <span id="epErr" class="err"></span>
+          </div>
+          <p class="muted">On the PC: LM Studio → Developer → "Serve on local network", or set <code>OLLAMA_HOST=0.0.0.0</code> for Ollama. Add it here by IP and port; the Mac uses it whenever it is reachable and falls back to a local model when it is not.</p>
+        </div>
       </div>
     </section>
 
@@ -58,6 +79,7 @@
           <div class="check"><span>Microphone</span><span><button class="btn sm" data-priv="microphone">Open setting</button></span></div>
           <div class="check"><span>Accessibility (needed to paste)</span><span><span id="pAcc"></span> <button class="btn sm" data-priv="accessibility">Open setting</button></span></div>
           <div class="check"><span>Input Monitoring (needed for the hold key)</span><span><span id="pIm"></span> <button class="btn sm" data-priv="input_monitoring">Open setting</button></span></div>
+          <div class="check"><span>Polish LLM</span><span id="pLlm"></span></div>
           <p class="muted">After granting Accessibility or Input Monitoring, quit PrivateVox from the menu bar and start it again.</p>
           <p id="stale" class="err" hidden>The last session ended unexpectedly. Nothing was lost; history is saved after every dictation.</p>
         </div>
@@ -78,11 +100,18 @@
   const dur = (ms) => { const s = Math.round(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
   const ago = (ms) => { const d = (Date.now() - ms) / 1000; if (d < 60) return 'just now'; if (d < 3600) return Math.floor(d / 60) + ' min ago'; if (d < 86400) return Math.floor(d / 3600) + ' h ago'; if (d < 172800) return 'Yesterday'; return new Date(ms).toLocaleDateString(); };
   function flash(m) { $('status').textContent = m; clearTimeout(flash.t); flash.t = setTimeout(() => $('status').textContent = '', 2500); }
+  let modes = [];
+  const modeLabel = (id) => (modes.find(m => m.id === id) || { label: id }).label;
+  async function loadModes() {
+    modes = await inv('list_modes');
+    $('modePick').innerHTML = modes.map(m => `<option value="${m.id}" ${m.active ? 'selected' : ''}>${esc(m.label)}${m.uses_llm ? '' : ' (no LLM)'}</option>`).join('');
+  }
+  $('modePick').onchange = async (e) => { try { await inv('set_mode', { id: e.target.value }); flash('Mode: ' + modeLabel(e.target.value)); } catch (err) { flash(String(err)); } };
 
   document.querySelectorAll('nav.tabs button').forEach(b => b.onclick = () => {
     document.querySelectorAll('nav.tabs button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
     for (const t of ['history', 'models', 'settings', 'setup']) $('tab-' + t).hidden = t !== b.dataset.tab;
-    if (b.dataset.tab === 'settings') loadSettings(); if (b.dataset.tab === 'setup') loadSetup(); if (b.dataset.tab === 'models') loadModels(); if (b.dataset.tab === 'history') loadMemory();
+    if (b.dataset.tab === 'settings') { loadSettings(); loadPolish(); } if (b.dataset.tab === 'setup') loadSetup(); if (b.dataset.tab === 'models') loadModels(); if (b.dataset.tab === 'history') loadMemory();
   });
 
   // ---------- history ----------
@@ -94,14 +123,17 @@
     for (const d of list) {
       const el = document.createElement('div'); el.className = 'row';
       const text = d.polished_text || d.raw_text;
-      el.innerHTML = `<div class="meta"><span>${esc(ago(d.created_at_ms))}</span><span>${esc(d.app_name || 'unknown app')}</span><span>${esc(d.mode)}</span><span>${esc(short(d.model))}</span><span>${dur(d.duration_ms)}</span>${d.status !== 'ok' ? `<span>${esc(d.status.replace('_', ' '))}</span>` : ''}${d.pinned ? '<span>pinned</span>' : ''}</div>
+      const hasRaw = !!d.polished_text && d.polished_text !== d.raw_text;
+      const llmModes = modes.filter(m => m.uses_llm);
+      el.innerHTML = `<div class="meta"><span>${esc(ago(d.created_at_ms))}</span><span>${esc(d.app_name || 'unknown app')}</span><span>${esc(modeLabel(d.mode))}</span><span>${esc(short(d.model))}</span><span>${dur(d.duration_ms)}</span>${d.status !== 'ok' ? `<span>${esc(d.status.replace('_', ' '))}</span>` : ''}${d.polish_status === 'unpolished' ? '<span class="unp" title="No LLM answered; this is Whisper\'s text">unpolished</span>' : ''}${d.pinned ? '<span>pinned</span>' : ''}</div>
         <div class="txt" tabindex="0">${esc(text)}</div>
-        <div class="acts"><button class="btn" data-copy>Copy</button><button class="btn" data-edit>Edit</button><button class="btn" data-raw ${d.polished_text ? '' : 'disabled title="No polished version yet"'}>Raw</button><button class="btn" data-again title="Paste into the app in front">Paste again</button><button class="btn" data-pin>${d.pinned ? 'Unpin' : 'Pin'}</button><button class="btn" data-del>Delete</button></div>`;
+        <div class="acts"><button class="btn" data-copy>Copy</button><button class="btn" data-edit>Edit</button><button class="btn" data-raw ${hasRaw ? '' : 'disabled title="Same as Whisper\'s text"'}>Raw</button><select data-repolish title="Run the LLM again with another mode"><option value="">Re-polish…</option>${llmModes.map(m => `<option value="${m.id}">${esc(m.label)}</option>`).join('')}<option value="raw">Back to raw</option></select><button class="btn" data-again title="Paste into the app in front">Paste again</button><button class="btn" data-pin>${d.pinned ? 'Unpin' : 'Pin'}</button><button class="btn" data-del>Delete</button></div>`;
       const txt = el.querySelector('.txt');
       el.querySelector('[data-copy]').onclick = async () => { try { await navigator.clipboard.writeText(txt.innerText); flash('Copied'); } catch { flash('Copy blocked'); } };
       el.querySelector('[data-del]').onclick = async () => { await inv('delete_history', { id: d.id }); loadHistory(); };
       el.querySelector('[data-pin]').onclick = async () => { await inv('pin_history', { id: d.id, pinned: !d.pinned }); loadHistory(); };
       el.querySelector('[data-again]').onclick = async () => { await inv('paste_text', { text: txt.innerText }); flash('Pasting into the app in front…'); };
+      el.querySelector('[data-repolish]').onchange = async (e) => { const m = e.target.value; e.target.value = ''; if (!m) return; try { await inv('repolish_history', { id: d.id, mode: m }); flash('Re-polishing as ' + modeLabel(m) + '…'); } catch (err) { flash(String(err)); } };
       const rawBtn = el.querySelector('[data-raw]');
       rawBtn.onclick = () => { const ex = el.querySelector('.raw'); if (ex) { ex.remove(); rawBtn.textContent = 'Raw'; } else { const p = document.createElement('div'); p.className = 'raw'; p.textContent = 'Whisper heard: “' + d.raw_text + '”'; el.appendChild(p); rawBtn.textContent = 'Hide raw'; } };
       const editBtn = el.querySelector('[data-edit]');
@@ -120,14 +152,18 @@
   // ---------- memory strip + models ----------
   let memTimer = null;
   async function loadMemory() {
-    const [models, mem, machine] = await Promise.all([inv('list_models'), inv('memory_report'), inv('machine_label')]);
+    const [models, mem, machine, eps, llm] = await Promise.all([inv('list_models'), inv('memory_report'), inv('machine_label'), inv('list_llm_endpoints'), inv('llm_status')]);
     $('machine').textContent = machine;
+    const sel = llm.enabled && llm.selected ? llm.selected.id : (llm.enabled && eps[0] ? '' : 'off');
+    $('llmPick').innerHTML = '<option value="off">Off</option>' + eps.map(e => `<option value="${e.id}" ${e.id === sel ? 'selected' : ''} ${e.healthy ? '' : 'disabled'}>${esc(e.label)}${e.model ? ' · ' + esc(e.model) : (e.models[0] ? ' · ' + esc(e.models[0]) : '')} (${e.is_local ? 'local' : 'LAN'})${e.healthy ? '' : ' · unreachable'}</option>`).join('');
+    if (sel === 'off') $('llmPick').value = 'off';
+    const llmLegend = !llm.enabled ? 'off' : !llm.selected ? 'none reachable' : llm.selected.is_local ? (llm.selected.loaded_bytes ? fmtMB(llm.selected.loaded_bytes) : 'not loaded yet') : 'on ' + llm.selected.label;
     $('modelPick').innerHTML = models.map(m => `<option value="${m.id}" ${m.active ? 'selected' : ''} ${m.downloaded ? '' : 'disabled'}>${esc(m.id)} · ${esc(m.label.split(' · ')[0].toLowerCase())}${m.downloaded ? '' : ' (not downloaded)'}</option>`).join('');
     const seg = $('meter').children, T = Math.max(1, mem.total);
     seg[0].style.flexBasis = (mem.used_by_others / T * 100) + '%'; seg[1].style.flexBasis = (mem.selected_bytes / T * 100) + '%'; seg[2].style.flexBasis = (mem.llm_bytes / T * 100) + '%';
     $('meter').classList.toggle('over', mem.verdict === 'wont_fit');
     $('tickMid').textContent = fmtGB(mem.total / 2).replace('.0', ''); $('tickMax').textContent = fmtGB(mem.total).replace('.0', '');
-    $('memLeg').innerHTML = `<span style="--sw:var(--m-other)">Other apps <b>${fmtGB(mem.used_by_others)}</b></span><span style="--sw:var(--m-whisper)">Whisper ${esc(mem.selected)} <b>${fmtMB(mem.selected_bytes)}</b></span><span style="--sw:var(--m-llm)">Polish LLM <b>${fmtMB(mem.llm_bytes)}</b></span><span style="--sw:var(--surface-2)">Free after load <b>${fmtGB(mem.free_after)}</b></span>`;
+    $('memLeg').innerHTML = `<span style="--sw:var(--m-other)">Other apps <b>${fmtGB(mem.used_by_others)}</b></span><span style="--sw:var(--m-whisper)">Whisper ${esc(mem.selected)} <b>${fmtMB(mem.selected_bytes)}</b></span><span style="--sw:var(--m-llm)">Polish LLM <b>${esc(llmLegend)}</b></span><span style="--sw:var(--surface-2)">Free after load <b>${fmtGB(mem.free_after)}</b></span>`;
     const verdictText = { good: 'Fits with headroom.', tight: 'Fits, but leaves little room for other apps.', wont_fit: 'Will not fit comfortably. Pick a smaller model.' }[mem.verdict];
     const cls = { good: 'good', tight: '', wont_fit: 'bad' }[mem.verdict];
     $('memVerdict').innerHTML = `<div class="tile ${cls}"><span class="k">Selected: ${esc(mem.selected)}</span><span class="v">${fmtGB(mem.projected)} of ${fmtGB(mem.total)} · ${mem.percent}%</span><span class="s">${verdictText}</span></div>
@@ -152,6 +188,13 @@
     }
   }
   $('modelPick').onchange = async (e) => { try { await inv('switch_model', { id: e.target.value }); } catch (err) { flash(String(err)); } };
+  $('llmPick').onchange = async (e) => {
+    try {
+      if (e.target.value === 'off') { await inv('set_polish_enabled', { enabled: false }); flash('Polish off: Whisper\'s text is pasted as is'); }
+      else { await inv('set_llm_endpoint_preferred', { id: e.target.value }); flash('Polish LLM: ' + e.target.selectedOptions[0].textContent); }
+    } catch (err) { flash(String(err)); }
+    loadMemory();
+  };
   window.pvx.listen('models-changed', () => { if (!$('tab-models').hidden) loadModels(); else loadMemory(); });
 
   // ---------- settings ----------
@@ -191,6 +234,51 @@
     };
   }
 
+  // ---------- polish settings ----------
+  async function loadPolish() {
+    const [s, eps] = await Promise.all([inv('get_settings'), inv('list_llm_endpoints')]);
+    await loadModes();
+    $('polishOn').checked = s.polish_enabled; $('llmTimeout').value = s.llm_timeout_secs; $('fillersOn').checked = s.remove_fillers;
+    $('polishOn').onchange = () => inv('set_polish_enabled', { enabled: $('polishOn').checked }).then(loadMemory).catch(e => flash(String(e)));
+    $('fillersOn').onchange = () => inv('set_remove_fillers', { enabled: $('fillersOn').checked }).catch(e => flash(String(e)));
+    $('llmTimeout').onchange = () => inv('set_llm_timeout', { secs: +$('llmTimeout').value }).then(() => flash('Saved')).catch(e => flash(String(e)));
+    const pr = $('prompts'); pr.innerHTML = '';
+    for (const m of modes.filter(m => m.uses_llm)) {
+      const el = document.createElement('div'); el.className = 'prompt';
+      el.innerHTML = `<div class="row2"><strong>${esc(m.label)}</strong><span class="muted">${m.is_default ? 'default prompt' : 'custom prompt'}</span></div><textarea aria-label="${esc(m.label)} prompt">${esc(m.prompt)}</textarea><div class="row2"><button class="btn sm" data-save>Save</button><button class="btn sm" data-reset ${m.is_default ? 'disabled' : ''}>Reset to default</button></div>`;
+      el.querySelector('[data-save]').onclick = () => inv('set_mode_prompt', { id: m.id, prompt: el.querySelector('textarea').value }).then(() => { flash('Prompt saved'); loadPolish(); }).catch(e => flash(String(e)));
+      el.querySelector('[data-reset]').onclick = () => inv('set_mode_prompt', { id: m.id, prompt: null }).then(() => { flash('Prompt reset'); loadPolish(); }).catch(e => flash(String(e)));
+      pr.appendChild(el);
+    }
+    const list = $('eplist'); list.innerHTML = eps.length ? '' : '<p class="muted">No endpoints yet. Install Ollama on this Mac (<code>ollama pull qwen2.5:3b</code>) or add a LAN machine below.</p>';
+    for (const e of eps) {
+      const el = document.createElement('div'); el.className = 'eprow';
+      const health = e.healthy ? 'ok' : (e.checked ? 'bad' : '');
+      const healthText = e.healthy ? (e.selected ? 'in use' : 'reachable') : (e.checked ? ('unreachable' + (e.last_error ? ': ' + e.last_error : '')) : 'checking…');
+      const auto = e.source === 'local';
+      el.innerHTML = `<div><span class="hdot ${health}" title="${esc(healthText)}"></span><strong>${esc(e.label)}</strong> <span class="muted">${esc(healthText)}${auto ? ' · found automatically' : ''}</span><div class="url">${esc(e.base_url)} · ${e.flavor === 'ollama' ? 'Ollama API' : 'OpenAI-compatible'}</div></div>
+        <div class="acts"><select data-model aria-label="Model" ${e.models.length ? '' : 'disabled'}><option value="">${e.models.length ? 'first listed model' : 'no models listed'}</option>${e.models.map(m => `<option ${m === e.model ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select>${auto ? '' : `<label class="muted"><input type="checkbox" data-en ${e.enabled ? 'checked' : ''}> on</label><button class="btn sm" data-up title="Higher priority">↑</button><button class="btn sm" data-down title="Lower priority">↓</button><button class="btn sm" data-rm>Remove</button>`}</div>`;
+      const on = (sel, f) => { const b = el.querySelector(sel); if (b) b.onclick = () => f().then(loadPolish).then(loadMemory).catch(err => flash(String(err))); };
+      el.querySelector('[data-model]').onchange = (ev) => inv('set_llm_endpoint', { id: e.id, model: ev.target.value || '' }).then(loadPolish).catch(err => flash(String(err)));
+      const en = el.querySelector('[data-en]'); if (en) en.onchange = () => inv('set_llm_endpoint', { id: e.id, enabled: en.checked }).then(loadPolish).then(loadMemory).catch(err => flash(String(err)));
+      on('[data-up]', () => inv('move_llm_endpoint', { id: e.id, up: true })); on('[data-down]', () => inv('move_llm_endpoint', { id: e.id, up: false })); on('[data-rm]', () => inv('remove_llm_endpoint', { id: e.id }));
+      list.appendChild(el);
+    }
+  }
+  $('epAdd').onclick = async () => {
+    $('epErr').textContent = ''; const b = $('epAdd'); b.disabled = true; b.textContent = 'Checking…';
+    try { const v = await inv('add_llm_endpoint', { input: $('epInput').value, label: $('epLabel').value || null }); $('epInput').value = ''; $('epLabel').value = ''; flash('Added ' + v.label + (v.model ? ' · ' + v.model : '')); loadPolish(); loadMemory(); }
+    catch (e) { $('epErr').textContent = String(e); }
+    finally { b.disabled = false; b.textContent = 'Add endpoint'; }
+  };
+  window.pvx.listen('llm-changed', async () => {
+    const st = await inv('llm_status');
+    flash(st.selected ? 'Polish LLM: ' + st.selected.label + ' reachable' : 'Polish LLM: nothing reachable, pasting raw text');
+    if (!$('tab-settings').hidden) loadPolish();
+    loadMemory();
+  });
+  window.pvx.listen('history-changed', () => loadHistory());
+
   // ---------- setup ----------
   async function loadSetup() {
     const p = await inv('permissions');
@@ -199,6 +287,8 @@
     $('pAcc').innerHTML = p.accessibility ? '<span class="ok">granted</span>' : '<span class="no">not granted</span>';
     $('pIm').innerHTML = p.input_monitoring ? '<span class="ok">granted</span>' : '<span class="no">not granted</span>';
     $('stale').hidden = !p.stale_lock;
+    const st = await inv('llm_status');
+    $('pLlm').innerHTML = !st.enabled ? '<span class="muted">off</span>' : st.selected ? `<span class="ok">${esc(st.selected.label)} ready</span>` : '<span class="no">none found</span> <span class="muted">Install Ollama and run <code>ollama pull qwen2.5:3b</code>, or add a LAN endpoint in Settings → Polish</span>';
     document.querySelectorAll('[data-priv]').forEach(b => b.onclick = () => inv('open_privacy', { pane: b.dataset.priv }));
   }
   $('dbgStart').onclick = () => inv('debug_start'); $('dbgStop').onclick = () => inv('debug_stop');
@@ -208,7 +298,7 @@
   window.pvx.listen('model-download', (d) => { $('dl').hidden = d.done; $('dlBar').style.width = Math.round(100 * d.received / Math.max(1, d.total)) + '%'; if (d.done) { loadSetup(); loadMemory(); } if (d.error) flash('Download failed: ' + d.error); $('status').textContent = d.done ? '' : `Downloading ${d.model}: ${Math.round(100 * d.received / Math.max(1, d.total))}%`; });
   window.pvx.listen('pill-state', (s) => { $('status').textContent = s.state === 'idle' ? '' : s.state.replace('_', ' ') + (s.message ? ': ' + s.message : ''); if (s.state === 'pasted') loadHistory(); });
   document.addEventListener('visibilitychange', () => { if (!document.hidden && !$('tab-history').hidden) loadMemory(); });
-  loadHistory(); loadMemory();
+  loadModes().then(loadHistory); loadMemory();
   inv('permissions').then(p => { if (!p.model_present || !p.accessibility) document.querySelector('[data-tab=setup]').click(); });
 </script>
 </body>
