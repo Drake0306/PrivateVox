@@ -124,25 +124,38 @@
       const el = document.createElement('div'); el.className = 'row';
       const text = d.polished_text || d.raw_text;
       const hasRaw = !!d.polished_text && d.polished_text !== d.raw_text;
-      const llmModes = modes.filter(m => m.uses_llm);
-      el.innerHTML = `<div class="meta"><span>${esc(ago(d.created_at_ms))}</span><span>${esc(d.app_name || 'unknown app')}</span><span>${esc(modeLabel(d.mode))}</span><span>${esc(short(d.model))}</span><span>${dur(d.duration_ms)}</span>${d.status !== 'ok' ? `<span>${esc(d.status.replace('_', ' '))}</span>` : ''}${d.polish_status === 'unpolished' ? '<span class="unp" title="No LLM answered; this is Whisper\'s text">unpolished</span>' : ''}${d.pinned ? '<span>pinned</span>' : ''}</div>
+      const rowModes = modes.filter(m => m.uses_llm || m.id === 'raw');
+      el.classList.toggle('pinned', !!d.pinned);
+      el.innerHTML = `<div class="meta">${d.pinned ? '<span class="pinbadge" title="Pinned: stays at the top">📌 pinned</span>' : ''}<span>${esc(ago(d.created_at_ms))}</span><span>${esc(d.app_name || 'unknown app')}</span><span>${esc(modeLabel(d.mode))}</span><span>${esc(short(d.model))}</span><span>${dur(d.duration_ms)}</span>${d.status !== 'ok' ? `<span>${esc(d.status.replace('_', ' '))}</span>` : ''}${d.polish_status === 'unpolished' ? '<span class="unp" title="No LLM answered; this is Whisper\'s text">unpolished</span>' : ''}</div>
         <div class="txt" tabindex="0">${esc(text)}</div>
-        <div class="acts"><button class="btn" data-copy>Copy</button><button class="btn" data-edit>Edit</button><button class="btn" data-raw ${hasRaw ? '' : 'disabled title="Same as Whisper\'s text"'}>Raw</button><select data-repolish title="Run the LLM again with another mode"><option value="">Re-polish…</option>${llmModes.map(m => `<option value="${m.id}">${esc(m.label)}</option>`).join('')}<option value="raw">Back to raw</option></select><button class="btn" data-again title="Paste into the app in front">Paste again</button><button class="btn" data-pin>${d.pinned ? 'Unpin' : 'Pin'}</button><button class="btn" data-del>Delete</button></div>`;
+        <div class="acts"><button class="btn" data-copy>Copy</button><button class="btn" data-edit>Edit</button><button class="btn" data-raw ${hasRaw ? '' : 'disabled title="Same as Whisper\'s text"'}>Raw</button><span class="repol"><select data-mode aria-label="Mode for re-polish" title="Mode to re-polish this row with">${rowModes.map(m => `<option value="${m.id}" ${m.id === d.mode ? 'selected' : ''}>${esc(m.label)}</option>`).join('')}</select><button class="btn" data-repolish title="Run this row through the LLM again with the chosen mode">Re-polish</button></span><button class="btn ${d.pinned ? 'active' : ''}" data-pin title="${d.pinned ? 'Unpin: back to its place in time' : 'Pin: keep at the top'}">${d.pinned ? 'Pinned' : 'Pin'}</button><button class="btn" data-del>Delete</button></div>`;
       const txt = el.querySelector('.txt');
       el.querySelector('[data-copy]').onclick = async () => { try { await navigator.clipboard.writeText(txt.innerText); flash('Copied'); } catch { flash('Copy blocked'); } };
       el.querySelector('[data-del]').onclick = async () => { await inv('delete_history', { id: d.id }); loadHistory(); };
-      el.querySelector('[data-pin]').onclick = async () => { await inv('pin_history', { id: d.id, pinned: !d.pinned }); loadHistory(); };
-      el.querySelector('[data-again]').onclick = async () => { await inv('paste_text', { text: txt.innerText }); flash('Pasting into the app in front…'); };
-      el.querySelector('[data-repolish]').onchange = async (e) => { const m = e.target.value; e.target.value = ''; if (!m) return; try { await inv('repolish_history', { id: d.id, mode: m }); flash('Re-polishing as ' + modeLabel(m) + '…'); } catch (err) { flash(String(err)); } };
+      el.querySelector('[data-pin]').onclick = async () => { await inv('pin_history', { id: d.id, pinned: !d.pinned }); flash(d.pinned ? 'Unpinned' : 'Pinned to the top'); loadHistory(); };
+      el.querySelector('[data-repolish]').onclick = async () => {
+        const m = el.querySelector('[data-mode]').value;
+        if (m === d.mode && d.polish_status !== 'unpolished' && m !== 'raw') { flash('Already ' + modeLabel(m) + '; pick another mode to re-polish'); return; }
+        try { await inv('repolish_history', { id: d.id, mode: m }); flash(m === 'raw' ? 'Back to Whisper\'s text' : 'Re-polishing as ' + modeLabel(m) + '…'); } catch (err) { flash(String(err)); }
+      };
       const rawBtn = el.querySelector('[data-raw]');
       rawBtn.onclick = () => { const ex = el.querySelector('.raw'); if (ex) { ex.remove(); rawBtn.textContent = 'Raw'; } else { const p = document.createElement('div'); p.className = 'raw'; p.textContent = 'Whisper heard: “' + d.raw_text + '”'; el.appendChild(p); rawBtn.textContent = 'Hide raw'; } };
+      // Inline edit: one state object shared by the button and the key handlers, so Save never sees a stale closure.
       const editBtn = el.querySelector('[data-edit]');
+      let editing = null; // { original }
+      const endEdit = () => { txt.contentEditable = 'false'; editBtn.textContent = 'Edit'; txt.onkeydown = null; editing = null; };
+      const saveEdit = async () => {
+        const v = txt.innerText.trim(); const original = editing.original; endEdit();
+        if (!v) { txt.innerText = original; flash('Nothing to save'); return; }
+        if (v === original) { flash('No change'); return; }
+        try { await inv('update_history_text', { id: d.id, text: v }); flash('Saved'); } catch (err) { txt.innerText = original; flash(String(err)); }
+        loadHistory();
+      };
       editBtn.onclick = () => {
-        if (txt.isContentEditable) { commit(); return; }
-        const original = txt.innerText; txt.contentEditable = 'true'; txt.focus(); editBtn.textContent = 'Save';
-        const done = () => { txt.contentEditable = 'false'; editBtn.textContent = 'Edit'; txt.onkeydown = null; };
-        async function commit() { const v = txt.innerText.trim(); done(); if (v && v !== original) { await inv('update_history_text', { id: d.id, text: v }); flash('Saved'); } loadHistory(); }
-        txt.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commit(); } if (e.key === 'Escape') { txt.innerText = original; done(); } };
+        if (editing) { saveEdit(); return; }
+        editing = { original: txt.innerText };
+        txt.contentEditable = 'true'; txt.focus(); editBtn.textContent = 'Save';
+        txt.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEdit(); } if (e.key === 'Escape') { txt.innerText = editing.original; endEdit(); flash('Edit cancelled'); } };
       };
       rows.appendChild(el);
     }
