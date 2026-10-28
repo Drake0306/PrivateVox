@@ -1,6 +1,7 @@
 //! LVW desktop app: pill and panel windows, tray, hotkeys, pipeline, lifecycle.
 
 pub mod adapters;
+pub mod benchmark;
 pub mod commands;
 pub mod frontmost;
 pub mod hotkeys;
@@ -85,6 +86,7 @@ pub fn run() {
             commands::switch_model,
             commands::download_model_by_id,
             commands::delete_model,
+            commands::benchmark_model,
             commands::debug_start,
             commands::debug_stop,
             commands::debug_cancel,
@@ -168,6 +170,24 @@ pub fn run() {
                     }
                     let _ = switched_app.emit("models-changed", ());
                 }),
+                benchmark_clip: {
+                    let dir = paths.data_dir.clone();
+                    Box::new(move || {
+                        let p = benchmark::ensure_benchmark_clip(&dir)?;
+                        lvw_core::audio::load_wav_16k(&p)
+                    })
+                },
+                on_benchmark: {
+                    let store = store.clone();
+                    let app = app.handle().clone();
+                    Box::new(move |id, speed, load_ms| {
+                        if let Ok(mut st) = store.lock() {
+                            let stats = lvw_core::store::ModelStats { load_ms: if load_ms > 0 { Some(load_ms) } else { None }, speed_x: Some(speed), mem_bytes: None };
+                            let _ = st.set_model_stats(id, &stats);
+                        }
+                        let _ = app.emit("models-changed", ());
+                    })
+                },
             };
 
             let last_state = Arc::new(laststate::LastState::default());

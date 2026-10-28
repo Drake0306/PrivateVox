@@ -200,6 +200,17 @@ pub fn delete_model(app: AppHandle, state: State<'_, AppState>, id: String) -> R
     Ok(())
 }
 
+#[tauri::command]
+pub fn benchmark_model(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    lvw_core::models::info(&id).ok_or_else(|| format!("unknown model {id}"))?;
+    let dir = state.paths.models_dir();
+    if lvw_core::models::model_file(&dir, &id).map(|p| p.exists()) != Some(true) {
+        return Err("Download the model first".into());
+    }
+    state.send(Cmd::Benchmark(id));
+    Ok(())
+}
+
 /// Shared by the command and its test: validate, persist, swap in.
 pub fn apply_settings(current: &std::sync::Mutex<Settings>, path: &std::path::Path, new: Settings) -> Result<(), String> {
     new.validate()?;

@@ -64,6 +64,8 @@ pub enum Cmd {
     CaptureError(String),
     /// Switch the resident Whisper model (deferred while a recording is in progress).
     SwitchModel(String),
+    /// Benchmark a model: switches to it if needed, decodes the fixed clip, reports speed.
+    Benchmark(String),
     Quit,
 }
 
@@ -88,6 +90,10 @@ pub struct Deps {
     pub idle: Arc<Mutex<IdleTimer>>,
     /// Called after a successful switch with the new id and its load info (persist settings, record stats).
     pub on_model_switched: Box<dyn Fn(&str, LoadInfo) + Send>,
+    /// Produces the benchmark clip (16 kHz mono).
+    pub benchmark_clip: Box<dyn Fn() -> anyhow::Result<Vec<f32>> + Send>,
+    /// Called with (model id, speed_x, load_ms) after a benchmark.
+    pub on_benchmark: Box<dyn Fn(&str, f32, u64) + Send>,
 }
 
 struct Recording {
@@ -252,6 +258,13 @@ impl Coordinator {
                         self.switch_model(&id);
                     }
                 }
+                Cmd::Benchmark(id) => {
+                    if self.recording.is_some() {
+                        self.error("Finish the current dictation first");
+                    } else {
+                        self.benchmark(&id);
+                    }
+                }
                 Cmd::PauseAndUnload => {
                     self.machine.force_idle();
                     self.cancel();
@@ -340,6 +353,51 @@ impl Coordinator {
                 }
             })
             .ok();
+    }
+
+    /// Switches to `id` if needed, then decodes the benchmark clip once and reports seconds-per-second.
+    fn benchmark(&mut self, id: &str) {
+        let active = self.settings().model_id;
+        if active != id {
+            self.switch_model(id);
+            if self.settings().model_id != id {
+                return; // the switch reported its own error
+            }
+        }
+        let pcm = match (self.deps.benchmark_clip)() {
+            Ok(p) => p,
+            Err(e) => {
+                self.error(&format!("Benchmark clip unavailable: {e}"));
+                return;
+            }
+        };
+        (self.emit)(PillState::Transcribing);
+        let seconds = pcm.len() as f32 / SAMPLE_RATE as f32;
+        let flash = self.settings().flash_attention;
+        let path = self.deps.model_path.clone();
+        let result = self.deps.engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| {
+            let mut load_ms = 0u64;
+            if !e.is_loaded() {
+                let Some(path) = path.as_ref() else { anyhow::bail!("no model file") };
+                load_ms = e.load(path, flash)?.duration.as_millis() as u64;
+            }
+            let opts = DecodeOptions { language: Some("en".into()), translate: false, initial_prompt: None, n_threads: 4 };
+            let t = Instant::now();
+            e.transcribe(&pcm, &opts)?;
+            Ok((t.elapsed(), load_ms))
+        });
+        match result {
+            Ok((decode, load_ms)) => {
+                let speed = crate::benchmark::speed_x(seconds, decode);
+                log::info!("benchmark {id}: {seconds:.1} s of audio in {:?} = {speed:.1}x", decode);
+                (self.deps.on_benchmark)(id, speed, load_ms);
+                if let Ok(mut t) = self.deps.idle.lock() {
+                    t.touch(Instant::now());
+                }
+                self.idle();
+            }
+            Err(e) => self.error(&format!("Benchmark failed: {e}")),
+        }
     }
 
     fn tick(&mut self, gen: u64, tx: &Sender<Cmd>) {
@@ -616,6 +674,7 @@ mod tests {
         store: Arc<Mutex<Store>>,
         settings: Arc<Mutex<Settings>>,
         switched: Arc<Mutex<Vec<String>>>,
+        benchmarks: Arc<Mutex<Vec<(String, f32)>>>,
         tx: std::sync::mpsc::Sender<Cmd>,
         join: std::thread::JoinHandle<()>,
         _dir: tempfile::TempDir,
@@ -637,6 +696,8 @@ mod tests {
         }
         let switched = Arc::new(Mutex::new(Vec::new()));
         let sw = switched.clone();
+        let benchmarks: Arc<Mutex<Vec<(String, f32)>>> = Default::default();
+        let bm = benchmarks.clone();
         let deps = Deps {
             engine: Arc::new(Mutex::new(Box::new(engine) as Box<dyn Engine>)),
             capture: Box::new(capture),
@@ -646,13 +707,15 @@ mod tests {
             frontmost: Box::new(|| Some("TestApp".into())),
             idle: Arc::new(Mutex::new(lvw_core::lifecycle::IdleTimer::new(None))),
             on_model_switched: Box::new(move |id, _info| sw.lock().unwrap().push(id.to_string())),
+            benchmark_clip: Box::new(|| Ok(vec![0.1f32; 16_000 * 30])),
+            on_benchmark: Box::new(move |id, speed, _load_ms| bm.lock().unwrap().push((id.to_string(), speed))),
         };
         let st = states.clone();
         let coord = Coordinator::new(deps, settings.clone(), store.clone(), vad, Box::new(move |s| st.lock().unwrap().push(s)));
         let (tx, rx) = channel();
         let tx2 = tx.clone();
         let join = std::thread::spawn(move || coord.run(rx, tx2));
-        Harness { states, pasted, store, settings, switched, tx, join, _dir: dir }
+        Harness { states, pasted, store, settings, switched, benchmarks, tx, join, _dir: dir }
     }
 
     fn kinds(states: &[PillState]) -> Vec<&'static str> {
@@ -800,6 +863,19 @@ mod tests {
         h.join.join().unwrap();
         assert_eq!(h.settings.lock().unwrap().model_id, "large-v3-turbo");
         assert!(h.states.lock().unwrap().iter().any(|s| matches!(s, PillState::Error { message } if message.contains("not downloaded"))));
+    }
+
+    #[test]
+    fn benchmark_records_speed_for_active_model() {
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "bench".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        h.tx.send(Cmd::Benchmark("large-v3-turbo".into())).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+        let b = h.benchmarks.lock().unwrap().clone();
+        assert_eq!(b.len(), 1);
+        assert_eq!(b[0].0, "large-v3-turbo");
+        assert!(b[0].1 > 0.0, "speed_x must be positive, got {}", b[0].1);
     }
 
     #[test]

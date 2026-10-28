@@ -17,9 +17,9 @@ rusqlite = { version = "0.40.2", features = ["bundled"] }
 reqwest = { version = "0.13.5", features = ["stream"] }
 futures-util = "0.3"
 sysinfo = "0.37"
+hound = "3.5"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util"] }
 
 [dev-dependencies]
 tempfile = "3"
-hound = "3.5"
 tiny_http = "0.12"

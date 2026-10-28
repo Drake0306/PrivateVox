@@ -1,6 +1,6 @@
 //! Audio conversion and capture: mixdown, 16 kHz resampling, bounded clip buffer, level meter, cpal input.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rubato::audioadapter_buffers::direct::SequentialSliceOfVecs;
 use rubato::{Fft, FixedSync, Resampler};
@@ -117,6 +117,16 @@ pub fn level_db(frame: &[f32]) -> f32 {
     } else {
         (20.0 * rms.log10()).max(-100.0)
     }
+}
+
+/// Reads a 16 kHz mono 16-bit WAV (the benchmark clip and test fixtures) into f32 samples.
+pub fn load_wav_16k(path: &std::path::Path) -> Result<Vec<f32>> {
+    let mut reader = hound::WavReader::open(path).with_context(|| format!("open {}", path.display()))?;
+    let spec = reader.spec();
+    if spec.sample_rate != SAMPLE_RATE || spec.channels != 1 || spec.bits_per_sample != 16 {
+        bail!("{}: expected 16 kHz mono 16-bit, got {:?}", path.display(), spec);
+    }
+    Ok(reader.samples::<i16>().map(|s| s.map(|v| v as f32 / 32768.0)).collect::<std::result::Result<_, _>>()?)
 }
 
 /// Names of the input devices cpal can see.
