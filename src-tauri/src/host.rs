@@ -155,7 +155,8 @@ pub fn apply_settings(app: &tauri::AppHandle, state: &crate::state::AppState, s:
     }
     if let Some(h) = slot.take() {
         log::info!("host mode: stopping");
-        h.stop();
+        // Joining the workers can wait on a transcription in flight; never on the main thread.
+        std::thread::Builder::new().name("privatevox-host-stop".into()).spawn(move || h.stop()).ok();
     }
     if let Some(port) = wanted {
         let deps = deps_from_state(app, state);
@@ -346,7 +347,8 @@ impl Inner {
             }
         };
         let decode_ms = t.elapsed().as_millis() as u64;
-        let uses_llm = Mode::parse(&d.mode).map(|m| m.uses_llm()).unwrap_or(false);
+        // The client says whether a polish call follows; a client with polish off never calls /v1/polish.
+        let wait_for_polish = d.polish && Mode::parse(&d.mode).map(|m| m.uses_llm()).unwrap_or(false);
         let mut store_now: Option<Session> = None;
         {
             let mut sessions = self.sessions.lock().unwrap();
@@ -356,10 +358,9 @@ impl Inner {
             }
             s.samples += pcm.len();
             s.last = Instant::now();
-            if d.final_ && !uses_llm {
+            s.mode = d.mode.clone();
+            if d.final_ && !wait_for_polish {
                 store_now = sessions.remove(&d.session);
-            } else if d.final_ && uses_llm {
-                s.mode = d.mode.clone(); // the polish call closes it
             }
         }
         if let Some(s) = store_now {
@@ -379,9 +380,14 @@ impl Inner {
             PolishStatus::Unpolished { .. } => ("unpolished", None, None),
             PolishStatus::NotNeeded => ("none", None, None),
         };
-        let session = self.sessions.lock().unwrap().remove(&p.session).unwrap_or_else(|| Session { client: p.client.clone(), mode: p.mode.clone(), language: None, model: settings.model_id.clone(), texts: vec![(0, p.text.clone())], samples: 0, last: Instant::now() });
-        let session = Session { mode: p.mode.clone(), ..session };
-        self.store_session(session, polished_text.as_deref(), polished_by.as_deref(), status, &settings);
+        // Only a session this host transcribed gets a row; a polish for an unknown or already-closed session is
+        // answered but not stored, so one dictation never becomes two rows.
+        if let Some(session) = self.sessions.lock().unwrap().remove(&p.session) {
+            let session = Session { mode: p.mode.clone(), ..session };
+            self.store_session(session, polished_text.as_deref(), polished_by.as_deref(), status, &settings);
+        } else {
+            log::info!("host: polish for unknown session {}; answered, not stored", p.session);
+        }
         (200, serde_json::to_string(&PolishReply { text: outcome.text, polish_status: status.into(), polished_by, ms: t.elapsed().as_millis() as u64 }).unwrap_or_default())
     }
 
@@ -584,7 +590,33 @@ mod tests {
     }
 
     fn chunk(session: &str, index: u32, final_: bool, mode: &str, pcm: &[f32]) -> DictationRequest {
-        DictationRequest { client: "Mac".into(), session: session.into(), index, final_, pcm: encode_pcm(pcm), language: Some("en".into()), translate: false, mode: mode.into() }
+        let polish = privatevox_core::polish::Mode::parse(mode).map(|m| m.uses_llm()).unwrap_or(false);
+        DictationRequest { client: "Mac".into(), session: session.into(), index, final_, pcm: encode_pcm(pcm), language: Some("en".into()), translate: false, mode: mode.into(), polish }
+    }
+
+    #[test]
+    fn llm_mode_without_polish_stores_at_final() {
+        // A client with polish switched off dictates in Clean mode: it will never call /v1/polish, so the host must not wait.
+        let r = rig(None, Duration::ZERO);
+        let mut req = chunk("np", 0, true, "clean", &speech());
+        req.polish = false;
+        client(&r, None).dictation(&req, Duration::from_secs(5)).unwrap();
+        let rows = r.store.lock().unwrap().list(10, 0).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].mode, "clean");
+        assert_eq!(rows[0].polish_status, "none");
+        assert_eq!(r.server.session_count(), 0);
+    }
+
+    #[test]
+    fn polish_for_a_closed_or_unknown_session_does_not_add_a_second_row() {
+        let r = rig(None, Duration::ZERO);
+        let c = client(&r, None);
+        let mut req = chunk("x", 0, true, "clean", &speech());
+        req.polish = false;
+        c.dictation(&req, Duration::from_secs(5)).unwrap();
+        c.polish(&PolishRequest { client: "Mac".into(), session: "x".into(), mode: "clean".into(), text: "host:1".into() }, Duration::from_secs(5)).unwrap();
+        assert_eq!(r.store.lock().unwrap().count().unwrap(), 1, "the row was already stored at final; the late polish must not duplicate it");
     }
 
     #[test]

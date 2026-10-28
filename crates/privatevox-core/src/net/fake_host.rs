@@ -15,6 +15,8 @@ pub enum HostBehaviour {
     Hang,
     /// 500 with `{"error":"boom"}` on every route.
     ServerError,
+    /// Like `Ok`, but the host has polish switched off: `/v1/polish` answers `polish_status: "none"`.
+    OkPolishOff { text: String },
 }
 
 pub struct FakeHost {
@@ -59,6 +61,22 @@ impl FakeHost {
                                     }
                                 }
                                 HostBehaviour::ServerError => respond(&mut stream, "500 Internal Server Error", r#"{"error":"boom"}"#),
+                                HostBehaviour::OkPolishOff { text } => {
+                                    let path = req.path.split('?').next().unwrap_or("");
+                                    let body = match (req.method.as_str(), path) {
+                                        ("GET", "/v1/status") => serde_json::to_string(&StatusReply { name: "Fake PC".into(), version: "0.3.0".into(), platform: "windows".into(), gpu: GpuInfo { name: "Fake RX 9070".into(), total_bytes: 16_000_000_000, used_bytes: 5_000_000_000 }, whisper: WhisperInfo { model: "large-v3-turbo".into(), loaded: true, resident_bytes: 1_300_000_000 }, polish: PolishInfo { enabled: false, endpoint_label: None, model: None, resident_bytes: 0 }, clients: 1 }).unwrap(),
+                                        ("POST", "/v1/dictations") => match serde_json::from_str::<DictationRequest>(&req.body) {
+                                            Ok(d) => { r.lock().unwrap().push(d); serde_json::to_string(&DictationReply { text: text.clone(), language: Some("en".into()), model: "large-v3-turbo".into(), decode_ms: 7 }).unwrap() }
+                                            Err(e) => { respond(&mut stream, "400 Bad Request", &serde_json::to_string(&ErrorReply { error: e.to_string() }).unwrap()); return; }
+                                        },
+                                        ("POST", "/v1/polish") => match serde_json::from_str::<PolishRequest>(&req.body) {
+                                            Ok(pr) => { let t = pr.text.clone(); p.lock().unwrap().push(pr); serde_json::to_string(&PolishReply { text: t, polish_status: "none".into(), polished_by: None, ms: 1 }).unwrap() }
+                                            Err(e) => { respond(&mut stream, "400 Bad Request", &serde_json::to_string(&ErrorReply { error: e.to_string() }).unwrap()); return; }
+                                        },
+                                        _ => { respond(&mut stream, "404 Not Found", r#"{"error":"not found"}"#); return; }
+                                    };
+                                    respond(&mut stream, "200 OK", &body);
+                                }
                                 HostBehaviour::Ok { text, polished, token } => {
                                     if let Some(t) = token {
                                         if req.header("authorization") != Some(&format!("Bearer {t}")) {

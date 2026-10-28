@@ -6,7 +6,7 @@ use privatevox_core::settings::Settings;
 pub use privatevox_engine::remote::RemoteState;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
 const HEALTH_PERIOD: Duration = Duration::from_secs(10);
@@ -75,7 +75,6 @@ pub fn spawn_health_loop(state: Arc<RemoteState>, app: AppHandle) {
                     }
                 }
                 std::thread::sleep(wait);
-                let _ = Instant::now();
             }
         })
         .expect("remote health thread");

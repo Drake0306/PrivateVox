@@ -153,6 +153,8 @@ struct Recording {
     results: Arc<Mutex<std::collections::BTreeMap<usize, String>>>,
     /// The host was in use when this recording started (the row is marked `remote:<label>` unless a fallback happened).
     used_remote: bool,
+    /// Set by the first chunk the host failed on; every later chunk of this dictation stays local.
+    fell_back: Arc<AtomicBool>,
     /// Set on cancel/pause: the worker stops before its next job and never reloads the model.
     cancelled: Arc<AtomicBool>,
 }
@@ -219,6 +221,8 @@ pub struct Coordinator {
     idle_tx: Option<Sender<Cmd>>,
     /// Whether the dictation in flight started with the host in use (for the row's `engine_kind`).
     last_used_remote: bool,
+    /// Shared with the recording's chunk worker: a host failure during this dictation.
+    fell_back: Arc<AtomicBool>,
 }
 
 /// The hold key as the pill names it ("right ⌥", or a combination), if one is set.
@@ -249,15 +253,22 @@ fn hotkey_hint(s: &Settings) -> String {
 /// Transcribe on the host when it is in use, without holding the local engine lock while waiting on the network
 /// (a host served from this same process needs that lock). On a host failure the notice is set and the local engine
 /// takes over, loading `model_path` if it has to.
-fn transcribe_routed(remote: &Arc<RemoteState>, engine: &Arc<Mutex<Box<dyn Engine>>>, pcm: &[f32], opts: &DecodeOptions, model_path: Option<&PathBuf>, flash: bool) -> anyhow::Result<privatevox_engine::supervisor::Transcript> {
-    if remote.in_use() {
+/// `use_remote` is decided once per dictation (at Start) and `fell_back` makes a fallback stick for the rest of it,
+/// so a host that blinks mid-dictation never gets half a session.
+fn transcribe_routed(remote: &Arc<RemoteState>, engine: &Arc<Mutex<Box<dyn Engine>>>, pcm: &[f32], opts: &DecodeOptions, use_remote: bool, fell_back: &AtomicBool, model_path: Option<&PathBuf>, flash: bool) -> anyhow::Result<privatevox_engine::supervisor::Transcript> {
+    if use_remote && !fell_back.load(Ordering::SeqCst) && remote.in_use() {
         match privatevox_engine::remote::RemoteEngine::new(remote.clone(), Duration::from_secs(15)).transcribe(pcm, opts) {
             Ok(t) => return Ok(t),
             Err(e) => {
-                log::warn!("remote transcription failed, falling back to local: {e}");
+                log::warn!("remote transcription failed, falling back to local for the rest of this dictation: {e}");
+                fell_back.store(true, Ordering::SeqCst);
                 remote.set_notice(privatevox_engine::remote::FALLBACK_NOTICE);
             }
         }
+    } else if use_remote && !fell_back.load(Ordering::SeqCst) {
+        // Started on the host, which has since gone away without a request failing here (health loop): same outcome.
+        fell_back.store(true, Ordering::SeqCst);
+        remote.set_notice(privatevox_engine::remote::FALLBACK_NOTICE);
     }
     privatevox_engine::routing::with_local_only(|| {
         engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| {
@@ -279,7 +290,8 @@ fn remote_polish(remote: &RemoteState, mode: Mode, text: &str, timeout: Duration
         Ok(r) => {
             let status = match r.polish_status.as_str() {
                 "ok" => PolishStatus::Polished { endpoint_id: format!("host:{}", remote.label()), model: r.polished_by.unwrap_or_default(), ms: t.elapsed().as_millis() as u64 },
-                "none" => PolishStatus::NotNeeded,
+                // The client asked for an LLM mode; "none" means the host has polish switched off.
+                "none" => PolishStatus::Unpolished { reason: format!("{} has polish off", remote.label()) },
                 _ => PolishStatus::Unpolished { reason: format!("{} could not polish", remote.label()) },
             };
             let text = if matches!(status, PolishStatus::Polished { .. }) { r.text } else { text.to_string() };
@@ -307,7 +319,7 @@ impl Coordinator {
             let s = settings.lock().map(|s| s.clone()).unwrap_or_default();
             Machine::new(s.activation, Duration::from_millis(s.hold_threshold_ms))
         };
-        Coordinator { deps, settings, store, vad, emit, recording: None, queued: None, generation: 0, machine, pending_switch: None, last_paste: None, idle_tx: None, last_used_remote: false }
+        Coordinator { deps, settings, store, vad, emit, recording: None, queued: None, generation: 0, machine, pending_switch: None, last_paste: None, idle_tx: None, last_used_remote: false, fell_back: Arc::new(AtomicBool::new(false)) }
     }
 
     /// Unloads the current model and loads `id` from the models directory. Refused if the file is missing.
@@ -517,10 +529,12 @@ impl Coordinator {
         let on_error: Box<dyn FnMut(String) + Send> = Box::new(move |msg| {
             let _ = err_tx.send(Cmd::CaptureError(msg));
         });
-        // A fresh host session per dictation; chunk indexes restart at 0.
+        // A fresh host session per dictation; chunk indexes restart at 0. The host learns the mode and whether a polish call follows.
         self.deps.remote.new_session();
+        self.deps.remote.set_dictation(settings.mode.id(), settings.polish_enabled && settings.mode.uses_llm());
         let used_remote = self.deps.remote.in_use();
         self.last_used_remote = used_remote;
+        self.fell_back = Arc::new(AtomicBool::new(false));
         let loading = !self.deps.engine.try_lock().map(|e| e.is_loaded()).unwrap_or(false);
         (self.emit)(PillState::Listening { seconds: 0.0, level_db: -100.0, countdown: None, loading, mode: settings.mode.label().to_string(), stop_hint: stop_hint(&settings, self.machine.stage()) });
         self.preload_model();
@@ -532,7 +546,7 @@ impl Coordinator {
         }
         match self.deps.capture.start(on_pcm, on_error) {
             Ok(()) => {
-                self.recording = Some(Recording { buffer, level, started: Instant::now(), ticks: 0, chunker: Chunker::new(), scored_frames: 0, probs: Vec::new(), chunks_sent: 0, worker: None, results: Arc::new(Mutex::new(Default::default())), used_remote, cancelled: Arc::new(AtomicBool::new(false)) });
+                self.recording = Some(Recording { buffer, level, started: Instant::now(), ticks: 0, chunker: Chunker::new(), scored_frames: 0, probs: Vec::new(), chunks_sent: 0, worker: None, results: Arc::new(Mutex::new(Default::default())), used_remote, fell_back: Arc::new(AtomicBool::new(false)), cancelled: Arc::new(AtomicBool::new(false)) });
                 self.generation += 1;
                 let _ = self.machine.on(Input::StartResult(true), Instant::now());
                 schedule(tx, Cmd::Tick(self.generation), Duration::from_millis(100));
@@ -600,16 +614,19 @@ impl Coordinator {
         let seconds = pcm.len() as f32 / SAMPLE_RATE as f32;
         let flash = self.settings().flash_attention;
         let path = self.deps.model_path.clone();
-        let result = self.deps.engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| {
-            let mut load_ms = 0u64;
-            if !e.is_loaded() {
-                let Some(path) = path.as_ref() else { anyhow::bail!("no model file") };
-                load_ms = e.load(path, flash)?.duration.as_millis() as u64;
-            }
-            let opts = DecodeOptions { language: Some("en".into()), translate: false, initial_prompt: None, n_threads: 4, final_chunk: false };
-            let t = Instant::now();
-            e.transcribe(&pcm, &opts)?;
-            Ok((t.elapsed(), load_ms))
+        // A benchmark measures this machine: never route it to a host.
+        let result = privatevox_engine::routing::with_local_only(|| {
+            self.deps.engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| {
+                let mut load_ms = 0u64;
+                if !e.is_loaded() {
+                    let Some(path) = path.as_ref() else { anyhow::bail!("no model file") };
+                    load_ms = e.load(path, flash)?.duration.as_millis() as u64;
+                }
+                let opts = DecodeOptions { language: Some("en".into()), translate: false, initial_prompt: None, n_threads: 4, final_chunk: false };
+                let t = Instant::now();
+                e.transcribe(&pcm, &opts)?;
+                Ok((t.elapsed(), load_ms))
+            })
         });
         match result {
             Ok((decode, load_ms)) => {
@@ -729,11 +746,15 @@ impl Coordinator {
     fn send_chunk(&mut self, pcm: Vec<f32>, final_: bool) {
         let settings = self.settings();
         let remote = self.deps.remote.clone();
+        let coordinator_fell_back = self.fell_back.clone();
         let Some(rec) = self.recording.as_mut() else { return };
         if rec.worker.is_none() {
             let (jtx, jrx) = std::sync::mpsc::channel::<ChunkJob>();
             let engine = self.deps.engine.clone();
             let remote = remote.clone();
+            let use_remote = rec.used_remote;
+            rec.fell_back = coordinator_fell_back;
+            let fell_back = rec.fell_back.clone();
             let results = rec.results.clone();
             let cancelled = rec.cancelled.clone();
             let idle = self.deps.idle.clone();
@@ -755,7 +776,7 @@ impl Coordinator {
                         } else {
                             let opts = DecodeOptions { language: language.clone(), translate, initial_prompt: None, n_threads: 4, final_chunk: job.final_ };
                             let cancelled = cancelled.clone();
-                            let r = if cancelled.load(Ordering::SeqCst) { Err(anyhow::anyhow!("cancelled")) } else { transcribe_routed(&remote, &engine, &pcm, &opts, model_path.as_ref(), flash) };
+                            let r = if cancelled.load(Ordering::SeqCst) { Err(anyhow::anyhow!("cancelled")) } else { transcribe_routed(&remote, &engine, &pcm, &opts, use_remote, &fell_back, model_path.as_ref(), flash) };
                             if let Ok(mut t) = idle.lock() {
                                 t.touch(Instant::now());
                             }
@@ -866,6 +887,7 @@ impl Coordinator {
             self.generation += 1;
         }
         self.queued = None;
+        let _ = self.deps.remote.take_notice(); // a fallback in the cancelled dictation must not label the next one
         self.idle();
         if let Some(id) = self.pending_switch.take() {
             self.switch_model(&id);
@@ -980,7 +1002,7 @@ impl Coordinator {
         } else {
             PolishOutcome { text: raw.clone(), status: PolishStatus::NotNeeded, notice: None }
         };
-        let engine_kind = if self.last_used_remote && engine_notice.is_none() { format!("remote:{}", self.deps.remote.label()) } else { "local".to_string() };
+        let engine_kind = if self.last_used_remote && engine_notice.is_none() && !self.fell_back.load(Ordering::SeqCst) { format!("remote:{}", self.deps.remote.label()) } else { "local".to_string() };
         let polish_ms = t_polish.elapsed().as_millis() as u64;
         let (polished_text, polished_by, polish_status) = match &outcome.status {
             PolishStatus::Polished { endpoint_id, .. } => (Some(outcome.text.clone()), Some(endpoint_id.clone()), "ok"),
@@ -1098,7 +1120,7 @@ impl Coordinator {
         // A short clip is decoded in one go, so this is also the last chunk of its session.
         let opts = DecodeOptions { language, translate: settings.mode.whisper_translate(), initial_prompt: None, n_threads: 4, final_chunk: true };
         let t = Instant::now();
-        let transcript = transcribe_routed(&self.deps.remote, &self.deps.engine, &speech, &opts, self.deps.model_path.as_ref(), settings.flash_attention);
+        let transcript = transcribe_routed(&self.deps.remote, &self.deps.engine, &speech, &opts, self.last_used_remote, &self.fell_back, self.deps.model_path.as_ref(), settings.flash_attention);
         let transcript = match transcript {
             Ok(t) => t,
             Err(e) => {
@@ -1255,7 +1277,6 @@ mod tests {
         warms: Arc<Mutex<u32>>,
         llm_unloads: Arc<Mutex<u32>>,
         history_changed: Arc<Mutex<u32>>,
-        remote: Arc<RemoteState>,
         tx: std::sync::mpsc::Sender<Cmd>,
         join: std::thread::JoinHandle<()>,
         _dir: tempfile::TempDir,
@@ -1328,7 +1349,8 @@ mod tests {
         let (tx, rx) = channel();
         let tx2 = tx.clone();
         let join = std::thread::spawn(move || coord.run(rx, tx2));
-        Harness { states, pasted, store, settings, switched, benchmarks, undos, frontmost, polish_fn, polish_calls, warms, llm_unloads, history_changed, remote, tx, join, _dir: dir }
+        let _ = &remote;
+        Harness { states, pasted, store, settings, switched, benchmarks, undos, frontmost, polish_fn, polish_calls, warms, llm_unloads, history_changed, tx, join, _dir: dir }
     }
 
     fn kinds(states: &[PillState]) -> Vec<&'static str> {
@@ -2022,6 +2044,135 @@ mod tests {
         assert_eq!(reqs.len(), 2);
         assert_ne!(reqs[0].session, reqs[1].session);
         assert_eq!((reqs[0].index, reqs[1].index), (0, 0));
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    /// A real host server with its own engine, store and polisher, for end-to-end tests.
+    struct RealHost {
+        server: crate::host::HostServer,
+        store: Arc<Mutex<Store>>,
+        _dir: tempfile::TempDir,
+        _llm: privatevox_core::polish::fake_server::FakeLlm,
+    }
+
+    fn real_host(text: &str, polished: &str) -> RealHost {
+        use privatevox_core::polish::fake_server::{Behaviour, FakeLlm};
+        use privatevox_core::polish::{Flavor, HttpLlmClient, Polisher};
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Mutex::new(Store::open(&dir.path().join("host.sqlite")).unwrap()));
+        let llm = FakeLlm::start(Behaviour::OpenAi { reply: polished.into() });
+        let polisher = Arc::new(Polisher::new(Arc::new(HttpLlmClient::new()), vec![llm.endpoint(Flavor::OpenAi)], Duration::from_secs(2)));
+        polisher.check_due(Instant::now());
+        let engine: Arc<Mutex<Box<dyn Engine>>> = Arc::new(Mutex::new(Box::new(engine_saying(text))));
+        let vad = Arc::new(Mutex::new(Vad::new(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../resources/models/ggml-silero-v5.1.2.bin")).unwrap()));
+        let deps = crate::host::HostDeps {
+            engine,
+            store: store.clone(),
+            polisher,
+            vad,
+            settings: Arc::new(Mutex::new(Settings::default())),
+            model_path: Arc::new(Mutex::new(Some(PathBuf::from("/m.bin")))),
+            status: Arc::new(|| privatevox_core::net::StatusReply { name: "Host".into(), version: "t".into(), platform: "macos".into(), gpu: privatevox_core::net::GpuInfo { name: "M1".into(), total_bytes: 8_000_000_000, used_bytes: 4_000_000_000 }, whisper: privatevox_core::net::WhisperInfo { model: "large-v3-turbo".into(), loaded: true, resident_bytes: 1 }, polish: privatevox_core::net::PolishInfo { enabled: true, endpoint_label: Some("fake".into()), model: Some("m".into()), resident_bytes: 0 }, clients: 0 }),
+            models: Arc::new(|| privatevox_core::net::ModelsReply { models: vec![] }),
+            select_model: Arc::new(|_| Ok(())),
+        };
+        let server = crate::host::HostServer::start("127.0.0.1:0", None, deps).unwrap();
+        RealHost { server, store, _dir: dir, _llm: llm }
+    }
+
+    #[test]
+    fn dictation_through_a_real_host_stores_one_row_on_each_side() {
+        let host = real_host("host words", "Host words.");
+        let st = RemoteState::new();
+        st.configure("PC", &format!("http://127.0.0.1:{}", host.server.port()), None, "Mac");
+        st.enabled.store(true, SeqCst);
+        st.healthy.store(true, SeqCst);
+        let h = harness_remote(engine_saying("unused local"), capture_ok(), st.clone());
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(900));
+        assert_eq!(h.pasted.lock().unwrap().clone(), vec!["Host words.".to_string()]);
+        let client_row = last_row(&h);
+        assert_eq!(client_row.engine_kind, "remote:PC");
+        assert_eq!(client_row.polished_text.as_deref(), Some("Host words."));
+        let host_rows = host.store.lock().unwrap().list(10, 0).unwrap();
+        assert_eq!(host_rows.len(), 1, "exactly one host row: {:?}", host_rows.iter().map(|r| (&r.mode, &r.polish_status)).collect::<Vec<_>>());
+        assert_eq!(host_rows[0].mode, "clean");
+        assert_eq!(host_rows[0].polish_status, "ok");
+        assert_eq!(host_rows[0].polished_text.as_deref(), Some("Host words."));
+        assert_eq!(host_rows[0].engine_kind, "host");
+        assert_eq!(host_rows[0].app_name.as_deref(), Some("Mac"));
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn fallback_is_sticky_within_a_dictation() {
+        let host = FakeHost::start(HostBehaviour::Ok { text: "pc".into(), polished: "".into(), token: None });
+        let port = host.port();
+        let st = in_use(&host);
+        let engine: Arc<Mutex<Box<dyn Engine>>> = Arc::new(Mutex::new(Box::new(engine_saying("local"))));
+        let fell_back = Arc::new(AtomicBool::new(false));
+        drop(host);
+        let t = transcribe_routed(&st, &engine, &[0.1; 1600], &DecodeOptions::default(), true, &fell_back, Some(&PathBuf::from("/m.bin")), true).unwrap();
+        assert_eq!(t.text, "local");
+        assert!(fell_back.load(SeqCst));
+        // The host comes back and the loop marks it healthy; this dictation must still stay local.
+        let host2 = FakeHost::start_on(HostBehaviour::Ok { text: "pc".into(), polished: "".into(), token: None }, port);
+        st.healthy.store(true, SeqCst);
+        let t = transcribe_routed(&st, &engine, &[0.1; 1600], &DecodeOptions::default(), true, &fell_back, Some(&PathBuf::from("/m.bin")), true).unwrap();
+        assert_eq!(t.text, "local");
+        assert!(host2.requests.lock().unwrap().is_empty());
+        // A dictation that started local never switches to the host midway either.
+        let fresh = Arc::new(AtomicBool::new(false));
+        let t = transcribe_routed(&st, &engine, &[0.1; 1600], &DecodeOptions::default(), false, &fresh, Some(&PathBuf::from("/m.bin")), true).unwrap();
+        assert_eq!(t.text, "local");
+        assert!(host2.requests.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn benchmark_runs_locally_even_when_the_host_is_in_use() {
+        let host = FakeHost::start(HostBehaviour::Ok { text: "pc".into(), polished: "".into(), token: None });
+        let st = in_use(&host);
+        let h = harness_remote(engine_saying("x"), capture_ok(), st.clone());
+        h.tx.send(Cmd::Benchmark("large-v3-turbo".into())).unwrap();
+        std::thread::sleep(Duration::from_millis(800));
+        assert_eq!(h.benchmarks.lock().unwrap().len(), 1, "benchmark completed");
+        assert!(host.requests.lock().unwrap().is_empty(), "a benchmark measures this machine, never the host");
+        assert!(st.in_use(), "the host was not marked unhealthy by the benchmark");
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn host_with_polish_off_marks_the_row_unpolished() {
+        let host = FakeHost::start(HostBehaviour::OkPolishOff { text: "pc text".into() });
+        let st = in_use(&host);
+        let h = harness_remote(engine_saying("x"), capture_ok(), st.clone());
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        let row = last_row(&h);
+        assert_eq!(row.polish_status, "unpolished");
+        assert!(row.polished_text.is_none());
+        let states = h.states.lock().unwrap().clone();
+        let preview = states.iter().rev().find_map(|s| if let PillState::Pasted { preview } = s { Some(preview.clone()) } else { None }).unwrap();
+        assert!(preview.starts_with("Unpolished"), "{preview}");
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn cancel_clears_a_pending_fallback_notice() {
+        let host = FakeHost::start(HostBehaviour::Ok { text: "pc".into(), polished: "".into(), token: None });
+        let st = in_use(&host);
+        let h = harness_remote(engine_saying("plain"), capture_ok(), st.clone());
+        st.set_notice("PC unreachable, transcribed locally");
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Cancel).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(st.take_notice().is_none(), "cancel consumed the notice");
         h.tx.send(Cmd::Quit).unwrap();
         h.join.join().unwrap();
     }

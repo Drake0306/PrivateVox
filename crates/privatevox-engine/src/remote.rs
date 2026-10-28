@@ -22,6 +22,9 @@ pub struct RemoteState {
     pub last_error: Mutex<Option<String>>,
     notice: Mutex<Option<String>>,
     session_counter: AtomicU64,
+    /// Mode id of the dictation in flight and whether the client will ask the host to polish it.
+    mode: Mutex<String>,
+    polish: AtomicBool,
 }
 
 pub const FALLBACK_NOTICE: &str = "PC unreachable, transcribed locally";
@@ -40,6 +43,8 @@ impl RemoteState {
             last_error: Mutex::new(None),
             notice: Mutex::new(None),
             session_counter: AtomicU64::new(0),
+            mode: Mutex::new("raw".into()),
+            polish: AtomicBool::new(false),
         })
     }
 
@@ -84,6 +89,20 @@ impl RemoteState {
 
     pub fn session(&self) -> String {
         self.session.lock().unwrap().clone()
+    }
+
+    /// What the dictation in flight is for: its mode, and whether `/v1/polish` will follow the final chunk.
+    pub fn set_dictation(&self, mode_id: &str, polish: bool) {
+        *self.mode.lock().unwrap() = mode_id.to_string();
+        self.polish.store(polish, Ordering::SeqCst);
+    }
+
+    pub fn dictation_mode(&self) -> String {
+        self.mode.lock().unwrap().clone()
+    }
+
+    pub fn dictation_polish(&self) -> bool {
+        self.polish.load(Ordering::SeqCst)
     }
 
     pub fn set_notice(&self, text: &str) {
@@ -139,7 +158,8 @@ impl Engine for RemoteEngine {
             pcm: encode_pcm(pcm),
             language: opts.language.clone(),
             translate: opts.translate,
-            mode: "raw".into(),
+            mode: self.state.dictation_mode(),
+            polish: self.state.dictation_polish(),
         };
         let clip_secs = pcm.len() as f32 / 16_000.0;
         let timeout = self.timeout.max(crate::policy::deadline_for(clip_secs));
