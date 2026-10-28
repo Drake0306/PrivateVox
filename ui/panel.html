@@ -302,7 +302,6 @@
     const onHost = !!mem.source_label;
     $('gpuTitle').textContent = onHost ? 'GPU memory · on ' + mem.source_label : 'GPU memory';
     $('machine').textContent = onHost ? (mem.adapter || mem.source_label) : machine;
-    models = models.length ? models : [];
     if (onHost) {
       try { const rm = (remoteModelsCache && Date.now() - remoteModelsCache.at < 30000) ? remoteModelsCache.value : (remoteModelsCache = { at: Date.now(), value: await inv('remote_models') }).value; $('modelPick').innerHTML = rm.models.map(m => `<option value="${m.id}" ${m.active ? 'selected' : ''} ${m.downloaded ? '' : 'disabled'}>${esc(m.id)} on ${esc(mem.source_label)}${m.downloaded ? '' : ' (not downloaded)'}</option>`).join(''); } catch (e) { /* keep the local list */ }
     }

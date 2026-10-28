@@ -9,6 +9,13 @@ pub enum SpokenCommand {
     Cancel,
 }
 
+impl SpokenCommand {
+    /// Drops or undoes text, so it is only taken after a sentence break (or alone).
+    pub fn is_destructive(self) -> bool {
+        matches!(self, SpokenCommand::DeleteThat | SpokenCommand::Undo | SpokenCommand::Cancel)
+    }
+}
+
 /// Phrases, longest first so "undo that" wins over "undo".
 const PHRASES: &[(&str, SpokenCommand)] = &[
     ("new paragraph", SpokenCommand::NewParagraph),
@@ -41,6 +48,10 @@ pub fn strip_trailing(text: &str) -> (String, Option<SpokenCommand>) {
         let tail: Vec<String> = words[words.len() - n..].iter().map(|w| core(w)).collect();
         if tail.join(" ") == *phrase {
             let rest = words[..words.len() - n].join(" ");
+            // "tell him I will cancel." is text; "Send the report. Cancel." is a command. Breaks are meant mid-sentence.
+            if cmd.is_destructive() && !rest.is_empty() && !rest.ends_with(['.', '!', '?']) {
+                return (text.to_string(), None);
+            }
             return (rest, Some(*cmd));
         }
     }
@@ -56,12 +67,12 @@ mod tests {
         assert_eq!(strip_trailing("send the report new line"), ("send the report".into(), Some(SpokenCommand::NewLine)));
         assert_eq!(strip_trailing("send the report, newline."), ("send the report,".into(), Some(SpokenCommand::NewLine)));
         assert_eq!(strip_trailing("first point new paragraph"), ("first point".into(), Some(SpokenCommand::NewParagraph)));
-        assert_eq!(strip_trailing("that was wrong delete that"), ("that was wrong".into(), Some(SpokenCommand::DeleteThat)));
-        assert_eq!(strip_trailing("that was wrong scratch that"), ("that was wrong".into(), Some(SpokenCommand::DeleteThat)));
-        assert_eq!(strip_trailing("hmm undo"), ("hmm".into(), Some(SpokenCommand::Undo)));
-        assert_eq!(strip_trailing("hmm undo that"), ("hmm".into(), Some(SpokenCommand::Undo)));
-        assert_eq!(strip_trailing("no wait cancel"), ("no wait".into(), Some(SpokenCommand::Cancel)));
-        assert_eq!(strip_trailing("no wait never mind."), ("no wait".into(), Some(SpokenCommand::Cancel)));
+        assert_eq!(strip_trailing("that was wrong. delete that"), ("that was wrong.".into(), Some(SpokenCommand::DeleteThat)));
+        assert_eq!(strip_trailing("that was wrong! scratch that"), ("that was wrong!".into(), Some(SpokenCommand::DeleteThat)));
+        assert_eq!(strip_trailing("hmm. undo"), ("hmm.".into(), Some(SpokenCommand::Undo)));
+        assert_eq!(strip_trailing("hmm? undo that"), ("hmm?".into(), Some(SpokenCommand::Undo)));
+        assert_eq!(strip_trailing("no wait. cancel"), ("no wait.".into(), Some(SpokenCommand::Cancel)));
+        assert_eq!(strip_trailing("no wait. never mind."), ("no wait.".into(), Some(SpokenCommand::Cancel)));
         assert_eq!(strip_trailing("Please do it. New Line"), ("Please do it.".into(), Some(SpokenCommand::NewLine)));
     }
 
@@ -78,5 +89,16 @@ mod tests {
         assert_eq!(strip_trailing("cancel"), (String::new(), Some(SpokenCommand::Cancel)));
         assert_eq!(strip_trailing("Delete that."), (String::new(), Some(SpokenCommand::DeleteThat)));
         assert!(crate::settings::Settings::default().spoken_commands);
+    }
+
+    #[test]
+    fn destructive_commands_need_a_sentence_break() {
+        // A sentence that merely ends in "cancel" or "undo" is text, not a command: nothing is lost and no ⌘Z is sent.
+        for t in ["tell him I will cancel.", "I don't know what to undo", "we might never mind", "the thing to delete that"] {
+            assert_eq!(strip_trailing(t), (t.to_string(), None), "{t}");
+        }
+        assert_eq!(strip_trailing("Send the report. Cancel."), ("Send the report.".into(), Some(SpokenCommand::Cancel)));
+        // Line breaks are meant mid-sentence, so they need no break before them.
+        assert_eq!(strip_trailing("the first item new line"), ("the first item".into(), Some(SpokenCommand::NewLine)));
     }
 }

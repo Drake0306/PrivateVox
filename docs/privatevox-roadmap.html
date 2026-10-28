@@ -48,7 +48,7 @@ footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--line);font-si
 <header class="wrap">
   <div class="eyebrow">Status · 29 Oct 2026 · 0.5.0-alpha.1, phase 5 built</div>
   <h1 style="margin-top:.4rem">PrivateVox Roadmap</h1>
-  <p class="lede">What the design promised, what is built, what is next. Three of four plans are done: the Mac build dictates, switches models, shows its memory, and cleans up the text with a local or LAN LLM that fails over on its own. The extras, the Windows pass on the RX 9070 and the release polish are what is left.</p>
+  <p class="lede">What the design promised, what is built, what is next. All five phases are built on the Mac: it dictates, switches models, shows its memory, cleans up the text with a local or LAN LLM, hands the work to a PC on the LAN, and now previews, auto-stops and takes spoken commands. The Windows pass on the RX 9070 and a signed build are what is left.</p>
   <div class="summary">
     <div class="sum done"><div class="n">5 / 5</div><div class="k">plans complete on the Mac</div></div>
     <div class="sum next"><div class="n">PC</div><div class="k">left: Windows pass and RX 9070 timing</div></div>
@@ -135,7 +135,7 @@ footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--line);font-si
     <li><span class="mark done">✓</span><div><b>A5 · Sound and visual cues</b><small>A soft click on start and stop, another on "Nothing heard", all off-able. Half a session.</small></div></li>
     <li><span class="mark done">✓</span><div><b>A3 · Spoken commands</b><small>"new line", "delete that", "undo", "cancel" at the end of a dictation; editable list. One session; medium risk of false positives, limited to the last phrase.</small></div></li>
     <li><span class="mark done">✓</span><div><b>A6 · Deferred-minors cleanup</b><small>The twenty small items the three reviews left. One session.</small></div></li>
-    <li><span class="mark todo"></span><div><b>B1 · MLX engine spike</b><small>Measure mlx-whisper against whisper.cpp on the same clips first; build the engine only if it wins by 30 % or more. Half a day to measure.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>B1 · MLX engine spike</b><small>Measured on 29 Oct: even on a 26 s clip, 35 % slower on short and medium clips. Not adopted; whisper.cpp stays the only engine.</small></div></li>
     <li><span class="mark todo"></span><div><b>B2 · Translate to any language via the LLM</b><small>Today Translate only goes to English through Whisper. Half a session, if you need it.</small></div></li>
     <li><span class="mark todo"></span><div><b>C2 · Auto-update and signed builds</b><small>Needs an Apple Developer account and a Windows certificate first; then one session with Tauri's updater.</small></div></li>
     <li><span class="mark todo"></span><div><b>C3 · Host mode extras</b><small>Shared dictionary, client-driven host downloads, queue indicator. Decide after the first real PC-to-Mac run.</small></div></li>

@@ -80,6 +80,9 @@ jobs:
       - name: Tauri CLI
         run: npm install -g @tauri-apps/cli@2.12.4
 
+      - name: Panel JS lint (syntax and const reassignment)
+        run: node scripts/check-panel-js.mjs ui/panel.html ui/pill.html
+
       - name: Build and upload to the release
         uses: tauri-apps/tauri-action@v0
         env:
