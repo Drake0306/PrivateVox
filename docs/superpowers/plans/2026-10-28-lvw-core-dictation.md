@@ -18,7 +18,7 @@
 - Audio inside the app is always 16 kHz mono f32 in [-1, 1] (§4.3).
 - One engine owner: only `WorkerEngine` loads, swaps or frees a model; quit, idle timer and Pause all call `WorkerEngine::unload` (§5, §18.1).
 - Native Whisper code runs only in the worker process; the worker exits when its stdin reaches EOF (§18.1).
-- Decode defaults (spike decision): greedy `best_of 1`, flash attention on, language fixed, `no_context`, `suppress_blank`, `suppress_nst`, no timestamps, 4 threads, `audio_ctx = clamp(round_up_64(1500 × (seconds + 2) / 30), 768, 1500)`, repetition guard re-runs once at 1500.
+- Decode defaults (spike decision): greedy `best_of 1`, flash attention on, language fixed, `no_context`, `suppress_blank`, `suppress_nst`, timestamps on (`set_no_timestamps(false)`; off loses words at the 30 s window boundary), 4 threads, one `WhisperState` reused per loaded model, `audio_ctx = clamp(round_up_64(1500 × (seconds + 2) / 30), 768, 1500)`, repetition guard re-runs once at 1500.
 - Clips under 300 ms are discarded; clips under 1.25 s are zero-padded to 1.25 s; maximum clip 5 minutes with auto-stop (§4.3, §18.5).
 - VAD smoothing constants: pre-roll 450 ms, onset 60 ms, hangover 450 ms; Silero thresholds 0.5, min speech 250 ms, min silence 100 ms, speech pad 30 ms (§18.4, §18.6).
 - Hotkey defaults: push-to-talk Right Option (single modifier, via rdev `Key::AltGr`), toggle `Ctrl+Shift+Space` (plugin); hold-or-toggle threshold 300 ms (§4.2, §18.10).

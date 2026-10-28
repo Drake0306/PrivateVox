@@ -85,11 +85,24 @@ Core ML is not faster than Metal on this M1 for the turbo encoder (3.2 vs 2.8 s 
 4. **Flash attention is worth about 20% on turbo** (22% on the 30 s clip) and 10–12% on large-v3, with no text change.
 5. **Language auto-detect costs 2.6 s per clip on whisper-rs** (a second encoder pass) and is nearly free on transcribe-cpp. Fixing the language (§18.7) removes the cost on either.
 6. **Beam 5 is 15% slower on turbo and 30–70% slower on large-v3** for no accuracy gain on these clips. Greedy is the right default.
-7. **The 30 s window boundary loses words.** On the 31.6 s clip whisper-rs dropped a whole phrase at the boundary; transcribe-cpp kept it. Chunking at pauses so every run stays under 30 s (§18.6) is an accuracy fix as well as a latency one.
+7. **The 30 s window boundary loses words only with timestamps disabled.** On the 31.6 s clip whisper-rs with `no_timestamps(true)` dropped a whole phrase at the boundary; the retest with timestamps on kept it (WER 0.136 → 0.058, same as transcribe-cpp) at no time cost (6.2 vs 6.1 s). whisper.cpp advances by a full window when it has no segment timestamps. **Decode default changed: timestamps stay on.** Chunking at pauses (§18.6) remains the latency fix for long clips.
 8. **Both wrote "Tori" for "Tauri" without a prompt.** With the initial prompt "Tauri, LVW." transcribe-cpp wrote "Tauri" correctly on turbo (WER 0.058 → 0.049, exactly that word) but not on large-v3. The dictionary / initial prompt path (§18.8) works and is needed.
 
-9. **Core ML brings nothing here.** Equal or slower than Metal on an M1 base, and incompatible with reduced audio context. Not used in v1; revisit only for Intel-free machines with a stronger Neural Engine, as an opt-in.
+9. **Core ML is not worth its cost here.** Measured fairly (state reused) it is 10–15% faster than Metal without flash attention and level with it, uses ~1 GB more memory, and is incompatible with the reduced audio context that gives 2×. Not used in v1; revisit as an opt-in on machines with a stronger Neural Engine.
 10. **large-v3 is 1.7× slower than turbo** on the same engine (10.6 vs 6.1 s on 30 s; 4.4 vs 2.8 s on 10 s) and was more accurate on one proper noun. It stays the "Accuracy" option, never the default.
+
+## Retests after review
+
+**Timestamps on (whisper-rs, turbo, greedy, en):** 30 s clip 6241 / 6201 ms, WER 0.058 (full text kept); 7.5 s clip 2866 / 2860 ms; 0.7 s clip 2693 / 2742 ms. Same speed as timestamps off, boundary loss gone.
+
+**Core ML and Metal with one decode state reused per context** (the first Core ML table created a fresh state per call, which made every Core ML run cold):
+
+| Config | Core ML 30s | Metal 30s | Core ML 10s | Metal 10s | Core ML short | Metal short | RSS Core ML | RSS Metal |
+|---|---|---|---|---|---|---|---|---|
+| greedy, en (warm) | 5009 | 5981 | 2403 | 2741 | 2086 | 2556 | 2.2 GB | 1.3 GB |
+| greedy, en, flash (warm) | 4877 | 4827 | 2180 | 2158 | 2009 | 2282 | 2.2 GB | 1.3 GB |
+
+With the state reused Core ML is 10–15% faster than Metal without flash attention and level with Metal plus flash attention, costs about 1 GB more resident memory and a 1.2 GB download, and still cannot run a reduced audio context. The decision below stands; the numbers are now fair.
 
 ## Decision
 
@@ -101,9 +114,9 @@ Core ML is not faster than Metal on this M1 for the turbo encoder (3.2 vs 2.8 s 
 4. Language ID: v1 defaults to one spoken language (no detection cost). Multi-language users get Whisper's own detection on a short head with reduced audio context, which is cheap; a separate identifier model is not needed in v1.
 5. transcribe-cpp remains documented as the alternative engine behind the `Engine` trait if Parakeet or streaming models are wanted later.
 
-**Default decode settings (turbo, "Fast" tier):** greedy, `best_of 1`, flash attention on, language fixed from the spoken-languages setting, `no_context` on, `suppress_blank` and `suppress_nst` on, timestamps off, 4 threads on the M1, `audio_ctx` from clip length: `clamp(round_up_64(1500 × (seconds + 2) / 30), 768, 1500)` with a repetition guard (sweep below). **"Accuracy" tier:** large-v3, same settings, full audio context, still greedy (beam 5 cost 15–70% for no measured gain).
+**Default decode settings (turbo, "Fast" tier):** greedy, `best_of 1`, flash attention on, language fixed from the spoken-languages setting, `no_context` on, `suppress_blank` and `suppress_nst` on, **timestamps on** (see retest), 4 threads on the M1, `audio_ctx` from clip length: `clamp(round_up_64(1500 × (seconds + 2) / 30), 768, 1500)` with a repetition guard (sweep below). **"Accuracy" tier:** large-v3, same settings, full audio context, still greedy (beam 5 cost 15–70% for no measured gain).
 
-**Core ML:** not built into v1.
+**Core ML:** not built into v1 (retested with a reused state: at best 10–15% without flash attention, nothing with it, +1 GB memory, incompatible with the audio-context lever).
 
 **Chunking:** every decode run stays under 30 s of audio (§18.6), which also fixes the boundary word loss seen on the 31.6 s clip.
 
