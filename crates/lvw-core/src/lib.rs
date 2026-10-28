@@ -2,6 +2,7 @@
 
 pub mod audio;
 pub mod hotkeys;
+pub mod lifecycle;
 pub mod settings;
 pub mod store;
 pub mod textnorm;

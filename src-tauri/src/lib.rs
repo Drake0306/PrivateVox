@@ -3,34 +3,68 @@
 pub mod adapters;
 pub mod commands;
 pub mod frontmost;
+pub mod hotkeys;
+pub mod lifecycle;
 pub mod paste;
 pub mod pipeline;
 pub mod state;
+pub mod tray;
 
 use crate::adapters::{MicCapture, SystemPaste};
+use crate::lifecycle::SharedEngine;
 use crate::paste::Paster;
 use crate::pipeline::{Cmd, Coordinator, Deps, PillState};
 use crate::state::{AppPaths, AppState};
+use lvw_core::lifecycle::{IdleTimer, LockFile};
 use lvw_core::settings::Settings;
 use lvw_core::store::Store;
 use lvw_core::vad::Vad;
-use lvw_engine::supervisor::WorkerEngine;
+use lvw_engine::supervisor::{Engine, WorkerEngine};
 use std::process::Command;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, RunEvent};
 use tauri_plugin_log::{Target, TargetKind};
+
+#[cfg(target_os = "macos")]
+tauri_nspanel::tauri_panel! {
+    panel!(PillPanel {
+        config: {
+            can_become_key_window: false,
+            is_floating_panel: true,
+            becomes_key_only_if_needed: true,
+            hides_on_deactivate: false
+        }
+    })
+}
 
 /// Builds and runs the Tauri app. Never returns.
 pub fn run() {
-    tauri::Builder::default()
+    let lock: Arc<Mutex<Option<LockFile>>> = Arc::new(Mutex::new(None));
+    let engine_slot: Arc<Mutex<Option<SharedEngine>>> = Arc::new(Mutex::new(None));
+    let (lock_for_exit, engine_for_exit) = (lock.clone(), engine_slot.clone());
+
+    let mut builder = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("panel") {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(
             tauri_plugin_log::Builder::new()
                 .targets([Target::new(TargetKind::LogDir { file_name: Some("lvw".into()) }), Target::new(TargetKind::Stdout)])
                 .level(log::LevelFilter::Info)
                 .build(),
         )
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build());
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.plugin(tauri_nspanel::init());
+    }
+
+    let app = builder
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
             commands::set_settings,
@@ -44,11 +78,20 @@ pub fn run() {
             commands::debug_stop,
             commands::debug_cancel,
         ])
-        .setup(|app| {
+        .setup(move |app| {
             log::info!("LVW {} starting", lvw_core::version());
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             let paths = AppPaths::new(data_dir);
+
+            let (lockfile, stale) = LockFile::acquire(&paths.lock())?;
+            if stale {
+                log::warn!("last session ended unexpectedly (stale lock file)");
+            }
+            *lock.lock().unwrap() = Some(lockfile);
 
             let settings = Settings::load(&paths.settings()).unwrap_or_else(|e| {
                 log::warn!("settings unreadable, using defaults: {e}");
@@ -61,13 +104,12 @@ pub fn run() {
             let vad_path = if vad_path.exists() {
                 vad_path
             } else {
-                // `cargo tauri dev` serves resources from the source tree.
                 std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../resources/models/ggml-silero-v5.1.2.bin")
             };
             let vad = Vad::new(&vad_path)?;
 
-            let model_id = settings.lock().map(|s| s.model_id.clone()).unwrap_or_default();
-            let model_path = paths.model_file(&model_id);
+            let current = settings.lock().map(|s| s.clone()).unwrap_or_default();
+            let model_path = paths.model_file(&current.model_id);
             let model_path = if model_path.exists() {
                 Some(model_path)
             } else {
@@ -77,21 +119,18 @@ pub fn run() {
 
             let mut worker_cmd = Command::new(std::env::current_exe()?);
             worker_cmd.arg("--engine-worker");
-            let engine = WorkerEngine::new(worker_cmd);
+            let engine: SharedEngine = Arc::new(Mutex::new(Box::new(WorkerEngine::new(worker_cmd)) as Box<dyn Engine>));
+            *engine_slot.lock().unwrap() = Some(engine.clone());
 
-            let (post_release, paste_method) = settings
-                .lock()
-                .map(|s| (s.post_release_ms, s.paste_method))
-                .unwrap_or((150, lvw_core::settings::PasteMethod::Clipboard));
-            let _ = post_release;
-            let paster = Paster::new(paste_method, Duration::from_millis(150), paths.clipboard_backup());
-
+            let idle = Arc::new(Mutex::new(IdleTimer::new(current.idle_unload_minutes)));
+            let paster = Paster::new(current.paste_method, Duration::from_millis(150), paths.clipboard_backup());
             let deps = Deps {
-                engine: Box::new(engine),
+                engine: engine.clone(),
                 capture: Box::new(MicCapture::new(settings.clone())),
                 paste: Box::new(SystemPaste::new(paster)),
                 model_path,
                 frontmost: Box::new(frontmost::frontmost_app_name),
+                idle: idle.clone(),
             };
 
             let handle = app.handle().clone();
@@ -106,7 +145,39 @@ pub fn run() {
             let tx2 = tx.clone();
             std::thread::Builder::new().name("lvw-pipeline".into()).spawn(move || coord.run(rx, tx2))?;
 
-            // Dev aid: LVW_DEBUG_SCRIPT="start:1000,stop:4000" sends pipeline commands on a schedule.
+            // Pill window: non-activating floating panel on every space.
+            #[cfg(target_os = "macos")]
+            if let Some(pill) = app.get_webview_window("pill") {
+                use tauri_nspanel::WebviewWindowExt;
+                match pill.to_panel::<PillPanel>() {
+                    Ok(panel) => {
+                        use tauri_nspanel::{CollectionBehavior, PanelLevel, StyleMask};
+                        panel.set_level(PanelLevel::Floating.value());
+                        let _ = panel.add_style_mask(StyleMask::empty().nonactivating_panel().value());
+                        panel.set_collection_behavior(CollectionBehavior::new().can_join_all_spaces().full_screen_auxiliary().value());
+                        log::info!("pill converted to a non-activating panel");
+                    }
+                    Err(e) => log::warn!("pill panel conversion failed: {e}"),
+                }
+            }
+
+            let tray = tray::build(app.handle())?;
+            let tray_for_idle = tray.clone();
+            lifecycle::spawn_idle_watch(engine.clone(), idle.clone(), tx.clone(), Box::new(move |remaining| {
+                let text = match remaining {
+                    Some(d) => format!("LVW · unloads in {} min", (d.as_secs() + 59) / 60),
+                    None => "LVW".to_string(),
+                };
+                tray::set_status(&tray_for_idle, &text);
+            }));
+
+            if let Err(e) = hotkeys::install(app.handle(), &current, tx.clone()) {
+                log::error!("hotkeys: {e}");
+            }
+
+            let exit_handle = app.handle().clone();
+            let _ = ctrlc::set_handler(move || exit_handle.exit(0));
+
             if let Ok(script) = std::env::var("LVW_DEBUG_SCRIPT") {
                 let tx = tx.clone();
                 std::thread::spawn(move || {
@@ -130,6 +201,27 @@ pub fn run() {
             app.manage(AppState { paths, settings, store, tx: Mutex::new(tx) });
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running LVW");
+        .build(tauri::generate_context!())
+        .expect("error while building LVW");
+
+    app.run(move |app, event| match event {
+        RunEvent::ExitRequested { code, api, .. } => {
+            if code.is_none() {
+                // The last window closed; LVW lives in the tray.
+                api.prevent_exit();
+            }
+        }
+        RunEvent::Exit => {
+            log::info!("exit: unloading engine");
+            let engine = engine_for_exit.lock().ok().and_then(|e| e.clone());
+            if let Some(engine) = engine {
+                let _ = lifecycle::shutdown(engine, Duration::from_secs(2));
+            }
+            if let Ok(mut l) = lock_for_exit.lock() {
+                l.take();
+            }
+            let _ = app;
+        }
+        _ => {}
+    });
 }

@@ -15,6 +15,10 @@ tauri-build = { version = "2.7.3", features = [] }
 [dependencies]
 tauri = { version = "2.12.4", features = ["tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-log = "2.10.1"
+tauri-plugin-global-shortcut = "2.4.1"
+tauri-plugin-single-instance = "2.5.4"
+rdev = { git = "https://github.com/rustdesk-org/rdev" }
+ctrlc = { version = "3", features = ["termination"] }
 log.workspace = true
 anyhow.workspace = true
 serde.workspace = true
@@ -25,6 +29,7 @@ arboard = "3.6.1"
 enigo = "0.6.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+tauri-nspanel = "2.1.1"
 objc2 = "0.6.5"
 objc2-foundation = "0.3.2"
 objc2-app-kit = { version = "0.3.2", features = ["NSWorkspace", "NSRunningApplication"] }

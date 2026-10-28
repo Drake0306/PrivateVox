@@ -3,6 +3,8 @@
 
 use crate::paste::PasteOutcome;
 use lvw_core::audio::{level_db, ClipBuffer, SAMPLE_RATE};
+use lvw_core::hotkeys::{Effect, Input, Machine};
+use lvw_core::lifecycle::IdleTimer;
 use lvw_core::settings::Settings;
 use lvw_core::store::{NewDictation, Store};
 use lvw_core::textnorm::normalize;
@@ -52,6 +54,12 @@ pub enum Cmd {
     Tick(u64),
     /// Settings changed; re-read what the pipeline caches.
     SettingsChanged,
+    /// A hotkey edge, fed through the activation machine.
+    Key(Input),
+    /// The idle timer unloaded the model.
+    ModelUnloaded,
+    /// Tray: unload now and stay paused until the next dictation.
+    PauseAndUnload,
     Quit,
 }
 
@@ -65,11 +73,12 @@ pub trait PasteSink: Send {
 }
 
 pub struct Deps {
-    pub engine: Box<dyn Engine>,
+    pub engine: Arc<Mutex<Box<dyn Engine>>>,
     pub capture: Box<dyn CaptureSource>,
     pub paste: Box<dyn PasteSink>,
     pub model_path: Option<PathBuf>,
     pub frontmost: Box<dyn Fn() -> Option<String> + Send>,
+    pub idle: Arc<Mutex<IdleTimer>>,
 }
 
 struct Recording {
@@ -88,6 +97,7 @@ pub struct Coordinator {
     /// Clip waiting for the model file to appear.
     queued: Option<Vec<f32>>,
     generation: u64,
+    machine: Machine,
 }
 
 fn hotkey_hint(s: &Settings) -> String {
@@ -103,7 +113,25 @@ fn hotkey_hint(s: &Settings) -> String {
 
 impl Coordinator {
     pub fn new(deps: Deps, settings: Arc<Mutex<Settings>>, store: Arc<Mutex<Store>>, vad: Vad, emit: Box<dyn Fn(PillState) + Send>) -> Self {
-        Coordinator { deps, settings, store, vad, emit, recording: None, queued: None, generation: 0 }
+        let machine = {
+            let s = settings.lock().map(|s| s.clone()).unwrap_or_default();
+            Machine::new(s.activation, Duration::from_millis(s.hold_threshold_ms))
+        };
+        Coordinator { deps, settings, store, vad, emit, recording: None, queued: None, generation: 0, machine }
+    }
+
+    fn apply(&mut self, effect: Effect, tx: &Sender<Cmd>) {
+        match effect {
+            Effect::StartRecording => self.start(tx),
+            Effect::StopRecording => self.stop(tx),
+            Effect::CancelRecording => self.cancel(),
+            Effect::Nothing => {}
+        }
+    }
+
+    fn machine_input(&mut self, input: Input, tx: &Sender<Cmd>) {
+        let effect = self.machine.on(input, Instant::now());
+        self.apply(effect, tx);
     }
 
     fn settings(&self) -> Settings {
@@ -137,9 +165,30 @@ impl Coordinator {
                 }
                 Cmd::Tick(gen) => self.tick(gen, &tx),
                 Cmd::SettingsChanged => {
+                    let s = self.settings();
+                    self.machine.set_activation(s.activation, Duration::from_millis(s.hold_threshold_ms));
+                    if let Ok(mut t) = self.deps.idle.lock() {
+                        t.set_minutes(s.idle_unload_minutes, Instant::now());
+                    }
                     if self.recording.is_none() {
                         self.idle();
                     }
+                }
+                Cmd::Key(input) => self.machine_input(input, &tx),
+                Cmd::ModelUnloaded => {
+                    if self.recording.is_none() {
+                        self.idle();
+                    }
+                }
+                Cmd::PauseAndUnload => {
+                    self.cancel();
+                    if let Ok(mut e) = self.deps.engine.lock() {
+                        let _ = e.unload();
+                    }
+                    if let Ok(mut t) = self.deps.idle.lock() {
+                        t.clear();
+                    }
+                    self.idle();
                 }
                 Cmd::Quit => break,
             }
@@ -147,7 +196,9 @@ impl Coordinator {
         if self.recording.is_some() {
             self.deps.capture.stop();
         }
-        let _ = self.deps.engine.unload();
+        if let Ok(mut e) = self.deps.engine.lock() {
+            let _ = e.unload();
+        }
     }
 
     fn start(&mut self, tx: &Sender<Cmd>) {
@@ -175,9 +226,11 @@ impl Coordinator {
             Ok(()) => {
                 self.recording = Some(Recording { buffer, level, started: Instant::now() });
                 self.generation += 1;
+                let _ = self.machine.on(Input::StartResult(true), Instant::now());
                 schedule(tx, Cmd::Tick(self.generation), Duration::from_millis(100));
             }
             Err(e) => {
+                let _ = self.machine.on(Input::StartResult(false), Instant::now());
                 self.error(&format!("Microphone unavailable: {e}"));
                 self.schedule_idle(tx);
             }
@@ -202,6 +255,15 @@ impl Coordinator {
     fn schedule_idle(&mut self, tx: &Sender<Cmd>) {
         self.generation += 1;
         schedule(tx, Cmd::Tick(self.generation), Duration::from_millis(2000));
+        self.pipeline_done(tx);
+    }
+
+    /// Tells the activation machine the pipeline drained; a remembered press starts the next recording.
+    fn pipeline_done(&mut self, tx: &Sender<Cmd>) {
+        if matches!(self.machine.stage(), lvw_core::hotkeys::Stage::Processing) {
+            let effect = self.machine.on(Input::PipelineDone, Instant::now());
+            self.apply(effect, tx);
+        }
     }
 
     fn cancel(&mut self) {
@@ -224,6 +286,7 @@ impl Coordinator {
         if is_too_short(&pcm, 300) {
             log::info!("pipeline: clip under 300 ms discarded");
             self.idle();
+            self.pipeline_done(tx);
             return;
         }
         self.decode_and_paste(pcm, tx);
@@ -256,14 +319,16 @@ impl Coordinator {
         let speech = pad_min(speech, 1.25);
         let duration_ms = (speech.len() as f32 / SAMPLE_RATE as f32 * 1000.0) as u32;
 
-        if !self.deps.engine.is_loaded() {
+        let loaded = self.deps.engine.lock().map(|e| e.is_loaded()).unwrap_or(false);
+        if !loaded {
             let Some(path) = self.deps.model_path.clone() else {
                 (self.emit)(PillState::LoadingModel { progress: None });
                 self.queued = Some(speech);
                 return;
             };
             (self.emit)(PillState::LoadingModel { progress: None });
-            if let Err(e) = self.deps.engine.load(&path, settings.flash_attention) {
+            let load = self.deps.engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| e.load(&path, settings.flash_attention));
+            if let Err(e) = load {
                 self.error(&format!("Model failed to load: {e}"));
                 self.schedule_idle(tx);
                 return;
@@ -274,7 +339,8 @@ impl Coordinator {
         let language = if settings.spoken_languages.len() == 1 { settings.spoken_languages.first().cloned() } else { None };
         let opts = DecodeOptions { language, translate: false, initial_prompt: None, n_threads: 4 };
         let t = Instant::now();
-        let transcript = match self.deps.engine.transcribe(&speech, &opts) {
+        let transcript = self.deps.engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| e.transcribe(&speech, &opts));
+        let transcript = match transcript {
             Ok(t) => t,
             Err(e) => {
                 self.error(&format!("Transcription failed: {e}"));
@@ -282,6 +348,9 @@ impl Coordinator {
                 return;
             }
         };
+        if let Ok(mut idle) = self.deps.idle.lock() {
+            idle.touch(Instant::now());
+        }
         let decode_ms = t.elapsed().as_millis() as u64;
         let text = normalize(&transcript.text);
         if text.is_empty() {
@@ -433,11 +502,12 @@ mod tests {
         let states = Arc::new(Mutex::new(Vec::new()));
         let pasted = Arc::new(Mutex::new(Vec::new()));
         let deps = Deps {
-            engine: Box::new(engine),
+            engine: Arc::new(Mutex::new(Box::new(engine) as Box<dyn Engine>)),
             capture: Box::new(capture),
             paste: Box::new(FakePaste(pasted.clone())),
             model_path: Some(PathBuf::from("/fake/model.bin")),
             frontmost: Box::new(|| Some("TestApp".into())),
+            idle: Arc::new(Mutex::new(lvw_core::lifecycle::IdleTimer::new(None))),
         };
         let st = states.clone();
         let coord = Coordinator::new(deps, settings, store.clone(), vad, Box::new(move |s| st.lock().unwrap().push(s)));
