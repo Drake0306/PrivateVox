@@ -350,6 +350,12 @@ pub fn run() {
                             "start" => Cmd::Start,
                             "stop" => Cmd::Stop,
                             "cancel" => Cmd::Cancel,
+                            // A tap of the hold key through the activation machine (toggle / hold-or-toggle modes).
+                            "tap" => {
+                                let _ = tx.send(Cmd::Key(privatevox_core::hotkeys::Input::Down(privatevox_core::hotkeys::Binding::Ptt)));
+                                std::thread::sleep(Duration::from_millis(60));
+                                Cmd::Key(privatevox_core::hotkeys::Input::Up(privatevox_core::hotkeys::Binding::Ptt))
+                            }
                             "polish_off" | "polish_on" => {
                                 let state = dbg_app.state::<AppState>();
                                 if let Err(e) = llm_commands::set_polish_enabled_inner(&state, what == "polish_on") {

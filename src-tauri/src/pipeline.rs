@@ -780,6 +780,9 @@ impl Coordinator {
                     let finished: Vec<String> = rec.results.lock().map(|m| m.values().cloned().collect()).unwrap_or_default();
                     let finished_refs: Vec<&str> = finished.iter().map(|s| s.as_str()).collect();
                     let p = partial_text(&finished_refs, &rec.preview_window, 70);
+                    if !p.is_empty() && rec.partial.as_deref() != Some(p.as_str()) {
+                        log::info!("preview: {p}");
+                    }
                     rec.partial = (!p.is_empty()).then_some(p);
                 }
             }
