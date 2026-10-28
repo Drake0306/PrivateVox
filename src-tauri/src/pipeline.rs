@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum PillState {
     Idle { hotkey_hint: String },
-    Listening { seconds: f32, level_db: f32, countdown: Option<u32>, loading: bool, mode: String },
+    Listening { seconds: f32, level_db: f32, countdown: Option<u32>, loading: bool, mode: String, stop_hint: Option<String> },
     Transcribing,
     /// Waiting on the LLM (design §4.1).
     Polishing,
@@ -211,23 +211,36 @@ pub struct Coordinator {
     idle_tx: Option<Sender<Cmd>>,
 }
 
-/// The pill's idle text: which key, and whether to hold or tap it, from the activation setting (§4.1).
-fn hotkey_hint(s: &Settings) -> String {
-    use privatevox_core::settings::{Activation, ModifierKey};
-    let ptt_key = match (&s.ptt.modifier, &s.ptt.combo) {
+/// The hold key as the pill names it ("right ⌥", or a combination), if one is set.
+fn ptt_key_label(s: &Settings) -> Option<String> {
+    use privatevox_core::settings::ModifierKey;
+    match (&s.ptt.modifier, &s.ptt.combo) {
         (Some(ModifierKey::RightOption), _) => Some("right ⌥".to_string()),
         (Some(ModifierKey::LeftOption), _) => Some("left ⌥".to_string()),
         (Some(ModifierKey::RightCommand), _) => Some("right ⌘".to_string()),
         (Some(ModifierKey::RightControl), _) => Some("right ⌃".to_string()),
         (None, Some(c)) => Some(c.clone()),
         (None, None) => None,
-    };
-    match (s.activation, ptt_key, &s.toggle.combo) {
+    }
+}
+
+/// The pill's idle text: which key, and whether to hold or tap it, from the activation setting (§4.1).
+fn hotkey_hint(s: &Settings) -> String {
+    use privatevox_core::settings::Activation;
+    match (s.activation, ptt_key_label(s), &s.toggle.combo) {
         (Activation::PushToTalk, Some(k), _) => format!("Hold {k} to talk"),
         (Activation::HoldOrToggle, Some(k), _) => format!("Hold or tap {k} to talk"),
-        (Activation::Toggle, Some(k), _) => format!("Tap {k} to start, tap again to stop"),
-        (_, None, Some(t)) => format!("Tap {t} to start, tap again to stop"),
+        (Activation::Toggle, Some(k), _) => format!("Tap {k} to talk"),
+        (_, None, Some(t)) => format!("Tap {t} to talk"),
         (_, None, None) => "PrivateVox".into(),
+    }
+}
+
+/// While a tapped recording is latched (like Caps Lock), the pill says how to end it.
+fn stop_hint(s: &Settings, stage: &privatevox_core::hotkeys::Stage) -> Option<String> {
+    match stage {
+        privatevox_core::hotkeys::Stage::Recording { locked: true, .. } => Some(format!("tap {} to stop", ptt_key_label(s).or_else(|| s.toggle.combo.clone()).unwrap_or_else(|| "the key".into()))),
+        _ => None,
     }
 }
 
@@ -448,7 +461,7 @@ impl Coordinator {
             let _ = err_tx.send(Cmd::CaptureError(msg));
         });
         let loading = !self.deps.engine.try_lock().map(|e| e.is_loaded()).unwrap_or(false);
-        (self.emit)(PillState::Listening { seconds: 0.0, level_db: -100.0, countdown: None, loading, mode: settings.mode.label().to_string() });
+        (self.emit)(PillState::Listening { seconds: 0.0, level_db: -100.0, countdown: None, loading, mode: settings.mode.label().to_string(), stop_hint: stop_hint(&settings, self.machine.stage()) });
         self.preload_model();
         if settings.polish_enabled && settings.mode.uses_llm() {
             let warm = self.deps.llm_warm.clone();
@@ -584,7 +597,10 @@ impl Coordinator {
         if gen != self.generation {
             return;
         }
-        let max_clip = self.settings().max_clip_seconds;
+        let settings = self.settings();
+        let max_clip = settings.max_clip_seconds;
+        let mode = settings.mode.label().to_string();
+        let stop_hint = stop_hint(&settings, self.machine.stage());
         let Some(rec) = self.recording.as_mut() else {
             self.idle();
             return;
@@ -594,8 +610,7 @@ impl Coordinator {
         let level = rec.level.lock().map(|l| *l).unwrap_or(-100.0);
         // While the preload holds the engine lock the model is still loading.
         let loading = !self.deps.engine.try_lock().map(|e| e.is_loaded()).unwrap_or(false);
-        let mode = self.settings.lock().map(|s| s.mode.label().to_string()).unwrap_or_default();
-        (self.emit)(PillState::Listening { seconds, level_db: level, countdown: countdown_for(seconds, max_clip), loading, mode });
+        (self.emit)(PillState::Listening { seconds, level_db: level, countdown: countdown_for(seconds, max_clip), loading, mode, stop_hint });
         if rec.ticks % 5 == 0 {
             self.score_and_cut();
         }
@@ -1778,18 +1793,46 @@ mod tests {
         let mut s = Settings::default();
         assert_eq!(hotkey_hint(&s), "Hold right ⌥ to talk");
         s.activation = Activation::Toggle;
-        assert_eq!(hotkey_hint(&s), "Tap right ⌥ to start, tap again to stop");
+        assert_eq!(hotkey_hint(&s), "Tap right ⌥ to talk");
         s.activation = Activation::HoldOrToggle;
         assert_eq!(hotkey_hint(&s), "Hold or tap right ⌥ to talk");
         s.ptt = HotkeyBinding { combo: Some("Ctrl+Alt+Space".into()), modifier: None };
         s.activation = Activation::PushToTalk;
         assert_eq!(hotkey_hint(&s), "Hold Ctrl+Alt+Space to talk");
         s.ptt = HotkeyBinding { combo: None, modifier: None };
-        assert_eq!(hotkey_hint(&s), "Tap Ctrl+Shift+Space to start, tap again to stop");
+        assert_eq!(hotkey_hint(&s), "Tap Ctrl+Shift+Space to talk");
         s.toggle = HotkeyBinding { combo: None, modifier: None };
         assert_eq!(hotkey_hint(&s), "PrivateVox");
         s.ptt = HotkeyBinding { combo: None, modifier: Some(ModifierKey::RightCommand) };
         s.activation = Activation::Toggle;
-        assert_eq!(hotkey_hint(&s), "Tap right ⌘ to start, tap again to stop");
+        assert_eq!(hotkey_hint(&s), "Tap right ⌘ to talk");
+    }
+
+    #[test]
+    fn listening_carries_a_stop_hint_only_while_latched() {
+        use privatevox_core::hotkeys::Binding;
+        use privatevox_core::settings::Activation;
+        // Held key: no stop hint.
+        let h = harness(engine_saying("x"), capture_ok());
+        h.tx.send(Cmd::Key(Input::Down(Binding::Ptt))).unwrap();
+        std::thread::sleep(Duration::from_millis(250));
+        let states = h.states.lock().unwrap().clone();
+        assert!(states.iter().any(|s| matches!(s, PillState::Listening { stop_hint: None, .. })), "{:?}", kinds(&states));
+        assert!(!states.iter().any(|s| matches!(s, PillState::Listening { stop_hint: Some(_), .. })));
+        h.tx.send(Cmd::Cancel).unwrap();
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+        // Toggle mode: the recording is latched from the first tap, so the pill says how to stop.
+        let h = harness(engine_saying("x"), capture_ok());
+        h.settings.lock().unwrap().activation = Activation::Toggle;
+        h.tx.send(Cmd::SettingsChanged).unwrap();
+        h.tx.send(Cmd::Key(Input::Down(Binding::Ptt))).unwrap();
+        h.tx.send(Cmd::Key(Input::Up(Binding::Ptt))).unwrap();
+        std::thread::sleep(Duration::from_millis(250));
+        let states = h.states.lock().unwrap().clone();
+        assert!(states.iter().any(|s| matches!(s, PillState::Listening { stop_hint: Some(t), .. } if t == "tap right ⌥ to stop")), "{:?}", states.iter().filter(|s| matches!(s, PillState::Listening { .. })).last());
+        h.tx.send(Cmd::Cancel).unwrap();
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
     }
 }
