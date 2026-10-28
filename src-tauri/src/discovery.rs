@@ -124,4 +124,16 @@ mod tests {
         assert_eq!(props.iter().find(|(k, _)| k == "port").map(|(_, v)| v.as_str()), Some("8765"));
         assert_eq!(props.iter().find(|(k, _)| k == "version").map(|(_, v)| v.as_str()), Some("0.4.0"));
     }
+
+    /// `cargo test -p privatevox --lib live_advertise_and_browse -- --ignored --nocapture`: real multicast on this machine.
+    #[test]
+    #[ignore]
+    fn live_advertise_and_browse() {
+        let own = crate::host::lan_addresses();
+        assert!(!own.is_empty(), "no LAN address on this machine");
+        let _a = advertise("Live Test Host", 8765, "0.4.0", &own).unwrap();
+        let found = browse(std::time::Duration::from_secs(3)).unwrap();
+        println!("found: {found:?}");
+        assert!(found.iter().any(|h| h.name == "Live Test Host" && h.port == 8765 && own.contains(&h.address)), "{found:?}");
+    }
 }

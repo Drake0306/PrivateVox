@@ -31,9 +31,17 @@ Every endpoint is health-checked every 10 seconds. A dictation uses the first re
 
 On an 8 GB Mac, `ollama pull qwen2.5:3b` is the recommended local model (about 2 GB resident, roughly one second per dictation once warm). The model is warmed when you press the key and unloaded on the same idle timer as Whisper. Filler words ("uh", "hmm", and "um" when the language is English) are removed before the LLM and in Raw mode too; switch that off under Settings → Polish.
 
+## Dictionary, languages, kept audio
+
+- **Personal dictionary** (Settings → Dictation): names and jargon, one per line. They go to Whisper as its prompt, and a fuzzy pass fixes near-misses afterwards ("charge bee" → "ChargeBee"). The slider sets how close a word has to be; 0 switches the pass off.
+- **Spoken languages**: one language means Whisper decodes with it fixed and never guesses. Several means Whisper detects per clip and is held to your list; a clip detected outside the list is decoded again with your first language. The history row records which language and how it was chosen.
+- **Keep audio clips** (off by default): the trimmed audio of each dictation is kept next to its row. Rows then show Play and Re-run, which decodes the clip again with any downloaded model, useful after switching to a bigger one.
+- Long dictations get an **Open as document** button: the text in paragraphs, with Copy all and a Markdown export.
+- On macOS the old clipboard comes back only after the target app has actually read the paste (no fixed delay), and the pill warns when a password field has secure input on, since the hold key may not fire then.
+
 ## Use your PC as the host
 
-Any PrivateVox can do the work for another one on the same network. On the machine with the big GPU, open Settings → Network and switch on **Act as host for other machines** (port 8765, optional token); the card shows the address to type elsewhere. On the Mac, switch on **Use a host on this network**, enter that `ip:port`, press Test, then Apply. From then on, while the host answers, what you dictate on the Mac is transcribed and polished on the PC; the memory strip shows the PC's figures; nothing is loaded on the Mac. When the PC is not reachable the Mac does the work itself and the pill says so, and it goes back to the PC as soon as it answers again.
+Any PrivateVox can do the work for another one on the same network. On the machine with the big GPU, open Settings → Network and switch on **Act as host for other machines** (port 8765, optional token); the card shows the address to type elsewhere. On the Mac, switch on **Use a host on this network**, enter that `ip:port`, press Test, then Apply, or press **Find hosts on this network** and Add the one it lists. From then on, while the host answers, what you dictate on the Mac is transcribed and polished on the PC; the memory strip shows the PC's figures; nothing is loaded on the Mac. When the PC is not reachable the Mac does the work itself and the pill says so, and it goes back to the PC as soon as it answers again.
 
 Both machines keep a history: the PC stores what it processed (marked "host", with the client's name), the Mac stores its copy (marked "via PC"). The toggle in the History header shows the PC's list from the Mac.
 

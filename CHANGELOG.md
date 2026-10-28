@@ -2,7 +2,19 @@
 
 All notable changes to PrivateVox. Versions follow the plans in `docs/superpowers/plans/`.
 
-## Unreleased
+## 0.4.0-alpha.1 — 2026-10-28
+
+Third alpha: host mode (use the PC's GPU from the Mac), the personal dictionary, spoken languages, kept audio, and the macOS paste and secure-input work. macOS on Apple Silicon tested by hand; Windows and Linux built by CI.
+
+### Extras (phase 4b)
+- Personal dictionary: words go to Whisper as its prompt; a fuzzy pass fixes near-misses (strictness slider).
+- Spoken languages: one is fixed; several are detected per clip and held to the list, with a re-run when detection misses; the row records the language and how it was chosen.
+- Keep audio clips (off by default) with Play and Re-run with another model from history.
+- Receipt-sequenced clipboard restore on macOS: the old clipboard returns after the app has read the paste, never on a timer.
+- Secure-input warning in the pill when a password field would swallow the hold key.
+- Long-form document view with paragraphs, Copy all and Markdown export.
+- mDNS: hosts advertise `_privatevox._tcp`; "Find hosts on this network" lists them with an Add button.
+- Fixes: host status flashes also when a request (not the health loop) found it down; host sessions keyed by client; host history search pages correctly; mode changes sync between tray and panel; the polish selector says "On · none reachable" instead of "Off".
 
 ### Host mode and the remote interface (phase 4a)
 - Any PrivateVox can act as a host (Settings → Network): it serves transcription, polish, its history and its model list on port 8765, LAN only, optional token.
