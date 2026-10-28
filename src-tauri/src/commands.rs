@@ -154,10 +154,20 @@ pub fn machine_label() -> String {
     let gb = (total as f64 / 1_073_741_824.0).round() as u64;
     #[cfg(target_os = "macos")]
     {
-        let chip = std::process::Command::new("sysctl").args(["-n", "machdep.cpu.brand_string"]).output().ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| "Mac".into());
-        return format!("{chip} · {gb} GB unified");
+        let chip = std::process::Command::new("sysctl")
+            .args(["-n", "machdep.cpu.brand_string"])
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "Mac".into());
+        format!("{chip} · {gb} GB unified")
     }
+    #[cfg(not(target_os = "macos"))]
+    {
+        format!("This machine · {gb} GB")
+    }
+}
     #[allow(unreachable_code)]
     format!("This machine · {gb} GB")
 }
