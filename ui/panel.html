@@ -45,7 +45,7 @@
   <nav><button data-tab="history" aria-pressed="true">History</button><button data-tab="models" aria-pressed="false">Models</button><button data-tab="settings" aria-pressed="false">Settings</button><button data-tab="setup" aria-pressed="false">Setup</button></nav>
 
   <section id="tab-history">
-    <div class="bar"><input id="q" type="search" placeholder="Search dictations…"><select id="modelPick" title="Whisper model"></select><span id="count" class="muted"></span><button id="dbgStart" title="Record without the hotkey">● Rec</button><button id="dbgStop" title="Stop recording">■ Stop</button></div>
+    <div class="bar"><input id="q" type="search" placeholder="Search dictations…"><select id="modelPick" title="Whisper model"></select><span id="count" class="muted"></span><button id="exportMd" title="Export all as Markdown to Downloads">Export .md</button><button id="exportJson" title="Export all as JSON to Downloads">Export .json</button><button id="dbgStart" title="Record without the hotkey">● Rec</button><button id="dbgStop" title="Stop recording">■ Stop</button></div>
     <div id="rows"></div>
   </section>
 
@@ -148,15 +148,28 @@
       for (const d of list) {
         const el = document.createElement('div'); el.className = 'row';
         const t = d.polished_text || d.raw_text;
-        el.innerHTML = `<div class="meta"><span>${new Date(d.created_at_ms).toLocaleString()}</span><span>${esc(d.app_name || '')}</span><span>${esc(d.model)}</span><span>${(d.duration_ms/1000).toFixed(1)}s</span><span>${esc(d.status)}</span></div><div class="txt">${esc(t)}</div><button data-copy>Copy</button> <button data-del>Delete</button>`;
-        el.querySelector('[data-copy]').onclick = async () => { try { await navigator.clipboard.writeText(t); flash('Copied'); } catch { flash('Copy blocked'); } };
+        el.innerHTML = `<div class="meta"><span>${new Date(d.created_at_ms).toLocaleString()}</span><span>${esc(d.app_name || '')}</span><span>${esc(d.model)}</span><span>${(d.duration_ms/1000).toFixed(1)}s</span><span>${esc(d.status)}</span>${d.pinned ? '<span>📌 pinned</span>' : ''}</div><div class="txt" tabindex="0">${esc(t)}</div><button data-copy>Copy</button> <button data-edit>Edit</button> <button data-again title="Paste into the app in front">Paste again</button> <button data-pin>${d.pinned ? 'Unpin' : 'Pin'}</button> <button data-del>Delete</button>`;
+        const txt = el.querySelector('.txt');
+        el.querySelector('[data-copy]').onclick = async () => { try { await navigator.clipboard.writeText(txt.innerText); flash('Copied'); } catch { flash('Copy blocked'); } };
         el.querySelector('[data-del]').onclick = async () => { await inv('delete_history', { id: d.id }); loadHistory(); };
+        el.querySelector('[data-pin]').onclick = async () => { await inv('pin_history', { id: d.id, pinned: !d.pinned }); loadHistory(); };
+        el.querySelector('[data-again]').onclick = async () => { await inv('paste_text', { text: txt.innerText }); flash('Pasting into the app in front…'); };
+        const editBtn = el.querySelector('[data-edit]');
+        editBtn.onclick = () => {
+          if (txt.isContentEditable) { commit(); return; }
+          const original = txt.innerText; txt.contentEditable = 'true'; txt.style.outline = '2px dashed var(--accent)'; txt.focus(); editBtn.textContent = 'Save';
+          const done = () => { txt.contentEditable = 'false'; txt.style.outline = ''; editBtn.textContent = 'Edit'; txt.onkeydown = null; };
+          async function commit() { const v = txt.innerText.trim(); done(); if (v && v !== original) { await inv('update_history_text', { id: d.id, text: v }); flash('Saved'); } loadHistory(); }
+          txt.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commit(); } if (e.key === 'Escape') { txt.innerText = original; done(); } };
+        };
         rows.appendChild(el);
       }
     }
     function flash(m) { $('status').textContent = m; setTimeout(() => $('status').textContent = '', 1500); }
     $('q').addEventListener('input', loadHistory);
     $('dbgStart').onclick = () => inv('debug_start'); $('dbgStop').onclick = () => inv('debug_stop');
+    $('exportMd').onclick = async () => { try { flash('Saved ' + await inv('export_history', { format: 'md' })); } catch (e) { flash(String(e)); } };
+    $('exportJson').onclick = async () => { try { flash('Saved ' + await inv('export_history', { format: 'json' })); } catch (e) { flash(String(e)); } };
 
     function hint(b) { return b.modifier ? ({right_option:'Right ⌥', left_option:'Left ⌥', right_command:'Right ⌘', right_control:'Right ⌃'})[b.modifier] : (b.combo || 'none'); }
     async function loadSettings() {

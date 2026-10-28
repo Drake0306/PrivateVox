@@ -92,6 +92,43 @@ pub fn delete_history(state: State<'_, AppState>, id: i64) -> Result<(), String>
 }
 
 #[tauri::command]
+pub fn update_history_text(state: State<'_, AppState>, id: i64, text: String) -> Result<(), String> {
+    state.store.lock().map_err(|e| e.to_string())?.update_text(id, &text).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn pin_history(state: State<'_, AppState>, id: i64, pinned: bool) -> Result<(), String> {
+    state.store.lock().map_err(|e| e.to_string())?.set_pinned(id, pinned).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn paste_text(state: State<'_, AppState>, text: String) {
+    state.send(Cmd::PasteText(text));
+}
+
+/// Writes the whole history to ~/Downloads as Markdown or JSON and reveals it in Finder. Returns the path.
+#[tauri::command]
+pub fn export_history(state: State<'_, AppState>, format: String) -> Result<String, String> {
+    let rows = state.store.lock().map_err(|e| e.to_string())?.list(100_000, 0).map_err(|e| e.to_string())?;
+    let (ext, body) = match format.as_str() {
+        "md" | "markdown" => ("md", lvw_core::export::to_markdown(&rows)),
+        "json" => ("json", lvw_core::export::to_json(&rows)),
+        _ => return Err("format must be md or json".into()),
+    };
+    let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
+    let dir = dirs_download().ok_or("no Downloads folder")?;
+    let path = dir.join(lvw_core::export::export_filename(ext, now_ms));
+    std::fs::write(&path, body).map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg("-R").arg(&path).spawn();
+    Ok(path.to_string_lossy().to_string())
+}
+
+fn dirs_download() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Downloads")).filter(|p| p.is_dir())
+}
+
+#[tauri::command]
 pub fn history_count(state: State<'_, AppState>) -> Result<u32, String> {
     state.store.lock().map_err(|e| e.to_string())?.count().map_err(|e| e.to_string())
 }

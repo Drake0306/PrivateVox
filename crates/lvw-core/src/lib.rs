@@ -3,6 +3,7 @@
 pub mod audio;
 pub mod chunking;
 pub mod download;
+pub mod export;
 pub mod hotkeys;
 pub mod lifecycle;
 pub mod memory;

@@ -69,6 +69,8 @@ pub enum Cmd {
     Benchmark(String),
     /// Undo the last paste (hotkey).
     Undo,
+    /// Paste text from history into the front app (no new history row).
+    PasteText(String),
     Quit,
 }
 
@@ -299,6 +301,18 @@ impl Coordinator {
                     }
                 }
                 Cmd::Undo => self.undo(),
+                Cmd::PasteText(text) => {
+                    let app_name = (self.deps.frontmost)();
+                    match self.deps.paste.paste(&text) {
+                        Ok(PasteOutcome::Pasted) => {
+                            self.last_paste = Some(lvw_core::undo::LastPaste { text: text.clone(), app: app_name, at: Instant::now() });
+                            (self.emit)(PillState::Pasted { preview: format!("Pasted again: {}", first_chars(&text, 50)) });
+                        }
+                        Ok(PasteOutcome::CopiedOnly(_)) => (self.emit)(PillState::Pasted { preview: format!("Copied (paste blocked): {}", first_chars(&text, 40)) }),
+                        Err(e) => self.error(&format!("Paste failed: {e}")),
+                    }
+                    self.schedule_idle(&tx);
+                }
                 Cmd::PauseAndUnload => {
                     self.machine.force_idle();
                     self.cancel();
@@ -1189,6 +1203,17 @@ mod tests {
         let pasted = h.pasted.lock().unwrap().clone();
         assert_eq!(pasted, vec!["Hello.".to_string(), "copy:Hello.".to_string()]);
         assert!(h.states.lock().unwrap().iter().any(|s| matches!(s, PillState::Pasted { preview } if preview.contains("Copied again"))));
+    }
+
+    #[test]
+    fn paste_text_pastes_without_recording() {
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        h.tx.send(Cmd::PasteText("from history".into())).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+        assert_eq!(h.pasted.lock().unwrap().clone(), vec!["from history".to_string()]);
+        assert_eq!(h.store.lock().unwrap().count().unwrap(), 0, "pasting again does not add a history row");
     }
 
     #[test]

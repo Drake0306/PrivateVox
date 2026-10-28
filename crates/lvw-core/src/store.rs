@@ -136,7 +136,7 @@ impl Store {
 
     /// Newest first, excluding soft-deleted rows.
     pub fn list(&self, limit: u32, offset: u32) -> Result<Vec<Dictation>> {
-        let sql = format!("SELECT {COLUMNS} FROM dictations WHERE deleted_at_ms IS NULL ORDER BY created_at_ms DESC, id DESC LIMIT ?1 OFFSET ?2");
+        let sql = format!("SELECT {COLUMNS} FROM dictations WHERE deleted_at_ms IS NULL ORDER BY pinned DESC, created_at_ms DESC, id DESC LIMIT ?1 OFFSET ?2");
         let mut st = self.conn.prepare_cached(&sql)?;
         let rows = st.query_map(params![limit as i64, offset as i64], map_row)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -301,6 +301,16 @@ mod tests {
         assert_eq!(st.mem_bytes, Some(1_050_000_000));
         s.set_model_stats("large-v3", &ModelStats { load_ms: None, speed_x: Some(5.0), mem_bytes: Some(1_050_000_000) }).unwrap();
         assert_eq!(s.model_stats("large-v3").unwrap().unwrap().speed_x, Some(5.0));
+    }
+
+    #[test]
+    fn pinned_rows_list_first() {
+        let (_d, mut s) = fresh();
+        let a = s.insert(&row("older")).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        s.insert(&row("newer")).unwrap();
+        s.set_pinned(a, true).unwrap();
+        assert_eq!(s.list(10, 0).unwrap()[0].raw_text, "older");
     }
 
     #[test]
