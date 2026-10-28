@@ -8,6 +8,7 @@ pub mod hotkeys;
 pub mod lifecycle;
 pub mod memory;
 pub mod models;
+pub mod net;
 pub mod placement;
 pub mod settings;
 pub mod store;

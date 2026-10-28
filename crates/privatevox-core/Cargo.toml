@@ -17,6 +17,7 @@ reqwest = { version = "0.13.5", features = ["stream", "blocking", "json"] }
 futures-util = "0.3"
 sysinfo = "0.37"
 hound = "3.5"
+base64 = "0.22"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util"] }
 
 [features]
