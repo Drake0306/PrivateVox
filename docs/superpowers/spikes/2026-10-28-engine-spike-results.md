@@ -52,7 +52,15 @@ large-v3 got "Vulkan" right where turbo wrote "Vulcan" (the only difference on t
 
 ## large-v3, transcribe-cpp (whisper-large-v3-Q5_K_M.gguf, 1161 MB)
 
-_pending_
+Load: 514 ms. RSS ~350–400 MB (weights memory-mapped, so not a footprint measure).
+
+| Config | 30s cold | 30s warm | 10s cold | 10s warm | short cold | short warm | WER 30s | WER 10s |
+|---|---|---|---|---|---|---|---|---|
+| default, en | 9195 | 8826 | 3516 | 3405 | 2700 | 2706 | 0.058 | 0.000 |
+| default, language auto | 9009 | 8610 | 4013 | 4002 | 3334 | 3311 | 0.058 | 0.000 |
+| initial prompt "Tauri, LVW.", en | 9141 | 9361 | 10919 (outlier) | 4265 | 3223 | 3200 | 0.058 | 0.000 |
+
+On large-v3 transcribe-cpp is about 15% faster than whisper-rs without flash attention (8.8 vs 10.6 s on 30 s, 3.4 vs 4.4 s on 10 s) and level with whisper-rs plus flash attention (8.7 / 3.6 s). It again kept the phrase at the 30 s boundary that whisper-rs dropped.
 
 ## large-v3-turbo with the Core ML encoder (whisper-rs, feature `coreml`)
 
