@@ -1,0 +1,70 @@
+# LVW — Local Voice Wisper
+
+Hold a key, talk, let go: the words land in whatever app is in front. Whisper runs on your own GPU, nothing leaves the machine, and every dictation is kept in a local history you can search, copy and delete.
+
+**Status:** early. macOS (Apple Silicon) is the first target; Windows (AMD/Vulkan) follows. See `docs/superpowers/specs/2026-10-28-whisper-harness-design.md` for the design and `docs/superpowers/plans/` for what is built when.
+
+## What works today (macOS)
+
+- Floating pill that shows idle / listening / transcribing / pasted / error, draggable, visible on every space, never steals focus.
+- Push-to-talk on **Right Option**, toggle on **Ctrl+Shift+Space**, or hold-or-toggle; all set in `settings.json`.
+- Whisper large-v3-turbo on Metal in a child worker process (crash and hang recovery, no stranded GPU memory on force quit).
+- Silence trimming, 300 ms minimum clip, 5 minute maximum, reduced audio context for short clips (about 1 s per dictation on an M1).
+- Paste into the frontmost app via the clipboard with the previous clipboard restored.
+- SQLite history with search, copy and delete, in a panel opened by clicking the pill or from the menu bar.
+- Idle unload of the model after a configurable number of minutes; menu bar item to pause and unload now.
+- First-run download of the model with resume and progress.
+
+## Build and run
+
+Requirements: Rust 1.90+, Xcode Command Line Tools, `cmake`, and the Tauri CLI (`cargo install tauri-cli --version "^2" --locked`).
+
+```bash
+git clone https://github.com/Drake0306/localVoiceWisper.git
+cd localVoiceWisper
+cargo tauri dev            # from the repo root, or `cd src-tauri && cargo tauri dev`
+```
+
+The first build compiles whisper.cpp and the Tauri stack (several minutes). The first launch of a freshly built binary also compiles Metal shaders once (about 10 s before the pill goes idle).
+
+### Permissions (one time)
+
+macOS asks for three things. LVW's **Setup** tab (click the pill, then Setup) has buttons that open each pane.
+
+| Permission | Why | Where |
+|---|---|---|
+| Microphone | to record | prompt on first dictation |
+| Accessibility | to send ⌘V into the front app | System Settings → Privacy & Security → Accessibility |
+| Input Monitoring | to see the Right Option key | System Settings → Privacy & Security → Input Monitoring |
+
+After granting Accessibility or Input Monitoring, quit LVW from the menu bar and start it again. See `docs/dev/permissions.md` to reset grants while developing.
+
+### Tests
+
+```bash
+cargo test -p lvw-core                          # settings, audio, VAD, hotkey machine, store, lifecycle, download
+cargo test -p lvw-engine -- --test-threads=1    # protocol, policy, worker supervisor (counts worker processes)
+cargo test -p lvw                               # pipeline coordinator, paste, exit path
+cargo test -p lvw-core -- --ignored             # microphone capture (asks for the mic)
+LVW_TEST_MODEL=~/path/to/ggml-large-v3-turbo-q5_0.bin cargo test -p lvw-engine --test worker_integration -- --ignored
+```
+
+## Where things live
+
+`~/Library/Application Support/com.drake0306.lvw/`: `settings.json`, `lvw.sqlite` (history), `models/`, `lvw.lock`, `clipboard.bak`. Logs: `~/Library/Logs/com.drake0306.lvw/lvw.log`.
+
+## Layout
+
+- `crates/lvw-core` — pure logic, no Tauri: settings, audio conversion, VAD, activation state machine, text clean-up, SQLite store, lock file and idle timer, downloads.
+- `crates/lvw-engine` — the `Engine` trait, the whisper-rs backend, the pipe protocol, the worker loop and the `WorkerEngine` supervisor.
+- `src-tauri` — the app: pill and panel windows, tray, hotkeys, paste, pipeline coordinator, lifecycle.
+- `ui/` — plain HTML/CSS/JS, no bundler.
+- `spike/` — the throwaway engine benchmark; results in `docs/superpowers/spikes/`.
+
+## Credits
+
+Several techniques are adopted from [Handy](https://github.com/cjpais/Handy) (MIT): the worker-process engine, VAD timing, chunking at pauses, the activation state machine and the receipt-sequenced paste design. Whisper by OpenAI, whisper.cpp by Georgi Gerganov and contributors, Silero VAD by the Silero team.
+
+## Licence
+
+MIT. See `LICENSE`.
