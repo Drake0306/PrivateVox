@@ -125,6 +125,8 @@ pub struct Settings {
     pub app_modes: Vec<crate::appmodes::AppMode>,
     /// Soft sounds on start, stop and "nothing heard" (phase 5, A5).
     pub sound_cues: bool,
+    /// Words in the pill while you speak (phase 5, A1).
+    pub live_preview: crate::preview::Preview,
 }
 
 impl Default for Settings {
@@ -161,6 +163,7 @@ impl Default for Settings {
             auto_stop_silence_secs: Some(2),
             app_modes: Vec::new(),
             sound_cues: true,
+            live_preview: crate::preview::Preview::Auto,
         }
     }
 }

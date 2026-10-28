@@ -17,6 +17,7 @@ pub mod settings;
 pub mod silence;
 pub mod store;
 pub mod polish;
+pub mod preview;
 pub mod textnorm;
 pub mod undo;
 pub mod vad;

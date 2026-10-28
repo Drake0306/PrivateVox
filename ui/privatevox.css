@@ -23,6 +23,8 @@ body.pill-body { background: transparent; display: flex; align-items: center; ju
 .pill .dot { width: 10px; height: 10px; border-radius: 50%; background: #6c7a78; flex: none; }
 .pill.listening .dot { background: var(--rec); box-shadow: 0 0 0 4px rgba(229,72,77,.3); }
 .pill .label { overflow: hidden; text-overflow: ellipsis; }
+.pill.two-line { flex-wrap: wrap; max-width: 420px; border-radius: 16px; }
+.pill .partial { flex-basis: 100%; font: 400 12px/1.3 var(--body); color: rgba(243,246,245,.8); white-space: normal; overflow: hidden; max-height: 2.6em; }
 .pill .bars { display: inline-flex; gap: 2px; align-items: center; height: 16px; }
 .pill .bars i { display: block; width: 3px; border-radius: 2px; background: var(--pill-fg); height: calc(4px + 12px * var(--lvl, 0)); transition: height .08s; }
 .pill .bars i:nth-child(2), .pill .bars i:nth-child(4) { height: calc(6px + 10px * var(--lvl, 0)); }

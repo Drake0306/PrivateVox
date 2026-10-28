@@ -11,14 +11,17 @@
     <span class="bars" id="bars" hidden><i></i><i></i><i></i><i></i><i></i></span>
     <span class="spin" id="spin" hidden></span>
     <span class="label" id="label" data-tauri-drag-region>PrivateVox</span>
+    <span class="partial" id="partial" hidden data-tauri-drag-region></span>
   </div>
   <script src="privatevox.js"></script>
   <script>
     const pill = document.getElementById('pill'), label = document.getElementById('label');
-    const bars = document.getElementById('bars'), spin = document.getElementById('spin'), dot = document.getElementById('dot');
+    const bars = document.getElementById('bars'), spin = document.getElementById('spin'), dot = document.getElementById('dot'), partial = document.getElementById('partial');
     let lastState = null;
     function render(s) {
       pill.className = 'pill ' + s.state;
+      const p = s.state === 'listening' && s.partial ? s.partial : '';
+      partial.hidden = !p; partial.textContent = p; pill.classList.toggle('two-line', !!p);
       if (lastState && lastState !== s.state && (s.state === 'listening' || s.state === 'pasted' || s.state === 'error')) { pill.classList.add('flash'); setTimeout(() => pill.classList.remove('flash'), 500); }
       lastState = s.state;
       bars.hidden = s.state !== 'listening';

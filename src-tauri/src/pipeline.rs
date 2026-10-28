@@ -11,6 +11,7 @@ use privatevox_core::hotkeys::{Effect, Input, Machine};
 use privatevox_core::lifecycle::IdleTimer;
 use privatevox_core::net::PolishRequest;
 use privatevox_core::polish::{Mode, PolishOutcome, PolishStatus};
+use privatevox_core::preview::{partial_text, preview_enabled};
 use privatevox_engine::remote::RemoteState;
 use privatevox_core::settings::Settings;
 use privatevox_core::silence::TrailingSilence;
@@ -31,7 +32,7 @@ use std::time::{Duration, Instant};
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum PillState {
     Idle { hotkey_hint: String, warning: Option<String> },
-    Listening { seconds: f32, level_db: f32, countdown: Option<u32>, loading: bool, mode: String, stop_hint: Option<String>, stopping: bool },
+    Listening { seconds: f32, level_db: f32, countdown: Option<u32>, loading: bool, mode: String, stop_hint: Option<String>, stopping: bool, partial: Option<String> },
     Transcribing,
     /// Waiting on the LLM (design §4.1); `on` names the host when the polish runs there.
     Polishing { on: Option<String> },
@@ -172,6 +173,9 @@ struct Recording {
     /// Auto-stop bookkeeping (toggle mode): frames scored for silence so far, and the trailing-silence counter.
     silence_scored: usize,
     silence: TrailingSilence,
+    /// Live preview: the latest window text and the partial shown in the pill.
+    preview_window: String,
+    partial: Option<String>,
 }
 
 const FRAME: usize = 512;
@@ -242,6 +246,8 @@ pub struct Coordinator {
     secure_input: bool,
     /// The mode of the dictation in flight, resolved once at Start from the per-app table (A4).
     dictation_mode: Mode,
+    /// This machine's memory, for the live-preview Auto rule (read once).
+    total_memory: u64,
 }
 
 /// The hold key as the pill names it ("right ⌥", or a combination), if one is set.
@@ -338,7 +344,7 @@ impl Coordinator {
             let s = settings.lock().map(|s| s.clone()).unwrap_or_default();
             Machine::new(s.activation, Duration::from_millis(s.hold_threshold_ms))
         };
-        Coordinator { deps, settings, store, vad, emit, recording: None, queued: None, generation: 0, machine, pending_switch: None, last_paste: None, idle_tx: None, last_used_remote: false, fell_back: Arc::new(AtomicBool::new(false)), secure_input: false, dictation_mode: Mode::Clean }
+        Coordinator { deps, settings, store, vad, emit, recording: None, queued: None, generation: 0, machine, pending_switch: None, last_paste: None, idle_tx: None, last_used_remote: false, fell_back: Arc::new(AtomicBool::new(false)), secure_input: false, dictation_mode: Mode::Clean, total_memory: privatevox_core::memory::system_memory().0 }
     }
 
     /// Unloads the current model and loads `id` from the models directory. Refused if the file is missing.
@@ -570,7 +576,7 @@ impl Coordinator {
         self.last_used_remote = used_remote;
         self.fell_back = Arc::new(AtomicBool::new(false));
         let loading = !self.deps.engine.try_lock().map(|e| e.is_loaded()).unwrap_or(false);
-        (self.emit)(PillState::Listening { seconds: 0.0, level_db: -100.0, countdown: None, loading, mode: mode.label().to_string(), stop_hint: stop_hint(&settings, self.machine.stage()), stopping: false });
+        (self.emit)(PillState::Listening { seconds: 0.0, level_db: -100.0, countdown: None, loading, mode: mode.label().to_string(), stop_hint: stop_hint(&settings, self.machine.stage()), stopping: false, partial: None });
         self.preload_model();
         if settings.polish_enabled && mode.uses_llm() {
             let warm = self.deps.llm_warm.clone();
@@ -581,7 +587,7 @@ impl Coordinator {
         match self.deps.capture.start(on_pcm, on_error) {
             Ok(()) => {
                 (self.deps.cue)(crate::cues::Cue::Start);
-                self.recording = Some(Recording { buffer, level, started: Instant::now(), ticks: 0, chunker: Chunker::new(), scored_frames: 0, probs: Vec::new(), chunks_sent: 0, worker: None, results: Arc::new(Mutex::new(Default::default())), used_remote, fell_back: Arc::new(AtomicBool::new(false)), cancelled: Arc::new(AtomicBool::new(false)), silence_scored: 0, silence: TrailingSilence::new() });
+                self.recording = Some(Recording { buffer, level, started: Instant::now(), ticks: 0, chunker: Chunker::new(), scored_frames: 0, probs: Vec::new(), chunks_sent: 0, worker: None, results: Arc::new(Mutex::new(Default::default())), used_remote, fell_back: Arc::new(AtomicBool::new(false)), cancelled: Arc::new(AtomicBool::new(false)), silence_scored: 0, silence: TrailingSilence::new(), preview_window: String::new(), partial: None });
                 self.generation += 1;
                 let _ = self.machine.on(Input::StartResult(true), Instant::now());
                 schedule(tx, Cmd::Tick(self.generation), Duration::from_millis(100));
@@ -745,9 +751,28 @@ impl Coordinator {
                 return;
             }
         }
+        // Live preview: every 3 s decode the last 6 s of audio if the engine is free, and show finished chunks plus that.
+        if rec.ticks % 30 == 0 && preview_enabled(settings.live_preview, self.deps.remote.in_use(), self.total_memory) {
+            let window: Vec<f32> = rec.buffer.lock().map(|b| { let p = b.peek(); let n = p.len().min(6 * SAMPLE_RATE as usize); p[p.len() - n..].to_vec() }).unwrap_or_default();
+            if window.len() >= SAMPLE_RATE as usize {
+                let opts = DecodeOptions { language: settings.spoken_languages.first().cloned(), translate: false, initial_prompt: initial_prompt(&settings.dictionary), n_threads: 4, final_chunk: false };
+                let decoded = match self.deps.engine.try_lock() {
+                    Ok(mut e) if e.is_loaded() => e.transcribe(&window, &opts).ok().map(|t| t.text),
+                    _ => None, // busy loading or decoding a chunk: the preview waits for the next round
+                };
+                if let Some(text) = decoded {
+                    rec.preview_window = normalize(&text);
+                    let finished: Vec<String> = rec.results.lock().map(|m| m.values().cloned().collect()).unwrap_or_default();
+                    let finished_refs: Vec<&str> = finished.iter().map(|s| s.as_str()).collect();
+                    let p = partial_text(&finished_refs, &rec.preview_window, 70);
+                    rec.partial = (!p.is_empty()).then_some(p);
+                }
+            }
+        }
+        let partial = rec.partial.clone();
         // While the preload holds the engine lock the model is still loading.
         let loading = !self.deps.engine.try_lock().map(|e| e.is_loaded()).unwrap_or(false);
-        (self.emit)(PillState::Listening { seconds, level_db: level, countdown: countdown_for(seconds, max_clip), loading, mode, stop_hint, stopping });
+        (self.emit)(PillState::Listening { seconds, level_db: level, countdown: countdown_for(seconds, max_clip), loading, mode, stop_hint, stopping, partial });
         if rec.ticks % 5 == 0 {
             self.score_and_cut();
         }
@@ -1348,6 +1373,7 @@ mod tests {
     use super::*;
     use privatevox_core::net::fake_host::{FakeHost, HostBehaviour};
     use privatevox_core::polish::{Mode, PolishOutcome, PolishStatus};
+use privatevox_core::preview::{partial_text, preview_enabled};
     use privatevox_engine::remote::RemoteState;
     use std::sync::atomic::Ordering::SeqCst;
     use privatevox_core::settings::Settings;
@@ -2715,6 +2741,68 @@ mod tests {
         h.tx.send(Cmd::Stop).unwrap();
         std::thread::sleep(Duration::from_millis(400));
         assert_eq!(h.cues.lock().unwrap().clone(), vec![Cue::Start, Cue::Stop, Cue::NothingHeard]);
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn preview_shows_partial_text() {
+        use privatevox_core::preview::Preview;
+        let e = engine_saying("partial words");
+        let decodes = e.decodes.clone();
+        let h = harness(e, FakeCapture { pcm: long_fixture(12), fail: false, die_after_start: false });
+        {
+            let mut s = h.settings.lock().unwrap();
+            s.mode = Mode::Raw;
+            s.live_preview = Preview::On;
+        }
+        h.tx.send(Cmd::Start).unwrap();
+        std::thread::sleep(Duration::from_millis(3600));
+        let states = h.states.lock().unwrap().clone();
+        assert!(states.iter().any(|s| matches!(s, PillState::Listening { partial: Some(p), .. } if p.contains("partial words"))), "{:?}", states.iter().filter_map(|s| if let PillState::Listening { partial, .. } = s { partial.clone() } else { None }).collect::<Vec<_>>());
+        assert!(decodes.lock().unwrap().len() >= 1, "a preview decode ran");
+        h.tx.send(Cmd::Cancel).unwrap();
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn preview_skips_when_engine_busy() {
+        use privatevox_core::preview::Preview;
+        // The model is not loaded: the preload holds the engine lock for 5 s, so every preview tick must skip.
+        let e = FakeEngine { load_delay: Duration::from_secs(5), text: "x".into(), loaded: false, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default() };
+        let decodes = e.decodes.clone();
+        let h = harness(e, FakeCapture { pcm: long_fixture(12), fail: false, die_after_start: false });
+        {
+            let mut s = h.settings.lock().unwrap();
+            s.mode = Mode::Raw;
+            s.live_preview = Preview::On;
+        }
+        h.tx.send(Cmd::Start).unwrap();
+        std::thread::sleep(Duration::from_millis(3600));
+        assert_eq!(decodes.lock().unwrap().len(), 0, "no preview decode while the engine is busy");
+        let states = h.states.lock().unwrap().clone();
+        assert!(!states.iter().any(|s| matches!(s, PillState::Listening { partial: Some(_), .. })));
+        h.tx.send(Cmd::Cancel).unwrap();
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn preview_off_never_decodes_early() {
+        use privatevox_core::preview::Preview;
+        let e = engine_saying("x");
+        let decodes = e.decodes.clone();
+        let h = harness(e, FakeCapture { pcm: long_fixture(12), fail: false, die_after_start: false });
+        {
+            let mut s = h.settings.lock().unwrap();
+            s.mode = Mode::Raw;
+            s.live_preview = Preview::Off;
+        }
+        h.tx.send(Cmd::Start).unwrap();
+        std::thread::sleep(Duration::from_millis(3600));
+        assert_eq!(decodes.lock().unwrap().len(), 0);
+        h.tx.send(Cmd::Cancel).unwrap();
         h.tx.send(Cmd::Quit).unwrap();
         h.join.join().unwrap();
     }
