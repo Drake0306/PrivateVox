@@ -545,7 +545,7 @@ impl Coordinator {
                 let Some(path) = path.as_ref() else { anyhow::bail!("no model file") };
                 load_ms = e.load(path, flash)?.duration.as_millis() as u64;
             }
-            let opts = DecodeOptions { language: Some("en".into()), translate: false, initial_prompt: None, n_threads: 4 };
+            let opts = DecodeOptions { language: Some("en".into()), translate: false, initial_prompt: None, n_threads: 4, final_chunk: false };
             let t = Instant::now();
             e.transcribe(&pcm, &opts)?;
             Ok((t.elapsed(), load_ms))
@@ -688,7 +688,7 @@ impl Coordinator {
                         let text = if job.pcm.is_empty() {
                             String::new()
                         } else {
-                            let opts = DecodeOptions { language: language.clone(), translate, initial_prompt: None, n_threads: 4 };
+                            let opts = DecodeOptions { language: language.clone(), translate, initial_prompt: None, n_threads: 4, final_chunk: false };
                             let cancelled = cancelled.clone();
                             let r = engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| {
                                 if cancelled.load(Ordering::SeqCst) {
@@ -1015,7 +1015,8 @@ impl Coordinator {
 
         (self.emit)(PillState::Transcribing);
         let language = if settings.spoken_languages.len() == 1 { settings.spoken_languages.first().cloned() } else { None };
-        let opts = DecodeOptions { language, translate: settings.mode.whisper_translate(), initial_prompt: None, n_threads: 4 };
+        // A short clip is decoded in one go, so this is also the last chunk of its session.
+        let opts = DecodeOptions { language, translate: settings.mode.whisper_translate(), initial_prompt: None, n_threads: 4, final_chunk: true };
         let t = Instant::now();
         let transcript = self.deps.engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| e.transcribe(&speech, &opts));
         let transcript = match transcript {

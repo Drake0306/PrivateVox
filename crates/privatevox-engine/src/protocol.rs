@@ -12,11 +12,14 @@ pub struct DecodeOptions {
     pub translate: bool,
     pub initial_prompt: Option<String>,
     pub n_threads: i32,
+    /// True on the last chunk of a dictation; a remote host uses it to close the session.
+    #[serde(default)]
+    pub final_chunk: bool,
 }
 
 impl Default for DecodeOptions {
     fn default() -> Self {
-        DecodeOptions { language: Some("en".into()), translate: false, initial_prompt: None, n_threads: 4 }
+        DecodeOptions { language: Some("en".into()), translate: false, initial_prompt: None, n_threads: 4, final_chunk: false }
     }
 }
 
@@ -69,7 +72,7 @@ mod tests {
         let req = Request::Transcribe {
             id: 7,
             pcm: vec![0.1, -0.2, 0.3],
-            opts: DecodeOptions { language: Some("en".into()), translate: false, initial_prompt: None, n_threads: 4 },
+            opts: DecodeOptions { language: Some("en".into()), translate: false, initial_prompt: None, n_threads: 4, final_chunk: false },
         };
         let mut buf = Vec::new();
         write_frame(&mut buf, &req).unwrap();

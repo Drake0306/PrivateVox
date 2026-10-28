@@ -146,7 +146,6 @@ pub fn decode_pcm(b64: &str) -> Result<Vec<f32>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::Engine as _;
 
     #[test]
     fn pcm_round_trips() {

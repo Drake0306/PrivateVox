@@ -16,6 +16,7 @@ libc = "0.2"
 
 [dev-dependencies]
 hound = "3.5"
+privatevox-core = { path = "../privatevox-core", features = ["test-support"] }
 
 # GPU backend per platform: Metal on Apple Silicon, Vulkan on Windows and Linux (any recent AMD/NVIDIA/Intel GPU).
 [target.'cfg(target_os = "macos")'.dependencies]

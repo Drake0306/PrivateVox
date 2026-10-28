@@ -3,5 +3,7 @@
 pub mod backend;
 pub mod policy;
 pub mod protocol;
+pub mod remote;
+pub mod routing;
 pub mod supervisor;
 pub mod worker;
