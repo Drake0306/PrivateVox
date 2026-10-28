@@ -87,6 +87,7 @@ pub fn run() {
             commands::download_model_by_id,
             commands::delete_model,
             commands::benchmark_model,
+            commands::memory_report,
             commands::debug_start,
             commands::debug_stop,
             commands::debug_cancel,
@@ -283,7 +284,7 @@ pub fn run() {
                     let _ = h2.emit("pill-state", &s);
                 });
             }
-            app.manage(AppState { paths, settings, store, tx: Mutex::new(tx), stale_lock: stale, last_state, downloading: Mutex::new(Default::default()) });
+            app.manage(AppState { paths, settings, store, tx: Mutex::new(tx), stale_lock: stale, last_state, downloading: Mutex::new(Default::default()), engine: engine.clone() });
             Ok(())
         })
         .on_window_event(|window, event| {

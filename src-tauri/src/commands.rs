@@ -211,6 +211,40 @@ pub fn benchmark_model(state: State<'_, AppState>, id: String) -> Result<(), Str
     Ok(())
 }
 
+/// Builds the strip's input: measured footprints from the store, "others" = system used minus what we hold.
+pub fn build_memory_input(store: &lvw_core::store::Store, selected: &str, ours_resident: u64, system: (u64, u64), llm_bytes: u64) -> lvw_core::memory::MemoryInput {
+    let mut footprints = std::collections::HashMap::new();
+    for m in lvw_core::models::catalog() {
+        if let Ok(Some(st)) = store.model_stats(m.id) {
+            if let Some(b) = st.mem_bytes {
+                footprints.insert(m.id.to_string(), b);
+            }
+        }
+    }
+    lvw_core::memory::MemoryInput {
+        total: system.0,
+        used_by_others: system.1.saturating_sub(ours_resident),
+        footprints,
+        llm_bytes,
+        selected: selected.to_string(),
+    }
+}
+
+#[tauri::command]
+pub fn memory_report(state: State<'_, AppState>) -> Result<lvw_core::memory::MemoryReport, String> {
+    let selected = state.settings.lock().map(|s| s.model_id.clone()).map_err(|e| e.to_string())?;
+    let ours = match state.engine.try_lock() {
+        Ok(e) => e.resident_bytes(),
+        Err(_) => {
+            // Busy decoding: it is loaded; use the measured footprint if we have one.
+            state.store.lock().ok().and_then(|st| st.model_stats(&selected).ok().flatten()).and_then(|st| st.mem_bytes).unwrap_or(0)
+        }
+    };
+    let store = state.store.lock().map_err(|e| e.to_string())?;
+    let input = build_memory_input(&store, &selected, ours, lvw_core::memory::system_memory(), 0);
+    Ok(lvw_core::memory::budget(&input))
+}
+
 /// Shared by the command and its test: validate, persist, swap in.
 pub fn apply_settings(current: &std::sync::Mutex<Settings>, path: &std::path::Path, new: Settings) -> Result<(), String> {
     new.validate()?;
@@ -254,5 +288,26 @@ mod tests {
         apply_settings(&current, &path, good).unwrap();
         assert_eq!(current.lock().unwrap().idle_unload_minutes, Some(2));
         assert_eq!(Settings::load(&path).unwrap().idle_unload_minutes, Some(2));
+    }
+}
+
+#[cfg(test)]
+mod memory_tests {
+    use super::*;
+    use lvw_core::store::{ModelStats, Store};
+
+    #[test]
+    fn memory_report_uses_measured_footprint_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("lvw.sqlite")).unwrap();
+        store.set_model_stats("large-v3-turbo", &ModelStats { load_ms: None, speed_x: None, mem_bytes: Some(703_000_000) }).unwrap();
+        let input = build_memory_input(&store, "large-v3-turbo", 0, (16_000_000_000, 4_000_000_000), 0);
+        assert_eq!(input.footprints.get("large-v3-turbo"), Some(&703_000_000));
+        assert_eq!(input.used_by_others, 4_000_000_000, "nothing of ours resident: others = used");
+        let report = lvw_core::memory::budget(&input);
+        assert_eq!(report.selected_bytes, 703_000_000);
+        // With turbo resident (703 MB counted in `used`), others must exclude it.
+        let input2 = build_memory_input(&store, "large-v3-turbo", 703_000_000, (16_000_000_000, 4_000_000_000), 0);
+        assert_eq!(input2.used_by_others, 4_000_000_000 - 703_000_000);
     }
 }

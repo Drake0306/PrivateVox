@@ -48,6 +48,7 @@ pub struct AppState {
     pub last_state: Arc<crate::laststate::LastState>,
     /// Model ids with a download in progress.
     pub downloading: Mutex<std::collections::HashSet<String>>,
+    pub engine: crate::lifecycle::SharedEngine,
 }
 
 impl AppState {

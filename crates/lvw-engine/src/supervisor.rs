@@ -37,6 +37,10 @@ pub trait Engine: Send {
     fn is_loaded(&self) -> bool;
     fn transcribe(&mut self, pcm: &[f32], opts: &DecodeOptions) -> Result<Transcript>;
     fn cancel(&mut self);
+    /// Bytes the loaded model holds (0 when nothing is loaded).
+    fn resident_bytes(&self) -> u64 {
+        0
+    }
 }
 
 const LOAD_DEADLINE: Duration = Duration::from_secs(180);
@@ -315,6 +319,14 @@ impl Engine for WorkerEngine {
 
     fn cancel(&mut self) {
         self.kill_worker("cancelled");
+    }
+
+    fn resident_bytes(&self) -> u64 {
+        if self.is_loaded() {
+            self.last_load.map(|l| l.resident_bytes).unwrap_or(0)
+        } else {
+            0
+        }
     }
 }
 

@@ -22,15 +22,41 @@
   form.settings input, form.settings select { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--fg); }
   .err { color: var(--warn); font-size: 12px; }
   .muted { color: var(--muted); font-size: 12px; }
+  .meter { height: 10px; border-radius: 5px; background: var(--line); display: flex; gap: 2px; overflow: hidden; margin: 8px 0 6px; }
+  .meter i { display: block; height: 100%; flex: 0 0 0%; transition: flex-basis .25s; }
+  .meter .o { background: #8069b8; } .meter .w { background: #0d9488; } .meter .l { background: #c47f17; }
+  .meter.over { outline: 2px solid var(--warn); outline-offset: 1px; }
+  .leg { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); }
+  .leg span::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; background: var(--sw); }
+  .verdict { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px; margin-top: 8px; }
+  .verdict div { background: var(--bg); border-radius: 6px; padding: 6px 8px; font-size: 12px; }
+  .verdict .k { display: block; font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+  .verdict .v { font-weight: 600; font-size: 13px; }
+  .verdict .good .v { color: var(--ok); } .verdict .bad .v { color: var(--warn); }
+  .mcard { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; }
+  .mcard .st { font-size: 12px; color: var(--muted); }
+  .mcard .acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; align-items: start; }
+  .badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 4px; background: var(--line); margin-left: 6px; vertical-align: 1px; }
+  .badge.active { background: var(--accent); color: #fff; }
   nav { display: flex; gap: 6px; margin-bottom: 10px; } nav button[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: #fff; }
 </style>
 </head>
 <body class="panel-body">
-  <nav><button data-tab="history" aria-pressed="true">History</button><button data-tab="settings" aria-pressed="false">Settings</button><button data-tab="setup" aria-pressed="false">Setup</button></nav>
+  <nav><button data-tab="history" aria-pressed="true">History</button><button data-tab="models" aria-pressed="false">Models</button><button data-tab="settings" aria-pressed="false">Settings</button><button data-tab="setup" aria-pressed="false">Setup</button></nav>
 
   <section id="tab-history">
-    <div class="bar"><input id="q" type="search" placeholder="Search dictations…"><span id="count" class="muted"></span><button id="dbgStart" title="Record without the hotkey">● Rec</button><button id="dbgStop" title="Stop recording">■ Stop</button></div>
+    <div class="bar"><input id="q" type="search" placeholder="Search dictations…"><select id="modelPick" title="Whisper model"></select><span id="count" class="muted"></span><button id="dbgStart" title="Record without the hotkey">● Rec</button><button id="dbgStop" title="Stop recording">■ Stop</button></div>
     <div id="rows"></div>
+  </section>
+
+  <section id="tab-models" hidden>
+    <div class="card" id="memCard">
+      <div class="check"><strong>GPU memory</strong><span class="muted" id="memTotal"></span></div>
+      <div class="meter" id="meter"><i class="o"></i><i class="w"></i><i class="l"></i></div>
+      <div class="leg" id="memLeg"></div>
+      <div class="verdict" id="memVerdict"></div>
+    </div>
+    <div id="modelCards"></div>
   </section>
 
   <section id="tab-settings" hidden>
@@ -71,8 +97,48 @@
     document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
       document.querySelectorAll('nav button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
       for (const t of ['history', 'settings', 'setup']) $('tab-' + t).hidden = t !== b.dataset.tab;
-      if (b.dataset.tab === 'settings') loadSettings(); if (b.dataset.tab === 'setup') loadSetup();
+      if (b.dataset.tab === 'settings') loadSettings(); if (b.dataset.tab === 'setup') loadSetup(); if (b.dataset.tab === 'models') loadModels();
     });
+
+    const fmtGB = (b) => (b / 1e9).toFixed(1) + ' GB';
+    const fmtMB = (b) => Math.round(b / 1e6) + ' MB';
+    let modelsTimer = null;
+    async function loadModels() {
+      const [models, mem] = await Promise.all([inv('list_models'), inv('memory_report')]);
+      // header dropdown
+      const pick = $('modelPick');
+      pick.innerHTML = models.map(m => `<option value="${m.id}" ${m.active ? 'selected' : ''} ${m.downloaded ? '' : 'disabled'}>${esc(m.label)}${m.downloaded ? '' : ' (not downloaded)'}</option>`).join('');
+      // strip
+      const seg = $('meter').children, T = Math.max(1, mem.total);
+      seg[0].style.flexBasis = (mem.used_by_others / T * 100) + '%';
+      seg[1].style.flexBasis = (mem.selected_bytes / T * 100) + '%';
+      seg[2].style.flexBasis = (mem.llm_bytes / T * 100) + '%';
+      $('meter').classList.toggle('over', mem.verdict === 'wont_fit');
+      $('memTotal').textContent = fmtGB(mem.total) + ' unified memory';
+      $('memLeg').innerHTML = `<span style="--sw:#8069b8">Other apps + system <b>${fmtGB(mem.used_by_others)}</b></span><span style="--sw:#0d9488">Whisper ${esc(mem.selected)} <b>${fmtMB(mem.selected_bytes)}</b></span><span style="--sw:#c47f17">Polish LLM <b>${fmtMB(mem.llm_bytes)}</b></span><span style="--sw:var(--line)">Free after load <b>${fmtGB(mem.free_after)}</b></span>`;
+      const verdictText = { good: 'Fits with headroom', tight: 'Fits, but leaves little room for other apps', wont_fit: 'Will not fit comfortably: pick a smaller model' }[mem.verdict];
+      const cls = { good: 'good', tight: '', wont_fit: 'bad' }[mem.verdict];
+      const label = (id) => (models.find(m => m.id === id) || {}).label || id;
+      $('memVerdict').innerHTML = `<div class="${cls}"><span class="k">Selected · ${esc(mem.selected)}</span><span class="v">${fmtGB(mem.projected)} of ${fmtGB(mem.total)} · ${mem.percent}%</span><br><span class="muted">${verdictText}</span></div>
+        <div><span class="k">Recommended</span><span class="v">${mem.recommended ? esc(label(mem.recommended)) : 'Nothing fits'}</span><br><span class="muted">Fastest that stays under 80%</span></div>
+        <div><span class="k">Best accuracy that fits</span><span class="v">${mem.best ? esc(label(mem.best)) : 'Nothing fits'}</span><br><span class="muted">Most accurate under 80%</span></div>`;
+      // cards
+      const cards = $('modelCards'); cards.innerHTML = '';
+      for (const m of models) {
+        const el = document.createElement('div'); el.className = 'card mcard';
+        const st = m.stats || {};
+        const measured = [st.mem_bytes ? fmtMB(st.mem_bytes) + ' resident' : fmtMB(mem.tier_bytes[m.id]) + ' est.', st.load_ms ? st.load_ms + ' ms load' : null, st.speed_x ? st.speed_x.toFixed(1) + '× realtime' : null].filter(Boolean).join(' · ');
+        el.innerHTML = `<div><strong>${esc(m.label)}</strong>${m.active ? '<span class="badge active">in use</span>' : ''}${m.english_only ? '<span class="badge">English only</span>' : ''}<div class="st">${esc(m.quant)} · ${fmtMB(m.bytes)} on disk · ${m.downloaded ? 'downloaded' : (m.downloading ? 'downloading…' : 'not downloaded')}</div><div class="st">${measured}</div></div>
+          <div class="acts">${m.downloaded ? (m.active ? '' : `<button data-use>Use</button>`) + `<button data-bench>Benchmark</button>` + (m.active ? '' : `<button data-del>Delete</button>`) : (m.downloading ? '' : `<button data-dl>Download</button>`)}</div>`;
+        const on = (sel, cmd, args) => { const b = el.querySelector(sel); if (b) b.onclick = async () => { try { await inv(cmd, args); flash(cmd.replace('_', ' ') + ' started'); } catch (e) { flash(String(e)); } setTimeout(loadModels, 300); }; };
+        on('[data-use]', 'switch_model', { id: m.id }); on('[data-bench]', 'benchmark_model', { id: m.id }); on('[data-del]', 'delete_model', { id: m.id }); on('[data-dl]', 'download_model_by_id', { id: m.id });
+        cards.appendChild(el);
+      }
+      clearTimeout(modelsTimer);
+      if (!$('tab-models').hidden) modelsTimer = setTimeout(loadModels, 5000);
+    }
+    $('modelPick').onchange = async (e) => { try { await inv('switch_model', { id: e.target.value }); } catch (err) { flash(String(err)); } };
+    window.lvw.listen('models-changed', () => { if (!$('tab-models').hidden) loadModels(); else inv('list_models').then(ms => { $('modelPick').innerHTML = ms.map(m => `<option value="${m.id}" ${m.active ? 'selected' : ''} ${m.downloaded ? '' : 'disabled'}>${esc(m.label)}</option>`).join(''); }); });
 
     async function loadHistory() {
       const list = $('q').value ? await inv('search_history', { query: $('q').value }) : await inv('list_history', { limit: 100, offset: 0 });
@@ -117,9 +183,10 @@
       $('stale').hidden = !p.stale_lock;
       document.querySelectorAll('[data-priv]').forEach(b => b.onclick = () => inv('open_privacy', { pane: b.dataset.priv }));
     }
-    window.lvw.listen('model-download', (d) => { $('dl').hidden = d.done; $('dlBar').style.width = Math.round(100 * d.received / Math.max(1, d.total)) + '%'; if (d.done) loadSetup(); if (d.error) flash('Download failed: ' + d.error); });
+    window.lvw.listen('model-download', (d) => { $('dl').hidden = d.done; $('dlBar').style.width = Math.round(100 * d.received / Math.max(1, d.total)) + '%'; if (d.done) { loadSetup(); if (!$('tab-models').hidden) loadModels(); } if (d.error) flash('Download failed: ' + d.error); $('status').textContent = d.done ? '' : `Downloading ${d.model}: ${Math.round(100 * d.received / Math.max(1, d.total))}%`; });
     window.lvw.listen('pill-state', (s) => { $('status').textContent = s.state + (s.message ? ': ' + s.message : ''); if (s.state === 'pasted') loadHistory(); });
     loadHistory();
+    inv('list_models').then(ms => { $('modelPick').innerHTML = ms.map(m => `<option value="${m.id}" ${m.active ? 'selected' : ''} ${m.downloaded ? '' : 'disabled'}>${esc(m.label)}</option>`).join(''); }).catch(() => {});
     inv('permissions').then(p => { if (!p.model_present || !p.accessibility) document.querySelector('[data-tab=setup]').click(); });
   </script>
 </body>
