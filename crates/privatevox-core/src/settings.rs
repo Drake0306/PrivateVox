@@ -72,6 +72,10 @@ pub struct Settings {
     pub llm_timeout_secs: u64,
     /// Master switch for the LLM step; off pastes Whisper's text in every mode.
     pub polish_enabled: bool,
+    /// User-added LLM endpoints in priority order (LAN boxes first, §8.2).
+    pub llm_endpoints: Vec<crate::polish::Endpoint>,
+    /// Probe the localhost runtimes (Ollama, LM Studio, llama.cpp) after the user's list.
+    pub auto_detect_local_llm: bool,
 }
 
 impl Default for Settings {
@@ -97,6 +101,8 @@ impl Default for Settings {
             mode_prompts: HashMap::new(),
             llm_timeout_secs: 8,
             polish_enabled: true,
+            llm_endpoints: Vec::new(),
+            auto_detect_local_llm: true,
         }
     }
 }
