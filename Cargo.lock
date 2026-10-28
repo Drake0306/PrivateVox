@@ -2908,6 +2908,7 @@ dependencies = [
  "anyhow",
  "env_logger",
  "hound",
+ "libc",
  "log",
  "lvw-core",
  "postcard",
@@ -3957,7 +3958,7 @@ checksum = "20675572f6f24e9e76ef639bc5552774ed45f1c30e2951e1e99c59888861c539"
 [[package]]
 name = "rdev"
 version = "0.5.0-2"
-source = "git+https://github.com/rustdesk-org/rdev#0904f23ce496e255461a98848b85c11fa5a62eab"
+source = "git+https://github.com/rustdesk-org/rdev?rev=0904f23ce496e255461a98848b85c11fa5a62eab#0904f23ce496e255461a98848b85c11fa5a62eab"
 dependencies = [
  "cocoa",
  "core-foundation 0.9.4",

@@ -10,6 +10,7 @@ use std::collections::VecDeque;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -49,6 +50,38 @@ pub struct WorkerEngine {
     deadline_override: Option<Duration>,
     last_failure: Option<String>,
     stderr_tail: Arc<Mutex<VecDeque<String>>>,
+    /// Current worker pid (0 when none), readable without the engine lock so an exit path can kill a busy worker.
+    pid: Arc<AtomicU32>,
+}
+
+/// A mutex-free handle to the worker's pid.
+#[derive(Clone)]
+pub struct PidHandle(Arc<AtomicU32>);
+
+impl PidHandle {
+    pub fn pid(&self) -> Option<u32> {
+        match self.0.load(Ordering::SeqCst) {
+            0 => None,
+            p => Some(p),
+        }
+    }
+
+    /// Kills the worker outright (SIGKILL). For the exit path when the engine lock is held by a decode.
+    pub fn kill(&self) -> bool {
+        match self.pid() {
+            Some(pid) => {
+                #[cfg(unix)]
+                {
+                    unsafe { libc::kill(pid as i32, libc::SIGKILL) == 0 }
+                }
+                #[cfg(not(unix))]
+                {
+                    std::process::Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).status().map(|s| s.success()).unwrap_or(false)
+                }
+            }
+            None => false,
+        }
+    }
 }
 
 impl WorkerEngine {
@@ -63,7 +96,12 @@ impl WorkerEngine {
             deadline_override: None,
             last_failure: None,
             stderr_tail: Arc::new(Mutex::new(VecDeque::new())),
+            pid: Arc::new(AtomicU32::new(0)),
         }
+    }
+
+    pub fn pid_handle(&self) -> PidHandle {
+        PidHandle(self.pid.clone())
     }
 
     /// Fixed decode deadline instead of the clip-length policy (tests).
@@ -122,6 +160,7 @@ impl WorkerEngine {
             }
         })?;
         log::info!("engine worker started (pid {})", child.id());
+        self.pid.store(child.id(), Ordering::SeqCst);
         self.worker = Some(Worker { child, stdin, responses: rx });
         Ok(())
     }
@@ -133,6 +172,7 @@ impl WorkerEngine {
             let _ = w.child.wait();
             log::warn!("engine worker killed: {reason}");
         }
+        self.pid.store(0, Ordering::SeqCst);
         self.loaded = false;
         self.last_failure = Some(format!("{reason}; worker stderr tail: {}", self.last_stderr().join(" | ")));
     }
@@ -221,6 +261,7 @@ impl Engine for WorkerEngine {
             let _ = w.child.kill();
             let _ = w.child.wait();
         }
+        self.pid.store(0, Ordering::SeqCst);
         self.loaded = false;
         Ok(())
     }
@@ -264,6 +305,7 @@ impl Engine for WorkerEngine {
 
 impl Drop for WorkerEngine {
     fn drop(&mut self) {
+        self.pid.store(0, Ordering::SeqCst);
         if let Some(mut w) = self.worker.take() {
             drop(w.stdin.take());
             let deadline = Instant::now() + Duration::from_secs(2);

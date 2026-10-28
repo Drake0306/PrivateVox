@@ -20,7 +20,7 @@ use lvw_core::lifecycle::{IdleTimer, LockFile};
 use lvw_core::settings::Settings;
 use lvw_core::store::Store;
 use lvw_core::vad::Vad;
-use lvw_engine::supervisor::{Engine, WorkerEngine};
+use lvw_engine::supervisor::{Engine, PidHandle, WorkerEngine};
 use std::process::Command;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
@@ -44,7 +44,8 @@ tauri_nspanel::tauri_panel! {
 pub fn run() {
     let lock: Arc<Mutex<Option<LockFile>>> = Arc::new(Mutex::new(None));
     let engine_slot: Arc<Mutex<Option<SharedEngine>>> = Arc::new(Mutex::new(None));
-    let (lock_for_exit, engine_for_exit) = (lock.clone(), engine_slot.clone());
+    let pid_slot: Arc<Mutex<Option<PidHandle>>> = Arc::new(Mutex::new(None));
+    let (lock_for_exit, engine_for_exit, pid_for_exit) = (lock.clone(), engine_slot.clone(), pid_slot.clone());
 
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -124,8 +125,16 @@ pub fn run() {
 
             let mut worker_cmd = Command::new(std::env::current_exe()?);
             worker_cmd.arg("--engine-worker");
-            let engine: SharedEngine = Arc::new(Mutex::new(Box::new(WorkerEngine::new(worker_cmd)) as Box<dyn Engine>));
+            let worker_engine = WorkerEngine::new(worker_cmd);
+            *pid_slot.lock().unwrap() = Some(worker_engine.pid_handle());
+            let engine: SharedEngine = Arc::new(Mutex::new(Box::new(worker_engine) as Box<dyn Engine>));
             *engine_slot.lock().unwrap() = Some(engine.clone());
+
+            match paste::restore_backup_on_launch(&paths.clipboard_backup()) {
+                Ok(true) => log::info!("restored the clipboard from an interrupted paste"),
+                Ok(false) => {}
+                Err(e) => log::warn!("clipboard restore at launch failed: {e}"),
+            }
 
             let idle = Arc::new(Mutex::new(IdleTimer::new(current.idle_unload_minutes)));
             let paster = Paster::new(current.paste_method, Duration::from_millis(150), paths.clipboard_backup());
@@ -213,6 +222,15 @@ pub fn run() {
             app.manage(AppState { paths, settings, store, tx: Mutex::new(tx), stale_lock: stale });
             Ok(())
         })
+        .on_window_event(|window, event| {
+            // The panel hides instead of closing; LVW lives in the tray.
+            if window.label() == "panel" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .build(tauri::generate_context!())
         .expect("error while building LVW");
 
@@ -227,7 +245,13 @@ pub fn run() {
             log::info!("exit: unloading engine");
             let engine = engine_for_exit.lock().ok().and_then(|e| e.clone());
             if let Some(engine) = engine {
-                let _ = lifecycle::shutdown(engine, Duration::from_secs(2));
+                if lifecycle::shutdown(engine, Duration::from_secs(2)) == lifecycle::ShutdownOutcome::TimedOut {
+                    if let Some(h) = pid_for_exit.lock().ok().and_then(|p| p.clone()) {
+                        if h.kill() {
+                            log::warn!("exit: killed a busy engine worker");
+                        }
+                    }
+                }
             }
             if let Ok(mut l) = lock_for_exit.lock() {
                 l.take();

@@ -60,11 +60,14 @@ pub enum Cmd {
     ModelUnloaded,
     /// Tray: unload now and stay paused until the next dictation.
     PauseAndUnload,
+    /// The input stream failed while recording.
+    CaptureError(String),
     Quit,
 }
 
 pub trait CaptureSource: Send {
-    fn start(&mut self, on_pcm: Box<dyn FnMut(&[f32]) + Send>) -> anyhow::Result<()>;
+    /// `on_error` is called if the stream dies mid-recording (device unplugged, permission revoked).
+    fn start(&mut self, on_pcm: Box<dyn FnMut(&[f32]) + Send>, on_error: Box<dyn FnMut(String) + Send>) -> anyhow::Result<()>;
     fn stop(&mut self);
 }
 
@@ -153,8 +156,24 @@ impl Coordinator {
         while let Ok(cmd) = rx.recv() {
             match cmd {
                 Cmd::Start => self.start(&tx),
-                Cmd::Stop => self.stop(&tx),
-                Cmd::Cancel => self.cancel(),
+                Cmd::Stop => {
+                    // A stop that did not come through the key: keep the machine in step.
+                    self.machine.force_stop();
+                    self.stop(&tx);
+                }
+                Cmd::Cancel => {
+                    self.machine.force_idle();
+                    self.cancel();
+                }
+                Cmd::CaptureError(msg) => {
+                    if self.recording.take().is_some() {
+                        self.deps.capture.stop();
+                        self.generation += 1;
+                    }
+                    self.machine.force_idle();
+                    self.error(&format!("Microphone stopped: {msg}"));
+                    self.schedule_idle(&tx);
+                }
                 Cmd::ModelReady(p) => {
                     self.deps.model_path = Some(p);
                     if let Some(pcm) = self.queued.take() {
@@ -181,6 +200,7 @@ impl Coordinator {
                     }
                 }
                 Cmd::PauseAndUnload => {
+                    self.machine.force_idle();
                     self.cancel();
                     if let Ok(mut e) = self.deps.engine.lock() {
                         let _ = e.unload();
@@ -221,8 +241,13 @@ impl Coordinator {
                 let _ = t.send(Cmd::Stop);
             }
         });
+        let err_tx = tx.clone();
+        let on_error: Box<dyn FnMut(String) + Send> = Box::new(move |msg| {
+            let _ = err_tx.send(Cmd::CaptureError(msg));
+        });
         (self.emit)(PillState::Listening { seconds: 0.0, level_db: -100.0 });
-        match self.deps.capture.start(on_pcm) {
+        self.preload_model();
+        match self.deps.capture.start(on_pcm, on_error) {
             Ok(()) => {
                 self.recording = Some(Recording { buffer, level, started: Instant::now() });
                 self.generation += 1;
@@ -235,6 +260,33 @@ impl Coordinator {
                 self.schedule_idle(tx);
             }
         }
+    }
+
+    /// Starts loading the model on a helper thread while the user is still speaking (spec §4.3 step 1).
+    /// The helper holds the engine lock for the load, so the decode simply waits on it.
+    fn preload_model(&mut self) {
+        let Some(path) = self.deps.model_path.clone() else { return };
+        let engine = self.deps.engine.clone();
+        let flash = self.settings().flash_attention;
+        let idle = self.deps.idle.clone();
+        std::thread::Builder::new()
+            .name("lvw-preload".into())
+            .spawn(move || {
+                if let Ok(mut e) = engine.lock() {
+                    if !e.is_loaded() {
+                        match e.load(&path, flash) {
+                            Ok(d) => {
+                                log::info!("model preloaded in {:?}", d);
+                                if let Ok(mut t) = idle.lock() {
+                                    t.touch(Instant::now());
+                                }
+                            }
+                            Err(err) => log::warn!("preload failed: {err}"),
+                        }
+                    }
+                }
+            })
+            .ok();
     }
 
     fn tick(&mut self, gen: u64, tx: &Sender<Cmd>) {
@@ -275,7 +327,10 @@ impl Coordinator {
     }
 
     fn stop(&mut self, tx: &Sender<Cmd>) {
-        let Some(rec) = self.recording.take() else { return };
+        let Some(rec) = self.recording.take() else {
+            self.pipeline_done(tx);
+            return;
+        };
         let settings = self.settings();
         if settings.post_release_ms > 0 {
             std::thread::sleep(Duration::from_millis(settings.post_release_ms));
@@ -319,7 +374,8 @@ impl Coordinator {
         let speech = pad_min(speech, 1.25);
         let duration_ms = (speech.len() as f32 / SAMPLE_RATE as f32 * 1000.0) as u32;
 
-        let loaded = self.deps.engine.lock().map(|e| e.is_loaded()).unwrap_or(false);
+        // A preload in progress holds the lock: treat that as "not loaded yet" so the pill says so while we wait.
+        let loaded = self.deps.engine.try_lock().map(|e| e.is_loaded()).unwrap_or(false);
         if !loaded {
             let Some(path) = self.deps.model_path.clone() else {
                 (self.emit)(PillState::LoadingModel { progress: None });
@@ -327,11 +383,14 @@ impl Coordinator {
                 return;
             };
             (self.emit)(PillState::LoadingModel { progress: None });
-            let load = self.deps.engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| e.load(&path, settings.flash_attention));
+            let load = self.deps.engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| if e.is_loaded() { Ok(Duration::ZERO) } else { e.load(&path, settings.flash_attention) });
             if let Err(e) = load {
                 self.error(&format!("Model failed to load: {e}"));
                 self.schedule_idle(tx);
                 return;
+            }
+            if let Ok(mut idle) = self.deps.idle.lock() {
+                idle.touch(Instant::now());
             }
         }
 
@@ -431,9 +490,11 @@ mod tests {
         load_delay: Duration,
         text: String,
         loaded: bool,
+        load_calls: Arc<Mutex<u32>>,
     }
     impl Engine for FakeEngine {
         fn load(&mut self, _model: &Path, _flash: bool) -> anyhow::Result<Duration> {
+            *self.load_calls.lock().unwrap() += 1;
             std::thread::sleep(self.load_delay);
             self.loaded = true;
             Ok(self.load_delay)
@@ -454,13 +515,17 @@ mod tests {
     struct FakeCapture {
         pcm: Vec<f32>,
         fail: bool,
+        die_after_start: bool,
     }
     impl CaptureSource for FakeCapture {
-        fn start(&mut self, mut on_pcm: Box<dyn FnMut(&[f32]) + Send>) -> anyhow::Result<()> {
+        fn start(&mut self, mut on_pcm: Box<dyn FnMut(&[f32]) + Send>, mut on_error: Box<dyn FnMut(String) + Send>) -> anyhow::Result<()> {
             if self.fail {
                 anyhow::bail!("microphone access denied");
             }
             on_pcm(&self.pcm);
+            if self.die_after_start {
+                on_error("device disconnected".into());
+            }
             Ok(())
         }
         fn stop(&mut self) {}
@@ -540,7 +605,7 @@ mod tests {
 
     #[test]
     fn pipeline_records_transcribes_pastes_and_stores() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "Hello.".into(), loaded: true }, FakeCapture { pcm: fixture(), fail: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         let (states, pasted, count) = run_once(h);
         assert_eq!(pasted, vec!["Hello.".to_string()]);
         assert_eq!(count, 1);
@@ -551,7 +616,7 @@ mod tests {
 
     #[test]
     fn pipeline_discards_clips_under_300ms() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true }, FakeCapture { pcm: vec![0.3; 2_000], fail: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default() }, FakeCapture { pcm: vec![0.3; 2_000], fail: false, die_after_start: false });
         let (states, pasted, count) = run_once(h);
         assert!(pasted.is_empty());
         assert_eq!(count, 0);
@@ -560,7 +625,7 @@ mod tests {
 
     #[test]
     fn pipeline_reports_silent_mic() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true }, FakeCapture { pcm: vec![0.0; 16_000], fail: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default() }, FakeCapture { pcm: vec![0.0; 16_000], fail: false, die_after_start: false });
         let (states, pasted, count) = run_once(h);
         assert!(pasted.is_empty());
         assert_eq!(count, 0);
@@ -569,15 +634,58 @@ mod tests {
 
     #[test]
     fn pipeline_queues_clip_until_engine_loaded() {
-        let h = harness(FakeEngine { load_delay: Duration::from_millis(300), text: "Hello.".into(), loaded: false }, FakeCapture { pcm: fixture(), fail: false });
+        let h = harness(FakeEngine { load_delay: Duration::from_millis(300), text: "Hello.".into(), loaded: false, load_calls: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         let (states, pasted, _) = run_once(h);
         assert_eq!(pasted, vec!["Hello.".to_string()]);
         assert!(kinds(&states).contains(&"loading_model"), "{:?}", kinds(&states));
     }
 
     #[test]
+    fn direct_stop_after_hotkey_start_keeps_hotkeys_working() {
+        use lvw_core::hotkeys::{Binding, Input};
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        h.tx.send(Cmd::Key(Input::Down(Binding::Ptt))).unwrap();
+        h.tx.send(Cmd::Stop).unwrap(); // what the clip cap, the tray or the debug button sends
+        h.tx.send(Cmd::Key(Input::Up(Binding::Ptt))).unwrap();
+        h.tx.send(Cmd::Key(Input::Down(Binding::Ptt))).unwrap();
+        h.tx.send(Cmd::Key(Input::Up(Binding::Ptt))).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+        let pasted = h.pasted.lock().unwrap().clone();
+        assert_eq!(pasted.len(), 2, "second hotkey press must record again; states {:?}", kinds(&h.states.lock().unwrap()));
+    }
+
+    #[test]
+    fn pipeline_reports_device_loss_mid_recording() {
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: true });
+        h.tx.send(Cmd::Start).unwrap();
+        std::thread::sleep(Duration::from_millis(2300));
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+        let states = h.states.lock().unwrap().clone();
+        assert!(states.iter().any(|s| matches!(s, PillState::Error { message } if message.starts_with("Microphone stopped"))), "{:?}", kinds(&states));
+        assert_eq!(kinds(&states).last().copied(), Some("idle"));
+        assert!(h.pasted.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn pipeline_starts_model_load_while_recording() {
+        let calls = Arc::new(Mutex::new(0u32));
+        let h = harness(FakeEngine { load_delay: Duration::from_millis(200), text: "Hello.".into(), loaded: false, load_calls: calls.clone() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        h.tx.send(Cmd::Start).unwrap();
+        std::thread::sleep(Duration::from_millis(80));
+        assert_eq!(*calls.lock().unwrap(), 1, "load must begin at Start, not after Stop");
+        h.tx.send(Cmd::Stop).unwrap();
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+        assert_eq!(h.pasted.lock().unwrap().clone(), vec!["Hello.".to_string()]);
+        assert_eq!(*calls.lock().unwrap(), 1, "the decode must reuse the preloaded model");
+    }
+
+    #[test]
     fn pipeline_reports_capture_error() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true }, FakeCapture { pcm: vec![], fail: true });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default() }, FakeCapture { pcm: vec![], fail: true, die_after_start: false });
         let (states, pasted, count) = run_once_waiting(h, Duration::from_millis(2300));
         assert!(pasted.is_empty());
         assert_eq!(count, 0);

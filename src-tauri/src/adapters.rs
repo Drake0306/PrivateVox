@@ -19,9 +19,9 @@ impl MicCapture {
 }
 
 impl CaptureSource for MicCapture {
-    fn start(&mut self, on_pcm: Box<dyn FnMut(&[f32]) + Send>) -> anyhow::Result<()> {
+    fn start(&mut self, on_pcm: Box<dyn FnMut(&[f32]) + Send>, on_error: Box<dyn FnMut(String) + Send>) -> anyhow::Result<()> {
         let device = self.settings.lock().ok().and_then(|s| s.microphone.clone());
-        self.stream = Some(Capture::start(device.as_deref(), on_pcm)?);
+        self.stream = Some(Capture::start_with_errors(device.as_deref(), on_pcm, on_error)?);
         Ok(())
     }
 
@@ -46,6 +46,12 @@ impl SystemPaste {
 
 impl PasteSink for SystemPaste {
     fn paste(&mut self, text: &str) -> anyhow::Result<PasteOutcome> {
+        // Re-check on every paste: a revoked Accessibility grant must not turn into a silent "pasted".
+        if matches!(self.paster.method, lvw_core::settings::PasteMethod::Clipboard) && !crate::paste::accessibility_trusted(false) {
+            let mut cb = arboard::Clipboard::new()?;
+            cb.set_text(text.to_string())?;
+            return Ok(PasteOutcome::CopiedOnly("Accessibility not granted".into()));
+        }
         if self.sender.is_none() {
             match EnigoSender::new() {
                 Ok(s) => self.sender = Some(s),

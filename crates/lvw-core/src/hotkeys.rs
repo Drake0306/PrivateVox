@@ -58,6 +58,20 @@ impl Machine {
         self.hold_threshold = hold_threshold;
     }
 
+    /// Something other than the key stopped the recording (clip cap, tray, panel button): the pipeline is now
+    /// processing, so the next `PipelineDone` drains normally.
+    pub fn force_stop(&mut self) {
+        if matches!(self.stage, Stage::Recording { .. }) {
+            self.stage = Stage::Processing;
+        }
+    }
+
+    /// Everything was cancelled from outside the key flow.
+    pub fn force_idle(&mut self) {
+        self.stage = Stage::Idle;
+        self.remembered = None;
+    }
+
     fn locked_from_start(&self, binding: Binding) -> bool {
         binding == Binding::Toggle || matches!(self.activation, Activation::Toggle)
     }
@@ -201,6 +215,28 @@ mod tests {
         mc.on(Input::StartResult(false), t);
         assert!(matches!(mc.stage(), Stage::Idle));
         assert!(matches!(mc.on(Input::Up(Binding::Ptt), ms(t, 100)), Effect::Nothing));
+    }
+
+    #[test]
+    fn force_stop_moves_recording_to_processing_and_drains() {
+        let (mut mc, t) = m(Activation::PushToTalk);
+        mc.on(Input::Down(Binding::Ptt), t);
+        mc.on(Input::StartResult(true), t);
+        mc.force_stop(); // the clip cap or the tray stopped the recording, not the key
+        assert!(matches!(mc.stage(), Stage::Processing));
+        assert!(matches!(mc.on(Input::Up(Binding::Ptt), ms(t, 500)), Effect::Nothing));
+        assert!(matches!(mc.on(Input::PipelineDone, ms(t, 900)), Effect::Nothing));
+        assert!(matches!(mc.on(Input::Down(Binding::Ptt), ms(t, 1000)), Effect::StartRecording));
+    }
+
+    #[test]
+    fn force_idle_clears_everything() {
+        let (mut mc, t) = m(Activation::Toggle);
+        mc.on(Input::Down(Binding::Toggle), t);
+        mc.on(Input::StartResult(true), t);
+        mc.force_idle();
+        assert!(matches!(mc.stage(), Stage::Idle));
+        assert!(matches!(mc.on(Input::Down(Binding::Toggle), ms(t, 100)), Effect::StartRecording));
     }
 
     #[test]

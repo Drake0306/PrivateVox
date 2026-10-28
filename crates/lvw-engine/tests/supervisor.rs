@@ -80,3 +80,52 @@ fn dropping_supervisor_ends_worker() {
     }
     assert!(!alive(pid), "worker must exit when the supervisor is dropped");
 }
+
+#[test]
+fn pid_handle_kills_a_busy_worker_without_the_lock() {
+    use std::sync::{Arc, Mutex};
+    let mut e = WorkerEngine::new(fake_worker(3000));
+    e.load(std::path::Path::new("/nonexistent/model.bin"), true).unwrap();
+    let handle = e.pid_handle();
+    let pid = handle.pid().unwrap();
+    let shared: Arc<Mutex<WorkerEngine>> = Arc::new(Mutex::new(e));
+    let busy = shared.clone();
+    let t = std::thread::spawn(move || {
+        let mut e = busy.lock().unwrap();
+        e.transcribe(&vec![0.0; 16_000], &DecodeOptions::default()).map(|t| t.text)
+    });
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(shared.try_lock().is_err(), "the decode must be holding the lock");
+    assert!(handle.kill(), "kill must reach the worker");
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while alive(pid) && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(!alive(pid), "worker must be gone right after the kill");
+    let result = t.join().unwrap();
+    assert!(result.is_err(), "the in-flight decode must fail, not hang");
+}
+
+#[test]
+fn worker_exits_when_its_parent_dies_mid_decode() {
+    // A throwaway parent shell starts the fake worker with a slow decode queued through a pipe, then the
+    // shell is killed; the worker must notice the reparenting and exit on its own.
+    let worker = env!("CARGO_BIN_EXE_lvw-worker");
+    let script = format!(
+        "exec 3< <(sleep 60); LVW_WORKER_FAKE=1 LVW_WORKER_SLEEP_MS=20000 {worker} <&3 >/dev/null 2>&1 & echo $!; wait"
+    );
+    let mut parent = Command::new("bash").arg("-c").arg(&script).stdout(std::process::Stdio::piped()).spawn().unwrap();
+    let mut line = String::new();
+    use std::io::BufRead;
+    std::io::BufReader::new(parent.stdout.take().unwrap()).read_line(&mut line).unwrap();
+    let worker_pid: u32 = line.trim().parse().unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(alive(worker_pid));
+    Command::new("kill").args(["-9", &parent.id().to_string()]).status().unwrap();
+    let _ = parent.wait();
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while alive(worker_pid) && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(!alive(worker_pid), "worker must exit within 3 s of its parent dying");
+}

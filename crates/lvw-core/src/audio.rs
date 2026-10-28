@@ -134,7 +134,12 @@ pub struct Capture {
 
 impl Capture {
     /// Opens `device_name` (or the default input), mixes to mono, resamples to 16 kHz, and calls `on_pcm16k`.
-    pub fn start(device_name: Option<&str>, mut on_pcm16k: Box<dyn FnMut(&[f32]) + Send>) -> Result<Capture> {
+    pub fn start(device_name: Option<&str>, on_pcm16k: Box<dyn FnMut(&[f32]) + Send>) -> Result<Capture> {
+        Self::start_with_errors(device_name, on_pcm16k, Box::new(|e| log::error!("input stream error: {e}")))
+    }
+
+    /// Like `start`, with a sink for stream errors (device lost, permission revoked).
+    pub fn start_with_errors(device_name: Option<&str>, mut on_pcm16k: Box<dyn FnMut(&[f32]) + Send>, mut on_error: Box<dyn FnMut(String) + Send>) -> Result<Capture> {
         let host = cpal::default_host();
         let device = match device_name {
             Some(name) => host
@@ -158,7 +163,7 @@ impl Capture {
                         on_pcm16k(&out);
                     }
                 },
-                |e| log::error!("input stream error: {e}"),
+                move |e| on_error(e.to_string()),
                 None,
             )
             .context("build input stream")?;

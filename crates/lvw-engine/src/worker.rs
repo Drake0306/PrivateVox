@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 pub fn run_worker() -> i32 {
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).try_init();
+    spawn_parent_watch();
     let fake = std::env::var("LVW_WORKER_FAKE").is_ok();
     let sleep_ms: u64 = std::env::var("LVW_WORKER_SLEEP_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
     let stdin = std::io::stdin();
@@ -84,4 +85,24 @@ pub fn run_worker() -> i32 {
     // Skip native destructors on the way out: ggml-metal teardown can assert, and the OS reclaims everything.
     std::mem::forget(backend);
     0
+}
+
+/// Exits the worker as soon as the parent is gone, even in the middle of a decode (the stdin EOF is only
+/// noticed between frames). On Unix a reparented child sees `getppid() == 1`.
+fn spawn_parent_watch() {
+    #[cfg(unix)]
+    {
+        let parent = unsafe { libc::getppid() };
+        std::thread::Builder::new()
+            .name("lvw-parent-watch".into())
+            .spawn(move || loop {
+                std::thread::sleep(Duration::from_millis(250));
+                let now = unsafe { libc::getppid() };
+                if now != parent || now == 1 {
+                    log::warn!("worker: parent gone, exiting");
+                    std::process::exit(0);
+                }
+            })
+            .ok();
+    }
 }

@@ -127,8 +127,24 @@ impl Paster {
                 let _ = std::fs::remove_file(&self.backup_path);
                 Ok(PasteOutcome::Pasted)
             }
-            Err(e) => Ok(PasteOutcome::CopiedOnly(e.to_string())),
+            Err(e) => {
+                // The transcript stays on the clipboard on purpose; nothing is pending any more.
+                let _ = std::fs::remove_file(&self.backup_path);
+                Ok(PasteOutcome::CopiedOnly(e.to_string()))
+            }
         }
+    }
+}
+
+/// At launch: if a paste was interrupted by a crash, put the previous clipboard back. Returns whether it did.
+pub fn restore_backup_on_launch(path: &Path) -> Result<bool> {
+    match ClipboardBackup::restore_pending(path)? {
+        Some(prev) => {
+            let mut cb = arboard::Clipboard::new().context("clipboard")?;
+            cb.set_text(prev).context("restore clipboard")?;
+            Ok(true)
+        }
+        None => Ok(false),
     }
 }
 
@@ -215,7 +231,20 @@ mod tests {
         let out = p.paste("new", &mut s).unwrap();
         assert!(matches!(out, PasteOutcome::CopiedOnly(_)));
         assert_eq!(clipboard_text().as_deref(), Some("new"));
-        assert!(d.path().join("clipboard.bak").exists(), "backup kept so the old clipboard can be restored later");
+        assert!(!d.path().join("clipboard.bak").exists(), "no restore is pending once paste() has returned");
+    }
+
+    #[test]
+    #[ignore = "touches the system clipboard"]
+    fn launch_restore_puts_previous_clipboard_back() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("clipboard.bak");
+        set_clipboard("transcript left by a crash");
+        ClipboardBackup::save(&p, Some("what was there before")).unwrap();
+        assert!(restore_backup_on_launch(&p).unwrap());
+        assert_eq!(clipboard_text().as_deref(), Some("what was there before"));
+        assert!(!p.exists());
+        assert!(!restore_backup_on_launch(&p).unwrap());
     }
 
     #[test]

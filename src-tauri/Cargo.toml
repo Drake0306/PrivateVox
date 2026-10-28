@@ -17,8 +17,8 @@ tauri = { version = "2.12.4", features = ["tray-icon", "image-png", "macos-priva
 tauri-plugin-log = "2.10.1"
 tauri-plugin-global-shortcut = "2.4.1"
 tauri-plugin-single-instance = "2.5.4"
-rdev = { git = "https://github.com/rustdesk-org/rdev" }
-ctrlc = { version = "3", features = ["termination"] }
+rdev = { git = "https://github.com/rustdesk-org/rdev", rev = "0904f23ce496e255461a98848b85c11fa5a62eab" }
+ctrlc = { version = "3.4", features = ["termination"] }
 log.workspace = true
 anyhow.workspace = true
 serde.workspace = true
