@@ -7,6 +7,10 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing version tag to build and attach to (e.g. v0.2.0-alpha.1)"
+        required: true
 
 permissions:
   contents: write
@@ -27,6 +31,8 @@ jobs:
             target: x86_64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -55,6 +61,13 @@ jobs:
           cache: true
           stripdown: true
 
+      # whisper.cpp's Vulkan backend configures a nested CMake project (vulkan-shaders-gen). Under the Visual Studio
+      # generator that nested configure cannot find cl.exe on the current runner image, so build with Ninja inside an
+      # MSVC developer environment instead.
+      - name: MSVC developer environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Tauri CLI
         run: npm install -g @tauri-apps/cli@2.12.4
 
@@ -62,9 +75,10 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CMAKE_GENERATOR: ${{ runner.os == 'Windows' && 'Ninja' || '' }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "PrivateVox ${{ github.ref_name }}"
+          tagName: ${{ inputs.tag || github.ref_name }}
+          releaseName: "PrivateVox ${{ inputs.tag || github.ref_name }}"
           releaseBody: "See the release notes above. Builds are unsigned alpha builds; follow the install steps in the notes."
           releaseDraft: false
           prerelease: true
