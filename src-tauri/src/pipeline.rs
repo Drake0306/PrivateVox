@@ -211,14 +211,23 @@ pub struct Coordinator {
     idle_tx: Option<Sender<Cmd>>,
 }
 
+/// The pill's idle text: which key, and whether to hold or tap it, from the activation setting (§4.1).
 fn hotkey_hint(s: &Settings) -> String {
-    match (&s.ptt.modifier, &s.ptt.combo) {
-        (Some(privatevox_core::settings::ModifierKey::RightOption), _) => "Hold right ⌥ to talk".into(),
-        (Some(privatevox_core::settings::ModifierKey::LeftOption), _) => "Hold left ⌥ to talk".into(),
-        (Some(privatevox_core::settings::ModifierKey::RightCommand), _) => "Hold right ⌘ to talk".into(),
-        (Some(privatevox_core::settings::ModifierKey::RightControl), _) => "Hold right ⌃ to talk".into(),
-        (None, Some(c)) => format!("Hold {c} to talk"),
-        (None, None) => "PrivateVox".into(),
+    use privatevox_core::settings::{Activation, ModifierKey};
+    let ptt_key = match (&s.ptt.modifier, &s.ptt.combo) {
+        (Some(ModifierKey::RightOption), _) => Some("right ⌥".to_string()),
+        (Some(ModifierKey::LeftOption), _) => Some("left ⌥".to_string()),
+        (Some(ModifierKey::RightCommand), _) => Some("right ⌘".to_string()),
+        (Some(ModifierKey::RightControl), _) => Some("right ⌃".to_string()),
+        (None, Some(c)) => Some(c.clone()),
+        (None, None) => None,
+    };
+    match (s.activation, ptt_key, &s.toggle.combo) {
+        (Activation::PushToTalk, Some(k), _) => format!("Hold {k} to talk"),
+        (Activation::HoldOrToggle, Some(k), _) => format!("Hold or tap {k} to talk"),
+        (Activation::Toggle, Some(k), _) => format!("Tap {k} to start, tap again to stop"),
+        (_, None, Some(t)) => format!("Tap {t} to start, tap again to stop"),
+        (_, None, None) => "PrivateVox".into(),
     }
 }
 
@@ -1761,5 +1770,26 @@ mod tests {
         assert!(states.iter().any(|s| matches!(s, PillState::Error { message } if message.contains("Polish is off"))), "{:?}", kinds(&states));
         h.tx.send(Cmd::Quit).unwrap();
         h.join.join().unwrap();
+    }
+
+    #[test]
+    fn hotkey_hint_reflects_the_activation_mode() {
+        use privatevox_core::settings::{Activation, HotkeyBinding, ModifierKey};
+        let mut s = Settings::default();
+        assert_eq!(hotkey_hint(&s), "Hold right ⌥ to talk");
+        s.activation = Activation::Toggle;
+        assert_eq!(hotkey_hint(&s), "Tap right ⌥ to start, tap again to stop");
+        s.activation = Activation::HoldOrToggle;
+        assert_eq!(hotkey_hint(&s), "Hold or tap right ⌥ to talk");
+        s.ptt = HotkeyBinding { combo: Some("Ctrl+Alt+Space".into()), modifier: None };
+        s.activation = Activation::PushToTalk;
+        assert_eq!(hotkey_hint(&s), "Hold Ctrl+Alt+Space to talk");
+        s.ptt = HotkeyBinding { combo: None, modifier: None };
+        assert_eq!(hotkey_hint(&s), "Tap Ctrl+Shift+Space to start, tap again to stop");
+        s.toggle = HotkeyBinding { combo: None, modifier: None };
+        assert_eq!(hotkey_hint(&s), "PrivateVox");
+        s.ptt = HotkeyBinding { combo: None, modifier: Some(ModifierKey::RightCommand) };
+        s.activation = Activation::Toggle;
+        assert_eq!(hotkey_hint(&s), "Tap right ⌘ to start, tap again to stop");
     }
 }
