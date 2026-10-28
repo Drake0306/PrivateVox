@@ -18,6 +18,19 @@ Hold a key, talk, let go: the words land in whatever app is in front. Whisper ru
 - Idle unload of the model after any number of minutes you choose; menu bar item to pause and unload now.
 - First-run download of the model with resume and progress; Setup tab for the three macOS permissions.
 
+## Polish: cleaning up the text with an LLM
+
+Whisper's transcript goes through a small language model before it is pasted, unless the mode is Raw or Translate. Modes: **Clean** (default), **Email**, **Bullets**, **Code**, **Ask** (answers the question instead of transcribing it), plus **Raw** and **Translate to English** which skip the LLM. Pick the mode in the panel header, the menu bar, or re-polish any history row with another mode. Prompts are editable under Settings → Polish, with a reset.
+
+Where the LLM runs, in priority order:
+
+1. **Machines you added** (Settings → Polish → Add endpoint, as `ip:port`). Typically the PC with the big GPU, running LM Studio with "Serve on local network" on, or Ollama with `OLLAMA_HOST=0.0.0.0`.
+2. **This machine**, found automatically: Ollama on port 11434, LM Studio on 1234, llama.cpp server on 8080.
+
+Every endpoint is health-checked every 10 seconds. A dictation uses the first reachable one; if it fails mid-request the next one is tried and the pill says "PC unreachable, polished locally". If nothing answers within the timeout (8 s by default) the raw transcript is pasted and the history row is marked *unpolished*. When the preferred machine comes back it is used again without any action.
+
+On an 8 GB Mac, `ollama pull qwen2.5:3b` is the recommended local model (about 2 GB resident, roughly one second per dictation once warm). The model is warmed when you press the key and unloaded on the same idle timer as Whisper. Filler words ("uh", "hmm", and "um" when the language is English) are removed before the LLM and in Raw mode too; switch that off under Settings → Polish.
+
 ## Download
 
 Alpha builds for macOS (Apple Silicon), Windows and Linux are on the [Releases page](https://github.com/Drake0306/PrivateVox/releases). Read the release notes there for the one-time macOS permission steps; builds are unsigned for now.

@@ -2,6 +2,17 @@
 
 All notable changes to PrivateVox. Versions follow the plans in `docs/superpowers/plans/`.
 
+## Unreleased
+
+### Polish (phase 3)
+- Modes: Clean (default), Email, Bullets, Code, Ask through an LLM; Raw and Translate to English without one. Mode picker in the panel header and the menu bar; prompts editable with reset.
+- LLM endpoints: machines you add by `ip:port` first, then Ollama, LM Studio or llama.cpp found on this machine. Health checks every 10 s with backoff, automatic failover and fail-back, "PC unreachable, polished locally" in the pill, raw text pasted and the row marked *unpolished* when nothing answers.
+- Warm-up on key press, `keep_alive` on Ollama, unload on the same idle timer as Whisper. The first dictation after a cold runtime may wait up to 25 s for the model to load instead of pasting raw text.
+- Re-polish any history row with another mode; Raw toggle shows Whisper's text.
+- Polish LLM selector in the memory strip; a local model's resident size counts against the budget.
+- Filler words removed before saving and before the LLM (language-gated), with a toggle.
+- History database migrates to schema v2 (`polish_status`).
+
 ## 0.2.0-alpha.1 — 2026-10-28
 
 First public alpha. macOS on Apple Silicon is the tested platform; Windows and Linux builds are produced by CI and have not been run by a person yet.

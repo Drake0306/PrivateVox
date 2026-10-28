@@ -46,13 +46,13 @@ footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--line);font-si
 </style>
 
 <header class="wrap">
-  <div class="eyebrow">Status · 28 Oct 2026 · commit 9331e03 on main</div>
+  <div class="eyebrow">Status · 28 Oct 2026 · phase 3 merged on main</div>
   <h1 style="margin-top:.4rem">PrivateVox Roadmap</h1>
-  <p class="lede">What the design promised, what is built, what is next. Two of four plans are done; the Mac build dictates, switches models and shows its memory. Cleaning up the text with a local LLM and reaching your PC over the LAN are the next plan.</p>
+  <p class="lede">What the design promised, what is built, what is next. Three of four plans are done: the Mac build dictates, switches models, shows its memory, and cleans up the text with a local or LAN LLM that fails over on its own. The extras, the Windows pass on the RX 9070 and the release polish are what is left.</p>
   <div class="summary">
-    <div class="sum done"><div class="n">2 / 4</div><div class="k">plans complete</div></div>
-    <div class="sum next"><div class="n">1</div><div class="k">plan up next: polish + LAN</div></div>
-    <div class="sum later"><div class="n">1</div><div class="k">plan after: extras + Windows + release</div></div>
+    <div class="sum done"><div class="n">3 / 4</div><div class="k">plans complete</div></div>
+    <div class="sum next"><div class="n">1</div><div class="k">plan up next: extras + Windows + release</div></div>
+    <div class="sum later"><div class="n">6</div><div class="k">installers on the alpha release</div></div>
     <div class="sum you"><div class="n">2</div><div class="k">things only you can do</div></div>
   </div>
 </header>
@@ -90,18 +90,18 @@ footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--line);font-si
 </section>
 
 <section class="wrap">
-  <h2>Phase 3 · LLM polish and LAN <span class="chip next">next</span></h2>
+  <h2>Phase 3 · LLM polish and LAN <span class="chip done">done</span></h2>
   <div class="phase"><ul class="list">
-    <li><span class="mark next"></span><div><b>Polish modes</b><small>Raw, Clean (default), Email, Bullets, Code, Translate, Ask. Editable prompts with reset. Re-polish any history row with another mode.</small></div></li>
-    <li><span class="mark next"></span><div><b>Local LLM first</b><small>Ollama on this Mac (qwen2.5:3b already pulled), OpenAI-compatible endpoints, keep-alive while Whisper is warm, warm-up request fired on key press, unloaded by the same idle timer.</small></div></li>
-    <li><span class="mark next"></span><div><b>LAN second, seamless</b><small>Ordered endpoint list, health checks every 10 s, automatic failover to the RX 9070 PC by IP and port and back again, "PC unreachable, polished locally" in the pill. Raw text pasted if nothing is up.</small></div></li>
-    <li><span class="mark next"></span><div><b>Polish LLM in the memory strip</b><small>The disabled "Polish LLM" selector comes alive; local models count against the budget, LAN ones count as 0 GB here.</small></div></li>
-    <li><span class="mark next"></span><div><b>Filler removal and clean-up without the LLM</b><small>Language-gated filler words, so Raw mode reads clean too.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>Polish modes</b><small>Raw, Clean (default), Email, Bullets, Code, Translate, Ask. Editable prompts with reset. Re-polish any history row with another mode.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>Local LLM first</b><small>Ollama on this Mac (qwen2.5:3b already pulled), OpenAI-compatible endpoints, keep-alive while Whisper is warm, warm-up request fired on key press, unloaded by the same idle timer.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>LAN second, seamless</b><small>Ordered endpoint list, health checks every 10 s, automatic failover to the RX 9070 PC by IP and port and back again, "PC unreachable, polished locally" in the pill. Raw text pasted if nothing is up.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>Polish LLM in the memory strip</b><small>The disabled "Polish LLM" selector comes alive; local models count against the budget, LAN ones count as 0 GB here.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>Filler removal and clean-up without the LLM</b><small>Language-gated filler words, so Raw mode reads clean too.</small></div></li>
   </ul></div>
 </section>
 
 <section class="wrap">
-  <h2>Phase 4 · Extras, Windows, release <span class="chip later">after</span></h2>
+  <h2>Phase 4 · Extras, Windows, release <span class="chip next">next</span></h2>
   <div class="phase"><ul class="list">
     <li><span class="mark todo"></span><div><b>Personal dictionary</b><small>Names and jargon fed to Whisper as its prompt, fuzzy safety net when the prompt was not applied.</small></div></li>
     <li><span class="mark todo"></span><div><b>Spoken languages</b><small>Multi-select with the language identifier; translate mode. Today only the first language is used.</small></div></li>
@@ -116,7 +116,7 @@ footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--line);font-si
 </section>
 
 <section class="wrap">
-  <div class="note">Suggested order for Phase 3: polish modes with local Ollama first (one afternoon of work, immediately useful), then the LAN endpoint list with failover, then the memory strip's LLM segment. Say "go" and it runs the same way as the first two plans: a written plan, tests first, a fresh review at the end.</div>
+  <div class="note">Measured on the M1 with qwen2.5:3b through Ollama: a warm polish takes about one second; the warm-up on key press is under 100 ms once the model is resident; with Ollama stopped a dictation pastes the raw text and the row is marked unpolished. Phase 4 order suggestion: dictionary and spoken languages first, then keep-audio and receipt-sequenced paste, then the Windows pass when you are at the PC.</div>
 </section>
 
 <footer class="wrap">Source of truth: <code>docs/superpowers/specs/2026-10-28-whisper-harness-design.md</code> and the plan files beside it. Repo: github.com/Drake0306/PrivateVox.</footer>
