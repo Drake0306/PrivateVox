@@ -168,9 +168,6 @@ pub fn machine_label() -> String {
         format!("This machine · {gb} GB")
     }
 }
-    #[allow(unreachable_code)]
-    format!("This machine · {gb} GB")
-}
 
 #[tauri::command]
 pub fn list_input_devices() -> Vec<String> {
