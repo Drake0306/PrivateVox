@@ -769,6 +769,7 @@ impl Coordinator {
                     let slice = |r: std::ops::Range<usize>| buffer.lock().map(|b| b.peek()[r.start * FRAME..r.end * FRAME].to_vec()).unwrap_or_default();
                     if let Ok(probs) = score_new_frames(&mut self.vad, rec.silence_scored, frames_available, slice) {
                         rec.silence.push(&probs, VadConfig::default().threshold);
+                        log::debug!("auto-stop scoring: {} new frames, max p {:.2}, level {:.0} dB, heard_speech {}, silent_for {:.1}s", probs.len(), probs.iter().cloned().fold(0.0f32, f32::max), level, rec.silence.heard_speech(), rec.silence.silent_for(FRAME as f32 / SAMPLE_RATE as f32 * 1000.0));
                     }
                     rec.silence_scored = frames_available;
                 }
@@ -787,7 +788,9 @@ impl Coordinator {
         // Never on this thread (keys and Stop must not wait on it) and never through the host (a preview is not a chunk).
         if rec.ticks % 30 == 0 && !rec.preview_inflight && preview_enabled(settings.live_preview, self.deps.remote.in_use(), self.total_memory) {
             let window: Vec<f32> = rec.buffer.lock().map(|b| { let p = b.peek(); let n = p.len().min(6 * SAMPLE_RATE as usize); p[p.len() - n..].to_vec() }).unwrap_or_default();
-            if window.len() >= SAMPLE_RATE as usize {
+            // Whisper invents sentences for silence, so a window without a speech frame is not decoded.
+            let has_speech = window.len() >= SAMPLE_RATE as usize && self.vad.score(&window[..window.len() / FRAME * FRAME]).map(|p| p.iter().any(|&x| x >= VadConfig::default().threshold)).unwrap_or(true);
+            if has_speech {
                 let opts = DecodeOptions { language: settings.spoken_languages.first().cloned(), translate: false, initial_prompt: initial_prompt(&settings.dictionary), n_threads: 4, final_chunk: false };
                 let (engine, tx2) = (self.deps.engine.clone(), tx.clone());
                 rec.preview_inflight = true;
@@ -3119,5 +3122,25 @@ mod tests {
         println!("overlap: {f_over} flipped frames, mean diff {m_over:.4}; cold: {f_cold} flipped, mean diff {m_cold:.4}");
         assert!(f_over <= f_cold && m_over <= m_cold, "the overlap must not be worse than a cold start");
         assert!(f_over <= 1, "at most one frame decides differently from continuous scoring, got {f_over}");
+    }
+
+    #[test]
+    fn preview_skips_silent_windows() {
+        use privatevox_core::preview::Preview;
+        // Whisper invents sentences for silence; a window without speech is never decoded for the preview.
+        let e = engine_saying("made up words");
+        let decodes = e.decodes.clone();
+        let h = harness(e, FakeCapture { pcm: vec![0.0f32; 12 * 16_000], fail: false, die_after_start: false });
+        {
+            let mut s = h.settings.lock().unwrap();
+            s.mode = Mode::Raw;
+            s.live_preview = Preview::On;
+        }
+        h.tx.send(Cmd::Start).unwrap();
+        std::thread::sleep(Duration::from_millis(3600));
+        assert_eq!(decodes.lock().unwrap().len(), 0, "no preview decode of a silent window");
+        h.tx.send(Cmd::Cancel).unwrap();
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
     }
 }
