@@ -954,6 +954,7 @@ impl Coordinator {
             polished_by,
             polish_status: polish_status.into(),
             status: status.into(),
+            engine_kind: "local".into(),
             timing_json: Some(timing.to_string()),
         };
         if let Ok(mut store) = self.store.lock() {

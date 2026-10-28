@@ -20,6 +20,8 @@ pub struct NewDictation {
     pub polish_status: String,
     pub status: String,
     pub timing_json: Option<String>,
+    /// `local`, `remote:<host label>` (this machine's copy of a dictation a host processed) or `host` (processed for a client).
+    pub engine_kind: String,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -38,6 +40,7 @@ pub struct Dictation {
     pub status: String,
     pub timing_json: Option<String>,
     pub pinned: bool,
+    pub engine_kind: String,
 }
 
 pub struct Store {
@@ -104,7 +107,7 @@ fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
-const COLUMNS: &str = "id, created_at_ms, app_name, mode, model, language, duration_ms, raw_text, polished_text, status, timing_json, pinned, polished_by, polish_status";
+const COLUMNS: &str = "id, created_at_ms, app_name, mode, model, language, duration_ms, raw_text, polished_text, status, timing_json, pinned, polished_by, polish_status, engine_kind";
 /// Current schema version; `open` migrates older files forward.
 pub const SCHEMA_VERSION: i64 = 2;
 
@@ -124,6 +127,7 @@ fn map_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Dictation> {
         pinned: r.get::<_, i64>(11)? != 0,
         polished_by: r.get(12)?,
         polish_status: r.get(13)?,
+        engine_kind: r.get(14)?,
     })
 }
 
@@ -160,9 +164,9 @@ impl Store {
     pub fn insert(&mut self, d: &NewDictation) -> Result<i64> {
         let tx = self.conn.transaction()?;
         tx.execute(
-            "INSERT INTO dictations(created_at_ms, app_name, mode, model, language, duration_ms, raw_text, polished_text, status, timing_json, polished_by, polish_status)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-            params![now_ms(), d.app_name, d.mode, d.model, d.language, d.duration_ms as i64, d.raw_text, d.polished_text, d.status, d.timing_json, d.polished_by, d.polish_status],
+            "INSERT INTO dictations(created_at_ms, app_name, mode, model, language, duration_ms, raw_text, polished_text, status, timing_json, polished_by, polish_status, engine_kind)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![now_ms(), d.app_name, d.mode, d.model, d.language, d.duration_ms as i64, d.raw_text, d.polished_text, d.status, d.timing_json, d.polished_by, d.polish_status, d.engine_kind],
         )?;
         let id = tx.last_insert_rowid();
         tx.commit()?;
@@ -276,6 +280,7 @@ mod tests {
             polish_status: "none".into(),
             status: "ok".into(),
             timing_json: Some(r#"{"decode_ms":1030}"#.into()),
+            engine_kind: "local".into(),
         }
     }
 

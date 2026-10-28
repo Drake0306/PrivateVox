@@ -78,6 +78,7 @@ mod tests {
             polished_by: None,
             polish_status: "none".into(),
             status: "ok".into(),
+            engine_kind: "local".into(),
             timing_json: None,
             pinned: id == 2,
         }
