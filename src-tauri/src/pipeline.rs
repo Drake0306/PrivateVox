@@ -4,6 +4,7 @@
 use crate::paste::PasteOutcome;
 use privatevox_core::audio::{level_db, ClipBuffer, SAMPLE_RATE};
 use privatevox_core::chunking::{Chunker, MAX_CHUNK};
+use privatevox_core::dictionary::{correct, initial_prompt};
 use privatevox_core::hotkeys::{Effect, Input, Machine};
 use privatevox_core::lifecycle::IdleTimer;
 use privatevox_core::net::PolishRequest;
@@ -760,6 +761,7 @@ impl Coordinator {
             let idle = self.deps.idle.clone();
             let language = if settings.spoken_languages.len() == 1 { settings.spoken_languages.first().cloned() } else { None };
             let translate = settings.mode.whisper_translate();
+            let prompt = initial_prompt(&settings.dictionary);
             let flash = settings.flash_attention;
             let model_path = self.deps.model_path.clone();
             let handle = std::thread::Builder::new()
@@ -774,7 +776,7 @@ impl Coordinator {
                         let text = if pcm.is_empty() {
                             String::new()
                         } else {
-                            let opts = DecodeOptions { language: language.clone(), translate, initial_prompt: None, n_threads: 4, final_chunk: job.final_ };
+                            let opts = DecodeOptions { language: language.clone(), translate, initial_prompt: prompt.clone(), n_threads: 4, final_chunk: job.final_ };
                             let cancelled = cancelled.clone();
                             let r = if cancelled.load(Ordering::SeqCst) { Err(anyhow::anyhow!("cancelled")) } else { transcribe_routed(&remote, &engine, &pcm, &opts, use_remote, &fell_back, model_path.as_ref(), flash) };
                             if let Ok(mut t) = idle.lock() {
@@ -964,7 +966,7 @@ impl Coordinator {
         let texts: Vec<String> = rec.results.lock().map(|m| m.values().cloned().collect()).unwrap_or_default();
         let settings = self.settings();
         let english = settings.spoken_languages.first().map(|l| l == "en").unwrap_or(true);
-        let text = normalize_with(&texts.join(" "), english, settings.remove_fillers);
+        let text = correct(&normalize_with(&texts.join(" "), english, settings.remove_fillers), &settings.dictionary, settings.dictionary_strictness);
         if text.is_empty() {
             self.error("Nothing heard");
             self.schedule_idle(tx);
@@ -1118,7 +1120,7 @@ impl Coordinator {
         (self.emit)(PillState::Transcribing);
         let language = if settings.spoken_languages.len() == 1 { settings.spoken_languages.first().cloned() } else { None };
         // A short clip is decoded in one go, so this is also the last chunk of its session.
-        let opts = DecodeOptions { language, translate: settings.mode.whisper_translate(), initial_prompt: None, n_threads: 4, final_chunk: true };
+        let opts = DecodeOptions { language, translate: settings.mode.whisper_translate(), initial_prompt: initial_prompt(&settings.dictionary), n_threads: 4, final_chunk: true };
         let t = Instant::now();
         let transcript = transcribe_routed(&self.deps.remote, &self.deps.engine, &speech, &opts, self.last_used_remote, &self.fell_back, self.deps.model_path.as_ref(), settings.flash_attention);
         let transcript = match transcript {
@@ -1134,7 +1136,7 @@ impl Coordinator {
         }
         let decode_ms = t.elapsed().as_millis() as u64;
         let english = transcript.language.as_deref().or(settings.spoken_languages.first().map(|s| s.as_str())).map(|l| l == "en").unwrap_or(true);
-        let text = normalize_with(&transcript.text, english, settings.remove_fillers);
+        let text = correct(&normalize_with(&transcript.text, english, settings.remove_fillers), &settings.dictionary, settings.dictionary_strictness);
         if text.is_empty() {
             self.error("Nothing heard");
             self.schedule_idle(tx);
@@ -1191,6 +1193,7 @@ mod tests {
         unloads: Arc<Mutex<u32>>,
         decodes: Arc<Mutex<Vec<std::time::Instant>>>,
         finals: Arc<Mutex<Vec<bool>>>,
+        prompts: Arc<Mutex<Vec<Option<String>>>>,
     }
     impl Engine for FakeEngine {
         fn load(&mut self, model: &Path, _flash: bool) -> anyhow::Result<LoadInfo> {
@@ -1211,6 +1214,7 @@ mod tests {
         fn transcribe(&mut self, _pcm: &[f32], opts: &DecodeOptions) -> anyhow::Result<Transcript> {
             self.decodes.lock().unwrap().push(std::time::Instant::now());
             self.finals.lock().unwrap().push(opts.final_chunk);
+            self.prompts.lock().unwrap().push(opts.initial_prompt.clone());
             let n = self.decodes.lock().unwrap().len();
             let text = if self.text == "{n}" { n.to_string() } else { self.text.clone() };
             Ok(Transcript { text, language: Some("en".into()), decode_ms: 5, audio_ctx: 768, reran: false })
@@ -1376,7 +1380,7 @@ mod tests {
 
     #[test]
     fn pipeline_records_transcribes_pastes_and_stores() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         let (states, pasted, count) = run_once(h);
         assert_eq!(pasted, vec!["Hello.".to_string()]);
         assert_eq!(count, 1);
@@ -1387,7 +1391,7 @@ mod tests {
 
     #[test]
     fn pipeline_discards_clips_under_300ms() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default() }, FakeCapture { pcm: vec![0.3; 2_000], fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default() }, FakeCapture { pcm: vec![0.3; 2_000], fail: false, die_after_start: false });
         let (states, pasted, count) = run_once(h);
         assert!(pasted.is_empty());
         assert_eq!(count, 0);
@@ -1396,7 +1400,7 @@ mod tests {
 
     #[test]
     fn pipeline_reports_silent_mic() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default() }, FakeCapture { pcm: vec![0.0; 16_000], fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default() }, FakeCapture { pcm: vec![0.0; 16_000], fail: false, die_after_start: false });
         let (states, pasted, count) = run_once(h);
         assert!(pasted.is_empty());
         assert_eq!(count, 0);
@@ -1405,7 +1409,7 @@ mod tests {
 
     #[test]
     fn pipeline_queues_clip_until_engine_loaded() {
-        let h = harness(FakeEngine { load_delay: Duration::from_millis(300), text: "Hello.".into(), loaded: false, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::from_millis(300), text: "Hello.".into(), loaded: false, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         let (states, pasted, _) = run_once(h);
         assert_eq!(pasted, vec!["Hello.".to_string()]);
         assert!(kinds(&states).contains(&"loading_model"), "{:?}", kinds(&states));
@@ -1414,7 +1418,7 @@ mod tests {
     #[test]
     fn direct_stop_after_hotkey_start_keeps_hotkeys_working() {
         use privatevox_core::hotkeys::{Binding, Input};
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::Key(Input::Down(Binding::Ptt))).unwrap();
         h.tx.send(Cmd::Stop).unwrap(); // what the clip cap, the tray or the debug button sends
         h.tx.send(Cmd::Key(Input::Up(Binding::Ptt))).unwrap();
@@ -1429,7 +1433,7 @@ mod tests {
 
     #[test]
     fn pipeline_reports_device_loss_mid_recording() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: true });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: true });
         h.tx.send(Cmd::Start).unwrap();
         std::thread::sleep(Duration::from_millis(2300));
         h.tx.send(Cmd::Quit).unwrap();
@@ -1443,7 +1447,7 @@ mod tests {
     #[test]
     fn pipeline_starts_model_load_while_recording() {
         let calls = Arc::new(Mutex::new(0u32));
-        let h = harness(FakeEngine { load_delay: Duration::from_millis(200), text: "Hello.".into(), loaded: false, load_calls: calls.clone(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::from_millis(200), text: "Hello.".into(), loaded: false, load_calls: calls.clone(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::Start).unwrap();
         std::thread::sleep(Duration::from_millis(80));
         assert_eq!(*calls.lock().unwrap(), 1, "load must begin at Start, not after Stop");
@@ -1458,7 +1462,7 @@ mod tests {
     fn switch_unloads_then_loads_and_updates_settings() {
         let loads: Arc<Mutex<Vec<PathBuf>>> = Default::default();
         let unloads: Arc<Mutex<u32>> = Default::default();
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: unloads.clone(), decodes: Default::default(), finals: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: unloads.clone(), decodes: Default::default(), finals: Default::default(), prompts: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::SwitchModel("large-v3".into())).unwrap();
         std::thread::sleep(Duration::from_millis(200));
         h.tx.send(Cmd::Quit).unwrap();
@@ -1474,7 +1478,7 @@ mod tests {
     #[test]
     fn switch_during_recording_is_deferred() {
         let loads: Arc<Mutex<Vec<PathBuf>>> = Default::default();
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: Default::default(), decodes: Default::default(), finals: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::Start).unwrap();
         h.tx.send(Cmd::SwitchModel("large-v3".into())).unwrap();
         std::thread::sleep(Duration::from_millis(150));
@@ -1490,7 +1494,7 @@ mod tests {
 
     #[test]
     fn switch_to_missing_model_is_refused() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         std::fs::remove_file(h._dir.path().join("models/ggml-distil-large-v3.bin")).unwrap();
         h.tx.send(Cmd::SwitchModel("distil-large-v3".into())).unwrap();
         std::thread::sleep(Duration::from_millis(150));
@@ -1502,7 +1506,7 @@ mod tests {
 
     #[test]
     fn benchmark_records_speed_for_active_model() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "bench".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "bench".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::Benchmark("large-v3-turbo".into())).unwrap();
         std::thread::sleep(Duration::from_millis(300));
         h.tx.send(Cmd::Quit).unwrap();
@@ -1531,7 +1535,7 @@ mod tests {
     #[test]
     fn long_clip_is_decoded_in_order_while_recording() {
         let decodes: Arc<Mutex<Vec<std::time::Instant>>> = Default::default();
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "{n}".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: decodes.clone(), finals: Default::default() }, FakeCapture { pcm: long_fixture(90), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "{n}".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: decodes.clone(), finals: Default::default(), prompts: Default::default() }, FakeCapture { pcm: long_fixture(90), fail: false, die_after_start: false });
         h.tx.send(Cmd::Start).unwrap();
         std::thread::sleep(Duration::from_millis(1500)); // a few scoring ticks
         let stop_at = std::time::Instant::now();
@@ -1550,7 +1554,7 @@ mod tests {
 
     #[test]
     fn listening_reports_loading_while_model_loads() {
-        let h = harness(FakeEngine { load_delay: Duration::from_millis(400), text: "Hello.".into(), loaded: false, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::from_millis(400), text: "Hello.".into(), loaded: false, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::Start).unwrap();
         std::thread::sleep(Duration::from_millis(250)); // a couple of ticks while the preload holds the engine
         h.tx.send(Cmd::Stop).unwrap();
@@ -1573,7 +1577,7 @@ mod tests {
 
     #[test]
     fn cap_countdown_then_stop() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "{n}".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default() }, FakeCapture { pcm: long_fixture(45), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "{n}".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default() }, FakeCapture { pcm: long_fixture(45), fail: false, die_after_start: false });
         h.settings.lock().unwrap().max_clip_seconds = 40;
         h.tx.send(Cmd::Start).unwrap(); // the capture overfills the 40 s buffer at once → auto-stop
         std::thread::sleep(Duration::from_millis(800));
@@ -1585,7 +1589,7 @@ mod tests {
 
     #[test]
     fn undo_after_paste_sends_undo() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::Start).unwrap();
         h.tx.send(Cmd::Stop).unwrap();
         std::thread::sleep(Duration::from_millis(200));
@@ -1598,7 +1602,7 @@ mod tests {
 
     #[test]
     fn undo_refused_when_frontmost_changed_copies_again() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::Start).unwrap();
         h.tx.send(Cmd::Stop).unwrap();
         std::thread::sleep(Duration::from_millis(200));
@@ -1615,7 +1619,7 @@ mod tests {
 
     #[test]
     fn paste_text_pastes_without_recording() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::PasteText("from history".into())).unwrap();
         std::thread::sleep(Duration::from_millis(100));
         h.tx.send(Cmd::Quit).unwrap();
@@ -1627,7 +1631,7 @@ mod tests {
     #[test]
     fn switch_requested_then_cancelled_is_applied() {
         let loads: Arc<Mutex<Vec<PathBuf>>> = Default::default();
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: Default::default(), decodes: Default::default(), finals: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::Start).unwrap();
         h.tx.send(Cmd::SwitchModel("large-v3".into())).unwrap();
         h.tx.send(Cmd::Cancel).unwrap();
@@ -1643,7 +1647,7 @@ mod tests {
         let loads: Arc<Mutex<Vec<PathBuf>>> = Default::default();
         let unloads: Arc<Mutex<u32>> = Default::default();
         let decodes: Arc<Mutex<Vec<std::time::Instant>>> = Default::default();
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "{n}".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: unloads.clone(), decodes: decodes.clone(), finals: Default::default() }, FakeCapture { pcm: long_fixture(150), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "{n}".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: unloads.clone(), decodes: decodes.clone(), finals: Default::default(), prompts: Default::default() }, FakeCapture { pcm: long_fixture(150), fail: false, die_after_start: false });
         h.tx.send(Cmd::Start).unwrap();
         std::thread::sleep(Duration::from_millis(700)); // first scoring tick hands chunks to the worker
         h.tx.send(Cmd::PauseAndUnload).unwrap();
@@ -1666,7 +1670,7 @@ mod tests {
     #[test]
     fn benchmark_restores_previous_model() {
         let loads: Arc<Mutex<Vec<PathBuf>>> = Default::default();
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "bench".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: Default::default(), decodes: Default::default(), finals: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "bench".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::Benchmark("large-v3".into())).unwrap();
         std::thread::sleep(Duration::from_millis(300));
         h.tx.send(Cmd::Quit).unwrap();
@@ -1690,7 +1694,7 @@ mod tests {
 
     #[test]
     fn pipeline_reports_capture_error() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default() }, FakeCapture { pcm: vec![], fail: true, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default() }, FakeCapture { pcm: vec![], fail: true, die_after_start: false });
         let (states, pasted, count) = run_once_waiting(h, Duration::from_millis(2300));
         assert!(pasted.is_empty());
         assert_eq!(count, 0);
@@ -1699,7 +1703,7 @@ mod tests {
     }
 
     fn engine_saying(text: &str) -> FakeEngine {
-        FakeEngine { load_delay: Duration::ZERO, text: text.into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default() }
+        FakeEngine { load_delay: Duration::ZERO, text: text.into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default() }
     }
 
     fn capture_ok() -> FakeCapture {
@@ -1981,7 +1985,7 @@ mod tests {
     fn remote_dictation_marks_row_skips_local_load_and_polishes_on_the_host() {
         let host = FakeHost::start(HostBehaviour::Ok { text: "hello from pc".into(), polished: "Hello from PC.".into(), token: None });
         let remote = in_use(&host);
-        let e = FakeEngine { load_delay: Duration::ZERO, text: "local".into(), loaded: false, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default() };
+        let e = FakeEngine { load_delay: Duration::ZERO, text: "local".into(), loaded: false, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default() };
         let loads = e.load_calls.clone();
         let h = harness_remote(e, capture_ok(), remote.clone());
         h.tx.send(Cmd::Start).unwrap();
@@ -2173,6 +2177,26 @@ mod tests {
         h.tx.send(Cmd::Cancel).unwrap();
         std::thread::sleep(Duration::from_millis(200));
         assert!(st.take_notice().is_none(), "cancel consumed the notice");
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn dictionary_corrects_transcript_and_prompts_whisper() {
+        let e = engine_saying("charge b works fine");
+        let prompts = e.prompts.clone();
+        let h = harness(e, capture_ok());
+        {
+            let mut s = h.settings.lock().unwrap();
+            s.mode = Mode::Raw;
+            s.dictionary = vec!["ChargeBee".into()];
+        }
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(h.pasted.lock().unwrap().clone(), vec!["ChargeBee works fine".to_string()]);
+        assert_eq!(prompts.lock().unwrap().clone(), vec![Some("ChargeBee".to_string())]);
+        assert_eq!(last_row(&h).raw_text, "ChargeBee works fine");
         h.tx.send(Cmd::Quit).unwrap();
         h.join.join().unwrap();
     }

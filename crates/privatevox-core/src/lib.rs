@@ -2,6 +2,7 @@
 
 pub mod audio;
 pub mod chunking;
+pub mod dictionary;
 pub mod download;
 pub mod export;
 pub mod hotkeys;

@@ -3889,6 +3889,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "strsim",
  "sysinfo",
  "tempfile",
  "tiny_http",

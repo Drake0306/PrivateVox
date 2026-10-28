@@ -113,6 +113,10 @@ pub struct Settings {
     pub remote: RemoteSettings,
     /// How this machine introduces itself to a host; `None` means the OS hostname.
     pub machine_name: Option<String>,
+    /// Names and jargon Whisper should spell right (design §18.8).
+    pub dictionary: Vec<String>,
+    /// Fuzzy-correction threshold (normalised edit distance); 0 switches the safety net off.
+    pub dictionary_strictness: f32,
 }
 
 impl Default for Settings {
@@ -143,6 +147,8 @@ impl Default for Settings {
             host: HostSettings::default(),
             remote: RemoteSettings::default(),
             machine_name: None,
+            dictionary: Vec::new(),
+            dictionary_strictness: 0.18,
         }
     }
 }
