@@ -176,10 +176,33 @@ Health checks: `GET /v1/models` with a 1 s timeout, every 10 s while the app is 
 - "Seamless" in practice: once added, a LAN endpoint is used automatically when reachable and dropped automatically when not. Switching Wi-Fi networks triggers an immediate recheck. No user action day to day.
 
 ### 8.4 Share engine mode (remote engine pick)
-A harness can expose its own Whisper engine on the LAN: Settings toggle "Share Whisper on this network", port default 8765, optional shared token. It serves `POST /v1/audio/transcriptions` and `GET /v1/models`, bound to LAN interfaces only, and advertises over mDNS. The LLM is not proxied; the peer talks to LM Studio/Ollama on the PC directly (user enables "serve on local network" in that runtime). **[call]** Scheduled after v1 (§13).
+Superseded by §8.6 (2026-10-28): the owner wants the Windows PC to be a full host for both Whisper and the polish LLM, with the Mac as an interface, not only a shared Whisper endpoint.
 
 ### 8.5 Security posture
 LAN only, no internet listener, no authentication required by default on a home LAN, optional bearer token for both the shared Whisper endpoint and any LLM endpoint that needs one. Tokens stored in the OS keychain/credential manager. Audio sent to a LAN Whisper endpoint is not stored by the peer unless its own keep-audio is on.
+
+### 8.6 Host mode and the remote interface **[user]** 2026-10-28
+
+The owner's wording: the Windows PC with the big GPU runs an instance of the same app as a **host**; the Mac, which "doesn't have much specs", acts as an **interface**. With a toggle on the Mac, whatever is dictated goes to the PC for transcription and polish instead of running locally; the PC's specifications show up on the Mac; the PC keeps a history of what it processed and so does the Mac; the Mac's history has a toggle to show the host's sentences instead of its own, and every row shows whether it was executed locally or over the network.
+
+**Host (any machine, Settings → Network → "Act as host for other machines").** The same binary, same panel. When on, it listens on a LAN interface, port 8765 by default, optional shared token (Bearer). It serves:
+- `GET /v1/status` → `{name, version, platform, gpu: {name, total_bytes, used_bytes}, whisper: {model, loaded, resident_bytes}, polish: {enabled, endpoint_label, model, resident_bytes}, clients: n}` — the "specifications present on the PC".
+- `POST /v1/dictations` with a JSON body `{client, pcm_base64 (16 kHz mono f32 LE), language?, mode, polish: bool}` → `{raw_text, polished_text?, polish_status, model, language, timing}`. The host runs its own VAD trim, Whisper and (when asked) its own polish chain, then **stores the row in its own history** with `app_name = client name` and `engine_kind = "host"`. Chunks from a long dictation arrive as separate requests with a `session` id and `index`; the host stores one row per session once the client sends `final: true`.
+- `GET /v1/history?limit=&offset=&search=` → the host's rows (same shape as the local list, read-only for the client).
+- `GET /v1/models` → the host's Whisper models, so the client's picker can switch the host's model with `POST /v1/models/select {id}`.
+Bound to LAN addresses only, never to the internet; advertised over mDNS as `_privatevox._tcp` (v1.x, after manual entry works). Audio received is not stored unless the host's own keep-audio is on. **[call]**
+
+**Client / interface (Settings → Network → "Use a host on this network", host `ip:port`, token).** When the toggle is on and the host answers `/v1/status` within the health TTL (same 10 s loop and backoff as LLM endpoints):
+- Capture, VAD, chunking and the pill stay local. Each chunk is sent to the host instead of the local worker; the local Whisper is not loaded at all while the host is in use (the Mac's memory stays free). The `Engine` trait gets a second implementation, `RemoteEngine`, so the pipeline does not change.
+- Polish happens on the host when the client's mode uses the LLM; the client does not call its own LLM endpoints. The pill shows "Polishing on PC".
+- The client stores the row in its own history too, with `engine_kind = "remote:<host label>"`. Rows show a marker ("via PC") in the metadata line.
+- If the host stops answering mid-dictation or before one starts, the client falls back to its local engine and local polish for that dictation, with the pill notice "PC unreachable, transcribed locally", and goes back to the host when it is reachable again. No user action day to day.
+- The memory strip shows the host's figures while the host is in use: adapter name and totals from `/v1/status`, with a label "On <host>", and the local strip when it is not.
+- The history header gains a toggle "This Mac | <host label>": the second view lists the host's history live from `/v1/history` (copy and search work; edit, pin and delete do not; a note says so).
+
+**Not in scope:** the host proxying arbitrary LLM traffic, remote model downloads, two-way history merge (the two histories stay separate on purpose), internet exposure.
+
+**Platform note:** the host is expected to be the Windows PC with the RX 9070, but any machine can be a host; two Macs work the same way, and a host can be tested against itself on localhost.
 
 ## 9. GPU memory strip logic
 
@@ -239,7 +262,7 @@ Both: respect reduced motion, dark/light theme following the OS, high-DPI pill r
 8. Open-source release pass: licence, README, CI on macOS and Windows runners, notarised .dmg, Windows installer (MSI or NSIS via Tauri) bundling the Vulkan build, own name and icon.
 
 **v1.x**
-- Share engine mode and mDNS discovery (remote engine).
+- Host mode and the remote interface (§8.6), then mDNS discovery.
 - Long-form notes: toggle mode without the 30 s expectation; chunked transcription; result opens in the panel as a document to copy or export.
 
 **v2**
