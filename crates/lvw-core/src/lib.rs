@@ -11,6 +11,7 @@ pub mod placement;
 pub mod settings;
 pub mod store;
 pub mod textnorm;
+pub mod undo;
 pub mod vad;
 
 /// Crate version, used by the panel's About line.

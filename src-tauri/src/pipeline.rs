@@ -80,6 +80,10 @@ pub trait CaptureSource: Send {
 
 pub trait PasteSink: Send {
     fn paste(&mut self, text: &str) -> anyhow::Result<PasteOutcome>;
+    /// Sends the front app's undo keystroke.
+    fn undo(&mut self) -> anyhow::Result<()>;
+    /// Puts text on the clipboard without pasting.
+    fn copy_only(&mut self, text: &str) -> anyhow::Result<()>;
 }
 
 pub struct Deps {
@@ -141,6 +145,8 @@ pub struct Coordinator {
     machine: Machine,
     /// A switch requested while recording; applied once the pipeline drains.
     pending_switch: Option<String>,
+    last_paste: Option<lvw_core::undo::LastPaste>,
+    idle_tx: Option<Sender<Cmd>>,
 }
 
 fn hotkey_hint(s: &Settings) -> String {
@@ -160,7 +166,7 @@ impl Coordinator {
             let s = settings.lock().map(|s| s.clone()).unwrap_or_default();
             Machine::new(s.activation, Duration::from_millis(s.hold_threshold_ms))
         };
-        Coordinator { deps, settings, store, vad, emit, recording: None, queued: None, generation: 0, machine, pending_switch: None }
+        Coordinator { deps, settings, store, vad, emit, recording: None, queued: None, generation: 0, machine, pending_switch: None, last_paste: None, idle_tx: None }
     }
 
     /// Unloads the current model and loads `id` from the models directory. Refused if the file is missing.
@@ -229,6 +235,7 @@ impl Coordinator {
 
     /// Runs until `Cmd::Quit`. `tx` lets the coordinator schedule its own ticks.
     pub fn run(mut self, rx: Receiver<Cmd>, tx: Sender<Cmd>) {
+        self.idle_tx = Some(tx.clone());
         self.idle();
         while let Ok(cmd) = rx.recv() {
             match cmd {
@@ -427,9 +434,33 @@ impl Coordinator {
         }
     }
 
-    /// Undo last paste: filled in by the undo task.
+    /// Undo last paste: the app's undo keystroke if the same app is still in front within 30 s, otherwise
+    /// the text goes back on the clipboard so nothing is typed into the wrong window (design §4.2).
     fn undo(&mut self) {
-        log::info!("undo requested (not implemented yet)");
+        use lvw_core::undo::{decide, UndoDecision};
+        let front = (self.deps.frontmost)();
+        match decide(self.last_paste.as_ref(), front.as_deref(), Instant::now(), Duration::from_secs(30)) {
+            UndoDecision::SendUndo => match self.deps.paste.undo() {
+                Ok(()) => {
+                    let text = self.last_paste.take().map(|l| l.text).unwrap_or_default();
+                    (self.emit)(PillState::Pasted { preview: format!("Undone: {}", first_chars(&text, 40)) });
+                }
+                Err(e) => self.error(&format!("Undo failed: {e}")),
+            },
+            UndoDecision::CopyAgain => {
+                let text = self.last_paste.as_ref().map(|l| l.text.clone()).unwrap_or_default();
+                match self.deps.paste.copy_only(&text) {
+                    Ok(()) => (self.emit)(PillState::Pasted { preview: format!("Copied again (different app in front): {}", first_chars(&text, 30)) }),
+                    Err(e) => self.error(&format!("Copy failed: {e}")),
+                }
+            }
+            UndoDecision::Nothing => self.error("Nothing to undo"),
+        }
+        self.generation += 1;
+        let gen = self.generation;
+        if let Some(tx) = self.idle_tx.clone() {
+            schedule(&tx, Cmd::Tick(gen), Duration::from_millis(2000));
+        }
     }
 
     fn tick(&mut self, gen: u64, tx: &Sender<Cmd>) {
@@ -632,8 +663,12 @@ impl Coordinator {
     fn paste_and_store(&mut self, text: String, duration_ms: u32, mut timing: serde_json::Value, tx: &Sender<Cmd>) {
         let settings = self.settings();
         let t = Instant::now();
+        let app_name = (self.deps.frontmost)();
         let (status, preview) = match self.deps.paste.paste(&text) {
-            Ok(PasteOutcome::Pasted) => ("ok", format!("Pasted: {}", first_chars(&text, 60))),
+            Ok(PasteOutcome::Pasted) => {
+                self.last_paste = Some(lvw_core::undo::LastPaste { text: text.clone(), app: app_name.clone(), at: Instant::now() });
+                ("ok", format!("Pasted: {}", first_chars(&text, 60)))
+            }
             Ok(PasteOutcome::CopiedOnly(reason)) => {
                 log::warn!("paste fell back to clipboard: {reason}");
                 ("copied_only", format!("Copied (paste blocked): {}", first_chars(&text, 40)))
@@ -649,7 +684,7 @@ impl Coordinator {
             obj.remove("language");
         }
         let row = NewDictation {
-            app_name: (self.deps.frontmost)(),
+            app_name,
             mode: "raw".into(),
             model: settings.model_id.clone(),
             language,
@@ -830,11 +865,19 @@ mod tests {
         fn stop(&mut self) {}
     }
 
-    struct FakePaste(Arc<Mutex<Vec<String>>>);
+    struct FakePaste(Arc<Mutex<Vec<String>>>, Arc<Mutex<u32>>);
     impl PasteSink for FakePaste {
         fn paste(&mut self, text: &str) -> anyhow::Result<crate::paste::PasteOutcome> {
             self.0.lock().unwrap().push(text.to_string());
             Ok(crate::paste::PasteOutcome::Pasted)
+        }
+        fn undo(&mut self) -> anyhow::Result<()> {
+            *self.1.lock().unwrap() += 1;
+            Ok(())
+        }
+        fn copy_only(&mut self, text: &str) -> anyhow::Result<()> {
+            self.0.lock().unwrap().push(format!("copy:{text}"));
+            Ok(())
         }
     }
 
@@ -854,6 +897,8 @@ mod tests {
         settings: Arc<Mutex<Settings>>,
         switched: Arc<Mutex<Vec<String>>>,
         benchmarks: Arc<Mutex<Vec<(String, f32)>>>,
+        undos: Arc<Mutex<u32>>,
+        frontmost: Arc<Mutex<Option<String>>>,
         tx: std::sync::mpsc::Sender<Cmd>,
         join: std::thread::JoinHandle<()>,
         _dir: tempfile::TempDir,
@@ -877,13 +922,16 @@ mod tests {
         let sw = switched.clone();
         let benchmarks: Arc<Mutex<Vec<(String, f32)>>> = Default::default();
         let bm = benchmarks.clone();
+        let undos: Arc<Mutex<u32>> = Default::default();
+        let frontmost: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(Some("TestApp".into())));
+        let fm = frontmost.clone();
         let deps = Deps {
             engine: Arc::new(Mutex::new(Box::new(engine) as Box<dyn Engine>)),
             capture: Box::new(capture),
-            paste: Box::new(FakePaste(pasted.clone())),
+            paste: Box::new(FakePaste(pasted.clone(), undos.clone())),
             model_path: Some(models_dir.join("ggml-large-v3-turbo-q5_0.bin")),
             model_dir: models_dir,
-            frontmost: Box::new(|| Some("TestApp".into())),
+            frontmost: Box::new(move || fm.lock().unwrap().clone()),
             idle: Arc::new(Mutex::new(lvw_core::lifecycle::IdleTimer::new(None))),
             on_model_switched: Box::new(move |id, _info| sw.lock().unwrap().push(id.to_string())),
             benchmark_clip: Box::new(|| Ok(vec![0.1f32; 16_000 * 30])),
@@ -894,7 +942,7 @@ mod tests {
         let (tx, rx) = channel();
         let tx2 = tx.clone();
         let join = std::thread::spawn(move || coord.run(rx, tx2));
-        Harness { states, pasted, store, settings, switched, benchmarks, tx, join, _dir: dir }
+        Harness { states, pasted, store, settings, switched, benchmarks, undos, frontmost, tx, join, _dir: dir }
     }
 
     fn kinds(states: &[PillState]) -> Vec<&'static str> {
@@ -1111,6 +1159,36 @@ mod tests {
         h.join.join().unwrap();
         let pasted = h.pasted.lock().unwrap().clone();
         assert_eq!(pasted.len(), 1, "the cap must stop and transcribe, not drop the clip; states {:?}", kinds(&h.states.lock().unwrap()));
+    }
+
+    #[test]
+    fn undo_after_paste_sends_undo() {
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        h.tx.send(Cmd::Undo).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+        assert_eq!(*h.undos.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn undo_refused_when_frontmost_changed_copies_again() {
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        *h.frontmost.lock().unwrap() = Some("Other".into());
+        h.tx.send(Cmd::Undo).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+        assert_eq!(*h.undos.lock().unwrap(), 0, "no keystroke into the wrong app");
+        let pasted = h.pasted.lock().unwrap().clone();
+        assert_eq!(pasted, vec!["Hello.".to_string(), "copy:Hello.".to_string()]);
+        assert!(h.states.lock().unwrap().iter().any(|s| matches!(s, PillState::Pasted { preview } if preview.contains("Copied again"))));
     }
 
     #[test]

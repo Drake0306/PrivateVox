@@ -10,6 +10,10 @@ use std::time::Duration;
 pub trait KeySender: Send {
     fn paste_chord(&mut self) -> Result<()>;
     fn type_text(&mut self, text: &str) -> Result<()>;
+    /// Cmd+Z / Ctrl+Z.
+    fn undo_chord(&mut self) -> Result<()> {
+        anyhow::bail!("undo not supported by this sender")
+    }
 }
 
 /// Real key sender through enigo. On macOS the paste chord uses the raw key code for V (9) so it works
@@ -49,6 +53,25 @@ impl KeySender for EnigoSender {
     fn type_text(&mut self, text: &str) -> Result<()> {
         use enigo::Keyboard;
         self.enigo.text(text).map_err(|e| anyhow::anyhow!("{e:?}"))
+    }
+
+    fn undo_chord(&mut self) -> Result<()> {
+        use enigo::{Direction, Key, Keyboard};
+        #[cfg(target_os = "macos")]
+        {
+            self.enigo.key(Key::Meta, Direction::Press).map_err(|e| anyhow::anyhow!("{e:?}"))?;
+            let r = self.enigo.key(Key::Other(6), Direction::Click); // kVK_ANSI_Z
+            let _ = self.enigo.key(Key::Meta, Direction::Release);
+            r.map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.enigo.key(Key::Control, Direction::Press).map_err(|e| anyhow::anyhow!("{e:?}"))?;
+            let r = self.enigo.key(Key::Unicode('z'), Direction::Click);
+            let _ = self.enigo.key(Key::Control, Direction::Release);
+            r.map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        }
+        Ok(())
     }
 }
 

@@ -66,6 +66,22 @@ impl PasteSink for SystemPaste {
         let sender = self.sender.as_mut().expect("sender");
         self.paster.paste(text, sender)
     }
+
+    fn undo(&mut self) -> anyhow::Result<()> {
+        if !crate::paste::accessibility_trusted(false) {
+            anyhow::bail!("Accessibility not granted");
+        }
+        if self.sender.is_none() {
+            self.sender = Some(EnigoSender::new()?);
+        }
+        self.sender.as_mut().expect("sender").undo_chord()
+    }
+
+    fn copy_only(&mut self, text: &str) -> anyhow::Result<()> {
+        let mut cb = arboard::Clipboard::new()?;
+        cb.set_text(text.to_string())?;
+        Ok(())
+    }
 }
 
 /// Convenience for tests and the debug command: a sender that never presses keys.
