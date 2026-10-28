@@ -124,6 +124,12 @@ pub fn level_db(frame: &[f32]) -> f32 {
     }
 }
 
+/// Whether a stream error means the recording cannot continue. A buffer under/overrun (`Xrun`) is a glitch
+/// the stream recovers from on its own; everything else means the device or permission is gone.
+pub fn stream_error_is_fatal(kind: cpal::ErrorKind) -> bool {
+    !matches!(kind, cpal::ErrorKind::Xrun)
+}
+
 /// Reads a 16 kHz mono 16-bit WAV (the benchmark clip and test fixtures) into f32 samples.
 pub fn load_wav_16k(path: &std::path::Path) -> Result<Vec<f32>> {
     let mut reader = hound::WavReader::open(path).with_context(|| format!("open {}", path.display()))?;
@@ -178,7 +184,13 @@ impl Capture {
                         on_pcm16k(&out);
                     }
                 },
-                move |e| on_error(e.to_string()),
+                move |e| {
+                    if stream_error_is_fatal(e.kind()) {
+                        on_error(e.to_string());
+                    } else {
+                        log::debug!("input stream glitch (ignored): {e}");
+                    }
+                },
                 None,
             )
             .context("build input stream")?;
@@ -250,6 +262,16 @@ mod tests {
     fn level_db_of_silence_is_floor() {
         assert_eq!(level_db(&[0.0; 160]), -100.0);
         assert!(level_db(&[0.5; 160]) > -7.0 && level_db(&[0.5; 160]) < -5.0);
+    }
+
+    #[test]
+    fn overruns_are_not_fatal_but_device_loss_is() {
+        assert!(!stream_error_is_fatal(cpal::ErrorKind::Xrun), "a dropped buffer must not end the recording");
+        assert!(stream_error_is_fatal(cpal::ErrorKind::DeviceNotAvailable));
+        assert!(stream_error_is_fatal(cpal::ErrorKind::DeviceChanged));
+        assert!(stream_error_is_fatal(cpal::ErrorKind::StreamInvalidated));
+        assert!(stream_error_is_fatal(cpal::ErrorKind::PermissionDenied));
+        assert!(stream_error_is_fatal(cpal::ErrorKind::BackendError));
     }
 
     #[test]

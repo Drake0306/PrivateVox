@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum PillState {
     Idle { hotkey_hint: String },
-    Listening { seconds: f32, level_db: f32, countdown: Option<u32> },
+    Listening { seconds: f32, level_db: f32, countdown: Option<u32>, loading: bool },
     Transcribing,
     LoadingModel { progress: Option<f32> },
     Pasted { preview: String },
@@ -401,7 +401,8 @@ impl Coordinator {
         let on_error: Box<dyn FnMut(String) + Send> = Box::new(move |msg| {
             let _ = err_tx.send(Cmd::CaptureError(msg));
         });
-        (self.emit)(PillState::Listening { seconds: 0.0, level_db: -100.0, countdown: None });
+        let loading = !self.deps.engine.try_lock().map(|e| e.is_loaded()).unwrap_or(false);
+        (self.emit)(PillState::Listening { seconds: 0.0, level_db: -100.0, countdown: None, loading });
         self.preload_model();
         match self.deps.capture.start(on_pcm, on_error) {
             Ok(()) => {
@@ -539,7 +540,9 @@ impl Coordinator {
         rec.ticks += 1;
         let seconds = rec.started.elapsed().as_secs_f32();
         let level = rec.level.lock().map(|l| *l).unwrap_or(-100.0);
-        (self.emit)(PillState::Listening { seconds, level_db: level, countdown: countdown_for(seconds, max_clip) });
+        // While the preload holds the engine lock the model is still loading.
+        let loading = !self.deps.engine.try_lock().map(|e| e.is_loaded()).unwrap_or(false);
+        (self.emit)(PillState::Listening { seconds, level_db: level, countdown: countdown_for(seconds, max_clip), loading });
         if rec.ticks % 5 == 0 {
             self.score_and_cut();
         }
@@ -1243,6 +1246,20 @@ mod tests {
         let expected: Vec<String> = (1..=n).map(|i| i.to_string()).collect();
         assert_eq!(pasted[0], expected.join(" "), "chunk texts must be joined in order");
         assert!(decodes.lock().unwrap().iter().any(|t| *t < stop_at), "at least one chunk decoded before the key came up");
+    }
+
+    #[test]
+    fn listening_reports_loading_while_model_loads() {
+        let h = harness(FakeEngine { load_delay: Duration::from_millis(400), text: "Hello.".into(), loaded: false, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        h.tx.send(Cmd::Start).unwrap();
+        std::thread::sleep(Duration::from_millis(250)); // a couple of ticks while the preload holds the engine
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(600));
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+        let states = h.states.lock().unwrap().clone();
+        assert!(states.iter().any(|s| matches!(s, PillState::Listening { loading: true, .. })), "{:?}", kinds(&states));
+        assert_eq!(h.pasted.lock().unwrap().clone(), vec!["Hello.".to_string()]);
     }
 
     #[test]
