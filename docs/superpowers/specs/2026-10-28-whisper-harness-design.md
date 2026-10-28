@@ -210,7 +210,7 @@ These are planning targets, not acceptance criteria. **[call]** The engine spike
 | Step | Target |
 |---|---|
 | Hotkey down → Listening shown | < 50 ms |
-| Model load, turbo Q5_0 | **0.4–0.5 s measured on M1** (first-ever Metal shader compile after install ~12 s, once); RX 9070 to be measured |
+| Model load, turbo Q5_0 | **0.4–0.5 s measured on M1** (Metal shader compile ~8–12 s on the first launch after each app update, since macOS keys the shader cache to the binary); RX 9070 to be measured |
 | Transcribe 7.5 s clip, turbo, fast tier | **~1.3 s measured on M1** (flash attention + reduced audio context); one-word clip ~1.1 s; 30 s clip ~4.8 s |
 | Transcribe 7.5 s clip, large-v3 | **~3.6 s measured on M1** (flash, full context); ~2.1 s with reduced context |
 | LLM polish, 100 words, 7–8B on RX 9070 | < 2 s |
