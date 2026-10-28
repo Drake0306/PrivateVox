@@ -5,43 +5,122 @@
 <title>LVW</title>
 <link rel="stylesheet" href="lvw.css">
 <style>
+  h2 { font-size: 15px; margin: 18px 0 8px; }
   .row { padding: 10px 0; border-bottom: 1px solid var(--line); }
-  .row .meta { font-size: 12px; color: var(--muted); display: flex; gap: 10px; }
+  .row .meta { font-size: 12px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
   .row .txt { white-space: pre-wrap; margin: 4px 0; }
-  .row button, .bar button { font: inherit; font-size: 12px; padding: 3px 8px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); border-radius: 5px; cursor: pointer; }
-  .bar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
-  .bar input { font: inherit; flex: 1; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--fg); }
+  button { font: inherit; font-size: 12px; padding: 4px 9px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); border-radius: 5px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .bar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+  .bar input[type=search] { font: inherit; flex: 1; min-width: 160px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--fg); }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
+  .check { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; gap: 10px; }
+  .ok { color: var(--ok); } .no { color: var(--warn); }
+  .progress { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; } .progress i { display: block; height: 100%; background: var(--accent); width: 0; }
+  form.settings { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+  form.settings label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+  form.settings input, form.settings select { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--fg); }
+  .err { color: var(--warn); font-size: 12px; }
+  .muted { color: var(--muted); font-size: 12px; }
+  nav { display: flex; gap: 6px; margin-bottom: 10px; } nav button[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: #fff; }
 </style>
 </head>
 <body class="panel-body">
-  <div class="bar"><strong>History</strong><input id="q" type="search" placeholder="Search dictations…"><span id="count" style="color:var(--muted);font-size:12px"></span><button id="dbgStart" title="Debug: start recording">● Rec</button><button id="dbgStop" title="Debug: stop recording">■ Stop</button></div>
-  <div id="rows"></div>
-  <p id="status" style="color:var(--muted)"></p>
+  <nav><button data-tab="history" aria-pressed="true">History</button><button data-tab="settings" aria-pressed="false">Settings</button><button data-tab="setup" aria-pressed="false">Setup</button></nav>
+
+  <section id="tab-history">
+    <div class="bar"><input id="q" type="search" placeholder="Search dictations…"><span id="count" class="muted"></span><button id="dbgStart" title="Record without the hotkey">● Rec</button><button id="dbgStop" title="Stop recording">■ Stop</button></div>
+    <div id="rows"></div>
+  </section>
+
+  <section id="tab-settings" hidden>
+    <form class="settings" id="settings">
+      <label>Activation <select name="activation"><option value="push_to_talk">Push to talk (hold)</option><option value="toggle">Toggle (tap to start, tap to stop)</option><option value="hold_or_toggle">Hold or toggle (tap locks on)</option></select></label>
+      <label>Hold threshold (ms) <input name="hold_threshold_ms" type="number" min="100" max="2000"></label>
+      <label>Hold key <span id="pttHint" class="muted" style="font-size:13px;color:var(--fg)"></span></label>
+      <label>Toggle key <span id="toggleHint" class="muted" style="font-size:13px;color:var(--fg)"></span></label>
+      <label>Microphone <select name="microphone"><option value="">System default</option></select></label>
+      <label>Paste method <select name="paste_method"><option value="clipboard">Clipboard + ⌘V</option><option value="type">Type the text</option></select></label>
+      <label>Unload model after idle (minutes, 1–240) <input name="idle_unload_minutes" type="number" min="1" max="240"></label>
+      <label><span><input name="idle_never" type="checkbox"> Never unload</span></label>
+      <label>Keep recording after key-up (ms) <input name="post_release_ms" type="number" min="0" max="2000"></label>
+      <label>Maximum clip (seconds) <input name="max_clip_seconds" type="number" min="10" max="600"></label>
+      <div style="grid-column:1/-1;display:flex;gap:8px;align-items:center"><button class="primary" type="submit">Save</button><span id="settingsErr" class="err"></span><span id="settingsOk" class="muted"></span></div>
+    </form>
+    <p class="muted">Hotkeys are rebound from this file for now: edit <code>settings.json</code> in the data folder, then Save here to apply. A key picker arrives with the next plan.</p>
+  </section>
+
+  <section id="tab-setup" hidden>
+    <div class="card">
+      <div class="check"><span>Whisper model (large-v3-turbo, 574 MB)</span><span id="pModel"></span></div>
+      <div class="progress" id="dl" hidden><i id="dlBar"></i></div>
+      <div class="check"><span>Microphone</span><span><button data-priv="microphone">Open setting</button></span></div>
+      <div class="check"><span>Accessibility (needed to paste)</span><span><span id="pAcc"></span> <button data-priv="accessibility">Open setting</button></span></div>
+      <div class="check"><span>Input Monitoring (needed for the hold key)</span><span><span id="pIm"></span> <button data-priv="input_monitoring">Open setting</button></span></div>
+      <p class="muted">After granting Accessibility or Input Monitoring, quit LVW from the menu bar and start it again.</p>
+      <p id="stale" class="err" hidden>The last session ended unexpectedly. Nothing was lost; history is saved after every dictation.</p>
+    </div>
+  </section>
+
+  <p id="status" class="muted"></p>
   <script src="lvw.js"></script>
   <script>
-    const rows = document.getElementById('rows'), q = document.getElementById('q'), count = document.getElementById('count'), status = document.getElementById('status');
-    function esc(s) { return s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
-    async function load() {
-      const list = q.value ? await window.lvw.invoke('search_history', { query: q.value }) : await window.lvw.invoke('list_history', { limit: 100, offset: 0 });
-      const n = await window.lvw.invoke('history_count');
-      count.textContent = n + ' dictations';
-      rows.innerHTML = list.length ? '' : '<p style="color:var(--muted)">Nothing dictated yet. Hold the dictation key and speak.</p>';
+    const $ = (id) => document.getElementById(id);
+    const inv = (c, a) => window.lvw.invoke(c, a);
+    function esc(s) { return String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+    document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+      document.querySelectorAll('nav button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+      for (const t of ['history', 'settings', 'setup']) $('tab-' + t).hidden = t !== b.dataset.tab;
+      if (b.dataset.tab === 'settings') loadSettings(); if (b.dataset.tab === 'setup') loadSetup();
+    });
+
+    async function loadHistory() {
+      const list = $('q').value ? await inv('search_history', { query: $('q').value }) : await inv('list_history', { limit: 100, offset: 0 });
+      $('count').textContent = (await inv('history_count')) + ' dictations';
+      const rows = $('rows'); rows.innerHTML = list.length ? '' : '<p class="muted">Nothing dictated yet. Hold the dictation key and speak.</p>';
       for (const d of list) {
         const el = document.createElement('div'); el.className = 'row';
-        const when = new Date(d.created_at_ms).toLocaleString();
-        el.innerHTML = `<div class="meta"><span>${when}</span><span>${esc(d.app_name || '')}</span><span>${esc(d.model)}</span><span>${(d.duration_ms/1000).toFixed(1)}s</span><span>${esc(d.status)}</span></div>
-          <div class="txt">${esc(d.polished_text || d.raw_text)}</div>
-          <button data-copy>Copy</button> <button data-del>Delete</button>`;
-        el.querySelector('[data-copy]').onclick = async () => { await navigator.clipboard.writeText(d.polished_text || d.raw_text); status.textContent = 'Copied'; setTimeout(() => status.textContent = '', 1500); };
-        el.querySelector('[data-del]').onclick = async () => { await window.lvw.invoke('delete_history', { id: d.id }); load(); };
+        const t = d.polished_text || d.raw_text;
+        el.innerHTML = `<div class="meta"><span>${new Date(d.created_at_ms).toLocaleString()}</span><span>${esc(d.app_name || '')}</span><span>${esc(d.model)}</span><span>${(d.duration_ms/1000).toFixed(1)}s</span><span>${esc(d.status)}</span></div><div class="txt">${esc(t)}</div><button data-copy>Copy</button> <button data-del>Delete</button>`;
+        el.querySelector('[data-copy]').onclick = async () => { try { await navigator.clipboard.writeText(t); flash('Copied'); } catch { flash('Copy blocked'); } };
+        el.querySelector('[data-del]').onclick = async () => { await inv('delete_history', { id: d.id }); loadHistory(); };
         rows.appendChild(el);
       }
     }
-    q.addEventListener('input', load);
-    document.getElementById('dbgStart').onclick = () => window.lvw.invoke('debug_start');
-    document.getElementById('dbgStop').onclick = () => window.lvw.invoke('debug_stop');
-    window.lvw.listen('pill-state', (s) => { status.textContent = s.state + (s.message ? ': ' + s.message : ''); if (s.state === 'pasted') load(); });
-    load();
+    function flash(m) { $('status').textContent = m; setTimeout(() => $('status').textContent = '', 1500); }
+    $('q').addEventListener('input', loadHistory);
+    $('dbgStart').onclick = () => inv('debug_start'); $('dbgStop').onclick = () => inv('debug_stop');
+
+    function hint(b) { return b.modifier ? ({right_option:'Right ⌥', left_option:'Left ⌥', right_command:'Right ⌘', right_control:'Right ⌃'})[b.modifier] : (b.combo || 'none'); }
+    async function loadSettings() {
+      const s = await inv('get_settings'); const f = $('settings');
+      f.activation.value = s.activation; f.hold_threshold_ms.value = s.hold_threshold_ms;
+      $('pttHint').textContent = hint(s.ptt); $('toggleHint').textContent = hint(s.toggle);
+      const mics = await inv('list_input_devices'); f.microphone.innerHTML = '<option value="">System default</option>' + mics.map(m => `<option>${esc(m)}</option>`).join('');
+      f.microphone.value = s.microphone || ''; f.paste_method.value = s.paste_method;
+      f.idle_never.checked = s.idle_unload_minutes == null; f.idle_unload_minutes.value = s.idle_unload_minutes ?? 10; f.idle_unload_minutes.disabled = f.idle_never.checked;
+      f.post_release_ms.value = s.post_release_ms; f.max_clip_seconds.value = s.max_clip_seconds;
+      f.idle_never.onchange = () => f.idle_unload_minutes.disabled = f.idle_never.checked;
+      f.onsubmit = async (e) => {
+        e.preventDefault(); $('settingsErr').textContent = ''; $('settingsOk').textContent = '';
+        const n = { ...s, activation: f.activation.value, hold_threshold_ms: +f.hold_threshold_ms.value, microphone: f.microphone.value || null, paste_method: f.paste_method.value,
+          idle_unload_minutes: f.idle_never.checked ? null : +f.idle_unload_minutes.value, post_release_ms: +f.post_release_ms.value, max_clip_seconds: +f.max_clip_seconds.value };
+        try { await inv('set_settings', { settings: n }); $('settingsOk').textContent = 'Saved'; } catch (err) { $('settingsErr').textContent = String(err); }
+      };
+    }
+    async function loadSetup() {
+      const p = await inv('permissions');
+      $('pModel').innerHTML = p.model_present ? '<span class="ok">ready</span>' : '<button id="dlBtn">Download</button>';
+      if (!p.model_present) $('dlBtn').onclick = () => { inv('download_model'); $('dl').hidden = false; };
+      $('pAcc').innerHTML = p.accessibility ? '<span class="ok">granted</span>' : '<span class="no">not granted</span>';
+      $('pIm').innerHTML = p.input_monitoring ? '<span class="ok">granted</span>' : '<span class="no">not granted</span>';
+      $('stale').hidden = !p.stale_lock;
+      document.querySelectorAll('[data-priv]').forEach(b => b.onclick = () => inv('open_privacy', { pane: b.dataset.priv }));
+    }
+    window.lvw.listen('model-download', (d) => { $('dl').hidden = d.done; $('dlBar').style.width = Math.round(100 * d.received / Math.max(1, d.total)) + '%'; if (d.done) loadSetup(); if (d.error) flash('Download failed: ' + d.error); });
+    window.lvw.listen('pill-state', (s) => { $('status').textContent = s.state + (s.message ? ': ' + s.message : ''); if (s.state === 'pasted') loadHistory(); });
+    loadHistory();
+    inv('permissions').then(p => { if (!p.model_present || !p.accessibility) document.querySelector('[data-tab=setup]').click(); });
   </script>
 </body>
 </html>
