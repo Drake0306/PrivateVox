@@ -49,9 +49,9 @@ Memory budget (measured once per model on first load; these are planning estimat
 
 | Resident | Estimate |
 |---|---|
-| large-v3-turbo, Q5_0, with working buffers | ~1.3 GB |
-| large-v3, Q5_0, with working buffers | ~2.4 GB |
-| distil-large-v3, Q5_0, with working buffers | ~1.2 GB |
+| large-v3-turbo, Q5_0, resident context incl. GPU buffers | ~0.55 GB **[measured 2026-10-28, M1]** (file 574 MB) |
+| large-v3, Q5_0, resident context incl. GPU buffers | ~1.0 GB **[measured 2026-10-28, M1]** (file 1081 MB) |
+| distil-large-v3 (f16 file 1.5 GB; no q5_0 published) | ~0.5 GB estimate; measured when added |
 | Polish LLM 3B class, Q4_K_M, 4k context | ~2.3 GB |
 | Polish LLM 7–8B class, Q4_K_M, 4k context | ~5.0 GB |
 
@@ -210,9 +210,9 @@ These are planning targets, not acceptance criteria. **[call]** The engine spike
 | Step | Target |
 |---|---|
 | Hotkey down → Listening shown | < 50 ms |
-| Model load, turbo Q5_0 | < 1.5 s Mac M1 Metal, < 1.5 s RX 9070 Vulkan |
-| Transcribe 10 s clip, turbo | < 1 s on both |
-| Transcribe 10 s clip, large-v3 | < 3 s on both |
+| Model load, turbo Q5_0 | **0.4–0.5 s measured on M1** (first-ever Metal shader compile after install ~12 s, once); RX 9070 to be measured |
+| Transcribe 7.5 s clip, turbo, fast tier | **~1.3 s measured on M1** (flash attention + reduced audio context); one-word clip ~1.1 s; 30 s clip ~4.8 s |
+| Transcribe 7.5 s clip, large-v3 | **~3.6 s measured on M1** (flash, full context); ~2.1 s with reduced context |
 | LLM polish, 100 words, 7–8B on RX 9070 | < 2 s |
 | LLM polish, 100 words, 3B on M1 | < 2 s |
 | Paste + clipboard restore | < 200 ms |
@@ -229,7 +229,7 @@ Both: respect reduced motion, dark/light theme following the OS, high-DPI pill r
 ## 13. Phasing
 
 **v1 (first usable, then polish to shippable)**
-1. Engine spike (throwaway): whisper.cpp + the three models on both machines; load time, speed, VRAM footprint, Vulkan vs ROCm on the RX 9070.
+1. Engine spike (throwaway): **done on the Mac 2026-10-28**, see `docs/superpowers/spikes/2026-10-28-engine-spike-results.md`. The Windows half (Vulkan vs ROCm on the RX 9070) runs when the owner is at the PC.
 2. Tauri shell: pill, tray, settings window, SQLite, lifecycle (lock file, handlers, single unload path, idle timer).
 3. Hotkey → capture → VAD → Whisper → paste, Raw and Clean modes, LLM endpoint auto-detect on localhost, LAN endpoint manual entry with fallback chain.
 4. Panel: history CRUD, search, re-paste, export; model switcher; GPU memory strip.
@@ -299,12 +299,12 @@ Why it is better than in-process: a driver fault no longer takes the whole app d
 
 How it lands: the `Engine` trait stays; its default implementation becomes `WorkerEngine`, a supervisor over a child process built from the same binary (`harness --engine-worker`). The lifecycle rules in §10 gain: worker exits on stdin EOF; parent death kills the worker on every platform (pipe EOF, plus a Windows job object with kill-on-close as belt and braces); crash report includes the worker's last stderr lines; GPU-suspect flag with CPU fallback and a "Retry GPU" action in Settings. The §10 watchdog becomes the supervisor's scaled deadline. **[call]**
 
-### 18.2 Engine library: transcribe.cpp as the default implementation, whisper.cpp kept as the fallback — amends §5 and §13 step 1
+### 18.2 Engine library — DECIDED 2026-10-28: whisper-rs (whisper.cpp) is the v1 engine; transcribe-cpp is the documented alternative
 What Handy does: every model runs through `transcribe-cpp` (MIT, by Handy's author, wraps transcribe.cpp, a ggml-based speech library). One library gives Whisper, Parakeet, Moonshine, Canary and more, plus Silero VAD v6.2 and a 107-language ID model, all as GGUF, with Metal, Vulkan, CUDA and HIP/ROCm backends behind Cargo features (`metal`, `vulkan`, `rocm`, `dynamic-backends`). On Windows x64 Handy ships dynamic backends with runtime CPU-variant scoring (`GGML_CPU_ALL_VARIANTS`) so one build picks the best AVX path per machine.
 
 Why it matters here: it removes two dependencies (an ONNX runtime for VAD, a separate language-ID path), it has a ROCm feature flag relevant to the RX 9070, and it leaves the door open to Parakeet, which is much faster than Whisper for English. The cost is that Whisper-specific decode knobs are limited to `WhisperRunOptions` (initial prompt, condition-on-previous-tokens, temperature fallback, compression/logprob/no-speech thresholds, max initial timestamp); beam size, flash attention and `audio_ctx` are not exposed, and the crate is young (0.4.x).
 
-How it lands: the engine spike (§13 step 1) builds both `transcribe-cpp` and `whisper-rs` on the Mac and measures turbo and large-v3 on the same clips. If they are within 15% of each other, transcribe-cpp is the default for its VAD, language ID and ROCm story; whisper-rs stays as a second `Engine` implementation for experiments with greedy decoding, flash attention and reduced audio context (§18.9). **[call]**
+Spike result (`docs/superpowers/spikes/2026-10-28-engine-spike-results.md`): on the plain GPU path the two engines are equal on turbo and transcribe-cpp is ~15% faster on large-v3, but whisper-rs exposes flash attention (−20%) and a reduced audio context (one-word clip 2.6 s → 1.1 s, 7.5 s clip 2.8 s → 1.3 s, same text) that transcribe-cpp does not, and dictation is mostly short clips. VAD is covered by whisper-rs 0.16's `WhisperVadContext` (Silero ggml). **Decision: whisper-rs 0.16 with `metal` on macOS and `vulkan` on Windows is the v1 engine.** Core ML encoder measured and rejected (no gain on M1, breaks reduced context). Default decode: greedy best_of 1, flash attention on, language fixed, no_context, suppress_blank, suppress_nst, no timestamps, audio_ctx from clip length (policy in the results doc). Beam search not used (15–70% slower, no measured gain). transcribe-cpp stays behind the `Engine` trait as the route to Parakeet or streaming models later. **[measured 2026-10-28]**
 
 ### 18.3 Keep the microphone warm
 What Handy does: `always_on_microphone` keeps the capture stream open permanently; `lazy_stream_close` keeps it open for a while after a dictation instead of closing immediately. Opening a CoreAudio or WASAPI stream costs tens to hundreds of milliseconds, which otherwise lands between key-down and the first captured sample. Capture is 16 kHz mono (channels mixed down, or one selected channel), so no resampling happens later.
