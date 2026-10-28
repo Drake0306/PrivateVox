@@ -15,7 +15,7 @@
     <span class="seg" id="src" hidden role="group" aria-label="History source"><button data-src="local" aria-pressed="true">This Mac</button><button data-src="remote" aria-pressed="false" id="srcRemote">PC</button></span>
     <span class="stats" id="stats"></span>
   </header>
-  <nav class="tabs"><button data-tab="history" aria-pressed="true">History</button><button data-tab="models" aria-pressed="false">Models</button><button data-tab="settings" aria-pressed="false">Settings</button><button data-tab="setup" aria-pressed="false">Setup</button></nav>
+  <nav class="tabs"><button data-tab="history" aria-pressed="true">History</button><button data-tab="models" aria-pressed="false">Models</button><button data-tab="polish" aria-pressed="false">Polish</button><button data-tab="network" aria-pressed="false">Network</button><button data-tab="settings" aria-pressed="false">Settings</button><button data-tab="setup" aria-pressed="false">Setup</button></nav>
 
   <div class="scroll">
     <section class="tab" id="tab-history">
@@ -34,6 +34,64 @@
     </section>
 
     <section class="tab" id="tab-models" hidden><div class="pad" id="modelCards"></div></section>
+
+    <section class="tab" id="tab-polish" hidden>
+      <div class="pad wide">
+        <p class="lead">Whisper's text goes through a small language model before it is pasted, unless the mode is Raw or Translate. Pick the mode in the History header or the menu bar; edit what each mode asks for below.</p>
+        <div class="card" id="polishCard">
+          <h3>Polish</h3>
+          <div class="inline switches">
+            <label><input type="checkbox" id="polishOn"> Clean up text with an LLM</label>
+            <label>Wait up to <input type="number" id="llmTimeout" min="1" max="60" style="width:64px"> s, then paste the raw text</label>
+            <label><input type="checkbox" id="fillersOn"> Remove filler words (uh, hmm; um in English)</label>
+          </div>
+          <div id="prompts"></div>
+        </div>
+        <div class="card" id="endpointsCard">
+          <h3>LLM endpoints</h3>
+          <p class="muted" style="margin:0 0 8px">Tried top to bottom. Runtimes on this machine (Ollama, LM Studio, llama.cpp) are found automatically; add a PC by its address.</p>
+          <div id="eplist"></div>
+          <div class="inline" style="margin-top:10px">
+            <input type="text" id="epInput" placeholder="192.168.1.20:1234" style="width:200px" aria-label="Address">
+            <input type="text" id="epLabel" placeholder="Label (optional)" style="width:160px" aria-label="Label">
+            <button class="btn" id="epAdd">Add endpoint</button>
+            <span id="epErr" class="err"></span>
+          </div>
+          <p class="muted">On the PC: LM Studio → Developer → "Serve on local network", or set <code>OLLAMA_HOST=0.0.0.0</code> for Ollama. Add it here by IP and port; the Mac uses it whenever it is reachable and falls back to a local model when it is not.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab" id="tab-network" hidden>
+      <div class="pad wide">
+        <p class="lead">One PrivateVox can do the work for another on the same Wi-Fi: the machine with the big GPU acts as host, this one sends it what you say.</p>
+        <div class="card" id="networkCard">
+          <h3>This machine</h3>
+          <div class="inline" style="margin-bottom:6px"><label>This machine is called <input type="text" id="machineName" style="width:180px" aria-label="Machine name"></label><button class="btn sm" id="machineNameSave">Save</button></div>
+          <h3 style="margin-top:14px">Act as host</h3>
+          <div class="inline" style="margin-bottom:4px">
+            <label><input type="checkbox" id="hostOn"> Act as host for other machines</label>
+            <label>Port <input type="number" id="hostPort" min="1024" max="65535" style="width:84px"></label>
+            <label>Token <input type="text" id="hostToken" placeholder="optional" style="width:140px"></label>
+            <button class="btn sm" id="hostApply">Apply</button>
+          </div>
+          <p class="muted" id="hostLine" style="margin:0 0 12px"></p>
+          <h3 style="margin-top:14px">Use a host</h3>
+          <div class="inline" style="margin-bottom:4px">
+            <label><input type="checkbox" id="remoteOn"> Use a host on this network</label>
+            <input type="text" id="remoteUrl" placeholder="192.168.1.20:8765" style="width:170px" aria-label="Host address">
+            <input type="text" id="remoteToken" placeholder="token (if set)" style="width:130px" aria-label="Host token">
+            <input type="text" id="remoteLabel" placeholder="PC" style="width:90px" aria-label="Host label">
+            <button class="btn sm" id="remoteTest">Test</button>
+            <button class="btn sm" id="remoteApply">Apply</button>
+          </div>
+          <p class="muted" id="remoteLine" style="margin:0"></p>
+          <div class="inline" style="margin-top:8px"><button class="btn sm" id="scanHosts">Find hosts on this network</button><span class="muted" id="scanMsg"></span></div>
+          <div id="foundHosts"></div>
+          <p class="muted">While the host is reachable, what you dictate here is transcribed and polished there, and the memory strip shows the host's figures. When it is not, this machine does the work and the pill says so. Both machines keep a history; the toggle in the History header shows the host's.</p>
+        </div>
+      </div>
+    </section>
 
     <section class="tab" id="tab-settings" hidden>
       <div class="pad">
@@ -58,7 +116,7 @@
             <div style="min-width:260px;flex:1">
               <div class="muted" style="margin-bottom:4px">Spoken languages <span style="font-weight:400">· one means no detection; several means Whisper picks per clip from this list</span> · <span id="langCount"></span></div>
               <input type="search" id="langFilter" placeholder="Filter languages…" aria-label="Filter languages" style="font:14px var(--body);padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--fg);width:100%;margin-bottom:6px">
-              <div id="langList" style="max-height:160px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:6px 10px;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:2px 10px"></div>
+              <div id="langList" style="border:1px solid var(--line);border-radius:8px;padding:8px 12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:4px 12px"></div>
             </div>
             <div style="min-width:260px;flex:1">
               <div class="muted" style="margin-bottom:4px">Personal dictionary <span style="font-weight:400">· names and jargon, one per line; Whisper is told to expect them</span></div>
@@ -68,49 +126,6 @@
             </div>
           </div>
           <div class="inline" style="margin-top:8px"><button class="btn primary" id="dictationSave">Save dictation settings</button><span id="dictationMsg" class="muted"></span></div>
-        </div>
-        <div class="card" id="polishCard">
-          <h3>Polish</h3>
-          <div class="inline" style="margin-bottom:8px">
-            <label><input type="checkbox" id="polishOn"> Clean up text with an LLM</label>
-            <label>Wait up to <input type="number" id="llmTimeout" min="1" max="60" style="width:64px"> s, then paste the raw text</label>
-            <label><input type="checkbox" id="fillersOn"> Remove filler words (uh, hmm; um in English)</label>
-          </div>
-          <div id="prompts"></div>
-        </div>
-        <div class="card" id="endpointsCard">
-          <h3>LLM endpoints <span class="muted" style="font-weight:400">· tried top to bottom; local runtimes are found automatically</span></h3>
-          <div id="eplist"></div>
-          <div class="inline" style="margin-top:10px">
-            <input type="text" id="epInput" placeholder="192.168.1.20:1234" style="width:200px" aria-label="Address">
-            <input type="text" id="epLabel" placeholder="Label (optional)" style="width:160px" aria-label="Label">
-            <button class="btn" id="epAdd">Add endpoint</button>
-            <span id="epErr" class="err"></span>
-          </div>
-          <p class="muted">On the PC: LM Studio → Developer → "Serve on local network", or set <code>OLLAMA_HOST=0.0.0.0</code> for Ollama. Add it here by IP and port; the Mac uses it whenever it is reachable and falls back to a local model when it is not.</p>
-        </div>
-        <div class="card" id="networkCard">
-          <h3>Network <span class="muted" style="font-weight:400">· one PrivateVox can do the work for another</span></h3>
-          <div class="inline" style="margin-bottom:6px"><label>This machine is called <input type="text" id="machineName" style="width:180px" aria-label="Machine name"></label><button class="btn sm" id="machineNameSave">Save</button></div>
-          <div class="inline" style="margin-bottom:4px">
-            <label><input type="checkbox" id="hostOn"> Act as host for other machines</label>
-            <label>Port <input type="number" id="hostPort" min="1024" max="65535" style="width:84px"></label>
-            <label>Token <input type="text" id="hostToken" placeholder="optional" style="width:140px"></label>
-            <button class="btn sm" id="hostApply">Apply</button>
-          </div>
-          <p class="muted" id="hostLine" style="margin:0 0 12px"></p>
-          <div class="inline" style="margin-bottom:4px">
-            <label><input type="checkbox" id="remoteOn"> Use a host on this network</label>
-            <input type="text" id="remoteUrl" placeholder="192.168.1.20:8765" style="width:170px" aria-label="Host address">
-            <input type="text" id="remoteToken" placeholder="token (if set)" style="width:130px" aria-label="Host token">
-            <input type="text" id="remoteLabel" placeholder="PC" style="width:90px" aria-label="Host label">
-            <button class="btn sm" id="remoteTest">Test</button>
-            <button class="btn sm" id="remoteApply">Apply</button>
-          </div>
-          <p class="muted" id="remoteLine" style="margin:0"></p>
-          <div class="inline" style="margin-top:8px"><button class="btn sm" id="scanHosts">Find hosts on this network</button><span class="muted" id="scanMsg"></span></div>
-          <div id="foundHosts"></div>
-          <p class="muted">While the host is reachable, what you dictate here is transcribed and polished there, and the memory strip shows the host's figures. When it is not, this machine does the work and the pill says so. Both machines keep a history; the toggle in the History header shows the host's.</p>
         </div>
       </div>
     </section>
@@ -156,8 +171,8 @@
 
   document.querySelectorAll('nav.tabs button').forEach(b => b.onclick = () => {
     document.querySelectorAll('nav.tabs button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
-    for (const t of ['history', 'models', 'settings', 'setup']) $('tab-' + t).hidden = t !== b.dataset.tab;
-    if (b.dataset.tab === 'settings') { loadSettings(); loadPolish(); loadNetwork(); loadDictation(); } if (b.dataset.tab === 'setup') loadSetup(); if (b.dataset.tab === 'models') loadModels(); if (b.dataset.tab === 'history') loadMemory();
+    for (const t of ['history', 'models', 'polish', 'network', 'settings', 'setup']) $('tab-' + t).hidden = t !== b.dataset.tab;
+    if (b.dataset.tab === 'settings') { loadSettings(); loadDictation(); } if (b.dataset.tab === 'polish') loadPolish(); if (b.dataset.tab === 'network') loadNetwork(); if (b.dataset.tab === 'setup') loadSetup(); if (b.dataset.tab === 'models') loadModels(); if (b.dataset.tab === 'history') loadMemory();
   });
 
   // ---------- history ----------
@@ -430,7 +445,7 @@
   window.pvx.listen('llm-changed', async () => {
     const st = await inv('llm_status');
     flash(st.selected ? 'Polish LLM: ' + st.selected.label + ' reachable' : 'Polish LLM: nothing reachable, pasting raw text');
-    if (!$('tab-settings').hidden) loadPolish();
+    if (!$('tab-polish').hidden) loadPolish();
     loadMemory();
   });
   window.pvx.listen('history-changed', () => { loadHistory(); flash('History updated'); });
@@ -472,7 +487,7 @@
     } catch (e) { $('scanMsg').textContent = String(e); }
     finally { b.disabled = false; }
   };
-  window.pvx.listen('remote-changed', (ev) => { flash(ev && ev.payload ? remoteLabel + ' reachable, dictation goes there' : remoteLabel + ' unreachable, dictating locally'); loadMemory(); if (!$('tab-settings').hidden) loadNetwork(); });
+  window.pvx.listen('remote-changed', (ev) => { flash(ev && ev.payload ? remoteLabel + ' reachable, dictation goes there' : remoteLabel + ' unreachable, dictating locally'); loadMemory(); if (!$('tab-network').hidden) loadNetwork(); });
 
   // ---------- setup ----------
   async function loadSetup() {
