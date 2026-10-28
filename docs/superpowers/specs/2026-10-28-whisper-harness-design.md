@@ -1,7 +1,7 @@
-# Whisper Harness, design
+# LVW (Local Voice Wisper), design
 
 Date: 2026-10-28
-Status: draft for approval
+Status: approved by the owner on 2026-10-28 ("go ahead and build"). Working title in earlier sections is "Whisper Harness"; the product name is **LVW**, bundle identifier `com.drake0306.lvw`, licence MIT. **[user]**
 Companion page (mockups, VRAM gauge, idea bank): `docs/whisper-harness-brainstorm.html`
 
 Tags used below: **[user]** decided by the product owner during brainstorming, **[call]** a default chosen by the author that can be overridden, **[builder]** deliberately left to whoever implements it.
@@ -43,7 +43,7 @@ Why it exists: existing tools are either cloud-bound (privacy, latency, subscrip
 | Machine | GPU / memory | Whisper backend | Local LLM runtime |
 |---|---|---|---|
 | Windows 11 PC **[user]** | AMD Radeon RX 9070, 16 GB VRAM (RDNA 4) | whisper.cpp with Vulkan. ROCm/HIP is a build-time option to benchmark once Vulkan works; recent ROCm releases list RDNA 4, but Vulkan is the path that is known to work on every driver. **[call]** | LM Studio or llama.cpp server (Vulkan or ROCm), or Ollama where its ROCm build supports the card. Any of them, via the OpenAI-compatible API. |
-| Mac **[user]** | Apple M1 family, unified memory (exact model and memory unknown; assume 8 or 16 GB) | whisper.cpp with Metal, plus the optional Core ML encoder. mlx-whisper as a later alternative engine. | Ollama or LM Studio locally, or the Windows PC over LAN. |
+| Mac **[user]** (verified 2026-10-28) | Apple M1, 7-core GPU, 8 GB unified memory, macOS 27.0.1, 26 GB free disk | Metal, plus the optional Core ML encoder. mlx-whisper as a later alternative engine. This is the tight-memory case: turbo + 3B polish fits, large-v3 + 3B fits, 7B polish does not. | Ollama or LM Studio locally (neither installed yet), or the Windows PC over LAN. |
 
 Memory budget (measured once per model on first load; these are planning estimates):
 
@@ -250,7 +250,7 @@ Both: respect reduced motion, dark/light theme following the OS, high-DPI pill r
 
 ## 14. Decisions log
 
-**[user]** Mac first, Windows when the owner is at the PC; personal use first, open source after; Three switchable Whisper models; switcher and GPU strip inside the history panel; configurable idle unload; full exit/crash cleanup; local-first LLM with LAN machines as the second tier reached by IP and port, seamless failover; Windows PC is an RX 9070 16 GB; Mac is Apple Silicon M1 family; the 12 idea-bank picks listed in §13.
+**[user]** Name LVW (Local Voice Wisper), bundle id `com.drake0306.lvw`, MIT; own codebase borrowing from Handy (option A) approved with the design on 2026-10-28; Mac first, Windows when the owner is at the PC; personal use first, open source after; Three switchable Whisper models; switcher and GPU strip inside the history panel; configurable idle unload; full exit/crash cleanup; local-first LLM with LAN machines as the second tier reached by IP and port, seamless failover; Windows PC is an RX 9070 16 GB; Mac is Apple Silicon M1 family; the 12 idea-bank picks listed in §13.
 
 **[call]** 5-minute clip cap in v1 with auto-stop; watchdog deadline scaled to clip length with cooperative cancel first; LLM kept warm alongside Whisper and unloaded by the same idle timer; remote Whisper client deferred to v1.x; §11 numbers are targets, not acceptance criteria; Tauri 2 shell and Rust core; whisper.cpp via whisper-rs, Vulkan on Windows and Metal on macOS; large-v3-turbo as the first-launch default; Q5_0 quantization by default; one resident model at a time; default hotkeys; 300 ms minimum clip; 8 s LLM timeout then raw fallback; LAN endpoints ordered before local once added; discovered peers need an explicit Add; share mode after v1; no internet cloud provider in v1; recommended/best thresholds at 80%/90%; SQLite schema in §6.
 
@@ -260,7 +260,7 @@ Both: respect reduced motion, dark/light theme following the OS, high-DPI pill r
 
 - **Mac first.** All v1 work is built and tested on the Mac. Windows work (Vulkan build, RX 9070 benchmarks, Windows installer, Windows paste/hotkey specifics) waits until the owner is at the PC and runs the build and spike scripts there; the Rust code is written cross-platform from the start so that step is a build-and-fix pass, not a port.
 - **Personal first, open source next.** v1 is for the owner's own machines. Packaging in v1 is an ad-hoc-signed .app for the Mac. Notarisation, a Windows installer, and the first-run flow aimed at strangers come with the open-source release.
-- **Open-source readiness** is a work item in its own right: pick a licence (MIT proposed **[call]**), README with build steps for both platforms, a CONTRIBUTING note, CI that builds on macOS and Windows runners, and a distinct name and icon (see §16 on why).
+- **Open-source readiness** is a work item in its own right: licence MIT **[user]**, README with build steps for both platforms, a CONTRIBUTING note, CI that builds on macOS and Windows runners, and a distinct name and icon (see §16 on why).
 
 ## 16. Prior art, and build versus fork
 
@@ -268,22 +268,114 @@ Checked on 2026-10-28. The closest existing projects:
 
 | Project | Stack | Licence | State | Overlap with this design | Missing versus this design |
 |---|---|---|---|---|---|
-| **Handy** (cjpais/Handy) | Tauri 2, Rust, React UI, whisper GGML via ggml, Silero VAD, Vulkan on Windows, Parakeet models | MIT (name, logo and brand are not open; forks must rebrand) | ~35k stars, v0.9.8 released 2026-10-03, active | Hold and toggle hotkeys, paste into any app, recording overlay, history with audio playback, model manager with Hugging Face downloads, LLM post-processing over an HTTP API, GPU detection, streaming models | GPU-memory strip with recommended/best, LAN endpoint failover and discovery, share-engine mode, configurable idle unload timer, three fixed Whisper tiers (distil must be added as a custom model), documented exit/crash lifecycle |
+| **Handy** (cjpais/Handy) | Tauri 2, Rust, React UI, whisper GGML plus Parakeet/Moonshine/Canary engines, Silero VAD, Vulkan on Windows, Metal on macOS | MIT (name, logo and brand are not open; forks must rebrand) | ~35k stars, v0.9.8 released 2026-10-03, active | Verified in source: hold/toggle hotkeys with hold threshold, paste or type with reliable-paste and delays, overlay with preset positions and styles, history with audio replay, favourite, delete and retry, model manager with mirror + Hugging Face downloads, Whisper Turbo and Large-v3 plus custom GGML, GPU device selection, LLM post-processing with many providers (OpenAI, Anthropic, Groq, Ollama via Custom) and multiple prompts, custom words with fuzzy correction, rule-based filler removal, translate, language detection, long-form chunking, idle unload with presets (Never/Immediately/2/5/10/15 min/1 h), recording retention, single instance, CLI and Raycast control | GPU-memory view and recommended/best logic, per-model benchmark, ordered multi-endpoint failover with health checks, mDNS discovery, share-engine mode, remote Whisper client, editable history with re-polish and paste-again, undo last paste, draggable pill, LLM warm-up on hotkey, free-form idle minutes, documented exit/crash contract |
 | **Wisper** (hudsonbrendon/wisper) | Tauri 2, Rust, whisper-rs, Metal only | MIT | New, 0 stars, 159 commits | Push-to-talk and hands-free, type or paste injection, pill overlay, history with stats, model downloads | No AMD/Vulkan, no LLM cleanup of dictation, no LAN, no VRAM view |
 | **Whispering** (epicenter-so/epicenter) | Tauri 2, Svelte | AGPL-3.0 | Part of the Epicenter monorepo, ~4.8k stars | Shortcuts, local whisper.cpp, chained transformations, local and cloud providers | Copyleft licence, broad scope, no GPU-memory view or LAN failover |
 | **VoiceInk** (Beingpax/VoiceInk) | Swift, whisper.cpp, macOS only | GPL-3.0, paid binary | ~5k stars | Polished Mac dictation with AI enhancement | macOS only, Swift, GPL |
 | **OpenWhispr** | Electron, whisper.cpp | MIT, freemium | Active | Cross-platform push-to-talk with AI cleanup | Electron footprint, commercial tier |
 
-Conclusion: Handy already does roughly two thirds of v1 on the same stack this design chose. The things it does not do are exactly the things the owner asked for by name: the GPU-memory strip with recommendations, local-first with seamless LAN failover, the configurable idle unload, the exit/crash contract, and later the share-engine mode.
+Conclusion (revised after reading Handy's source): Handy covers closer to four fifths of v1 on the same stack, including things first listed here as gaps (idle unload, custom words, keep-audio, long-form). Model power is not a gap: Handy runs Whisper Turbo and Large-v3. The Harness is different in what sits around the engine: memory awareness (GPU strip, recommended/best, benchmark), LAN awareness (ordered endpoints, failover, discovery, share-engine), a history that is a workbench (edit, re-polish, paste again, export), undo last paste, the draggable pill, and the written exit contract. A full side-by-side is in `docs/harness-vs-handy.html`.
 
-Two ways forward, for the owner to choose:
+Three ways forward, for the owner to choose:
 
 - **A. Own codebase, borrow from Handy.** Build to this design, and lift proven, MIT-licensed pieces from Handy with attribution where they save weeks: the paste reliability work, the overlay positioning code, Vulkan build configuration, Hugging Face download with mirror fallback. Keeps the architecture (single engine owner, endpoint registry, lifecycle) clean and the project ours to open source under its own name. Slower to first working build.
 - **B. Fork Handy, rebrand, add the missing features.** A working dictation app on day one; the design's new parts become features on top. Costs: inherit a React/TypeScript UI and a codebase shaped by someone else's decisions, carry the burden of tracking upstream or diverging, and the open-source story becomes "a Handy fork with X" rather than a project of its own.
 
-Author's recommendation: **A**, with Handy kept open in a second window as the reference implementation and the first place to look when a platform quirk bites. **[call]**
+- **C. Contribute the missing pieces to Handy upstream.** Largest reach and least to maintain, but the maintainer decides what lands; share-engine mode, editable history and a separate pill UI may not fit their scope.
+
+Author's recommendation: **A**, with Handy kept open in a second window as the reference implementation and the first place to look when a platform quirk bites. Build the GPU-memory logic as a small standalone crate so it can also be offered to Handy as a PR (A and C together). **[call]**
 
 ## 17. Open items the owner may still want to decide
 - Build versus fork (§16).
+
+## 18. Techniques adopted from Handy **[user]** asked, **[call]** on each
+
+Read from Handy v0.9.8 source on 2026-10-28 (`engine_supervisor/`, `managers/audio.rs`, `managers/transcription.rs`, `audio_toolkit/`, `transcription_coordinator.rs`, `paste_tx/`, `secure_input.rs`) and from the `transcribe-cpp` 0.4.1 crate docs. Handy sets no special Whisper decode parameters: `RunOptions` carries only task, language and vocabulary, everything else at family defaults. Its speed and accuracy come from the pipeline around the model. Each item below says what Handy does, why it helps, and how it lands here. Items marked **supersedes** change an earlier section of this document; the earlier text is left in place with a pointer.
+
+### 18.1 Engine in a child worker process — supersedes §5 "Whisper runs in-process" and part of §10
+What Handy does: the native engine runs only in a worker process the app spawns (`engine_supervisor`). One owner thread holds the single worker slot and a command queue, so "at most one model alive" holds by construction. Requests and PCM go over stdin/stdout pipes. A worker whose stdin closes exits immediately via `_exit`, skipping C++ static destructors (ggml-metal teardown asserts) and letting the OS reclaim CPU and GPU memory. Cancel kills the worker and respawns it with the same model spec. A `GGML_ASSERT` abort, segfault or hang in the worker is a recoverable event: the supervisor keeps the last native stderr lines for a crash report, marks the GPU as suspect, reloads on CPU, and offers "retry GPU" later. Hang deadlines scale with audio length (a floor plus N × clip seconds, with a larger floor for first-use shader compiles). Device probing runs in a short-lived model-less worker so a hung driver cannot block dictation.
+
+Why it is better than in-process: a driver fault no longer takes the whole app down, cancellation is instant and safe (whisper.cpp has no safe mid-call free), and the force-close story becomes stronger, not weaker: the worker dies the moment the parent's pipe closes, so no VRAM is stranded.
+
+How it lands: the `Engine` trait stays; its default implementation becomes `WorkerEngine`, a supervisor over a child process built from the same binary (`harness --engine-worker`). The lifecycle rules in §10 gain: worker exits on stdin EOF; parent death kills the worker on every platform (pipe EOF, plus a Windows job object with kill-on-close as belt and braces); crash report includes the worker's last stderr lines; GPU-suspect flag with CPU fallback and a "Retry GPU" action in Settings. The §10 watchdog becomes the supervisor's scaled deadline. **[call]**
+
+### 18.2 Engine library: transcribe.cpp as the default implementation, whisper.cpp kept as the fallback — amends §5 and §13 step 1
+What Handy does: every model runs through `transcribe-cpp` (MIT, by Handy's author, wraps transcribe.cpp, a ggml-based speech library). One library gives Whisper, Parakeet, Moonshine, Canary and more, plus Silero VAD v6.2 and a 107-language ID model, all as GGUF, with Metal, Vulkan, CUDA and HIP/ROCm backends behind Cargo features (`metal`, `vulkan`, `rocm`, `dynamic-backends`). On Windows x64 Handy ships dynamic backends with runtime CPU-variant scoring (`GGML_CPU_ALL_VARIANTS`) so one build picks the best AVX path per machine.
+
+Why it matters here: it removes two dependencies (an ONNX runtime for VAD, a separate language-ID path), it has a ROCm feature flag relevant to the RX 9070, and it leaves the door open to Parakeet, which is much faster than Whisper for English. The cost is that Whisper-specific decode knobs are limited to `WhisperRunOptions` (initial prompt, condition-on-previous-tokens, temperature fallback, compression/logprob/no-speech thresholds, max initial timestamp); beam size, flash attention and `audio_ctx` are not exposed, and the crate is young (0.4.x).
+
+How it lands: the engine spike (§13 step 1) builds both `transcribe-cpp` and `whisper-rs` on the Mac and measures turbo and large-v3 on the same clips. If they are within 15% of each other, transcribe-cpp is the default for its VAD, language ID and ROCm story; whisper-rs stays as a second `Engine` implementation for experiments with greedy decoding, flash attention and reduced audio context (§18.9). **[call]**
+
+### 18.3 Keep the microphone warm
+What Handy does: `always_on_microphone` keeps the capture stream open permanently; `lazy_stream_close` keeps it open for a while after a dictation instead of closing immediately. Opening a CoreAudio or WASAPI stream costs tens to hundreds of milliseconds, which otherwise lands between key-down and the first captured sample. Capture is 16 kHz mono (channels mixed down, or one selected channel), so no resampling happens later.
+
+How it lands: lazy close is the default, 60 s after the last dictation; always-on is a setting; mute-while-recording and mic-level meter come from the same stream. Target for key-down to first sample is 20 ms warm, 300 ms cold. **[call]**
+
+### 18.4 Trailing audio: post-release buffer plus VAD hangover
+What Handy does: an explicit `extra_recording_buffer_ms` setting keeps capturing after key-up so the last syllable is not clipped; separately the VAD keeps a 450 ms pre-roll before detected speech, needs 60 ms of voiced frames to confirm onset, and holds a 450 ms hangover after speech ends (1650 ms in streaming mode). Clips with real audio but no detected speech end as "nothing heard"; clips that are all digital zeros end as "microphone silent", which tells the user the mic is muted rather than hallucinating text.
+
+How it lands: §4.3 steps 2–3 become: on key-up keep capturing for the post-release buffer (default 150 ms, a setting), then run the smoothed VAD with Handy's constants as the starting point, then classify empty results as "nothing heard" or "mic is silent" in the pill. These numbers are tuned in the spike. **[call]**
+
+### 18.5 Short clips are padded to 1.25 s
+What Handy does: any clip under one second is zero-padded to 1.25 s before decoding, because Whisper is unreliable on sub-second input. How it lands: adopted verbatim in the engine layer. **[call]**
+
+### 18.6 Decode while the user is still speaking — moves long-form chunked decode into v1 and relaxes the §4.3 clip cap
+What Handy does: Whisper's accuracy degrades past 30–40 s in one run, so long recordings are cut at pauses using Silero's per-frame probabilities (threshold 0.5, release at 0.35, minimum speech 250 ms, minimum silence 100 ms, 30 ms speech padding). Chunks are 5–40 s, preferring a long pause near 30 s. A cut is final once 5 s of audio past it is scored, so each chunk is decoded while the person is still talking; when they stop, only the last chunk remains. A clip of 40 s or less is never cut, and if the VAD fails the rest is one chunk, so chunking can only speed things up.
+
+Why it is the biggest latency win in Handy: for a two-minute dictation the wait after key-up is the decode time of the last chunk, not of two minutes.
+
+How it lands: chunked decode is part of v1's transcribe path, not a v1.x feature. The 5-minute cap from §4.3 stays as a sanity limit but is no longer a latency measure; the long-form document view in §13 v1.x remains a UI item. Chunking state lives in the `audio`/`vad` modules; the engine sees ordinary runs. **[call]**
+
+### 18.7 Fix the language before decoding
+What Handy does: Whisper's own language detection costs an extra decoder pass and flips on short clips. Handy keeps a list of the user's spoken languages; when more than one is set, a dedicated 107-language identifier (VoxLingua ECAPA-TDNN, via transcribe.cpp) runs on the first 5 s of VAD'd speech restricted to that list, and Whisper is then run with the language fixed. With one spoken language, no detection runs at all. Detection never blocks a transcription: if it fails, the model decides.
+
+How it lands: the §4.5 "language (auto or pinned)" setting becomes "spoken languages" (multi-select, default one language from the OS locale). One language means fixed decode; several means the identifier picks per clip; the history row records which language and how it was chosen. **[call]**
+
+### 18.8 Custom vocabulary with a fuzzy safety net
+What Handy does: custom words go to the model as vocabulary or initial prompt when the model supports it. When they could not be prompted, a fuzzy post-correction pass (Levenshtein plus Soundex plus n-gram joining, threshold 0.18, case pattern preserved, punctuation kept) fixes near-misses such as "Charge B" to "ChargeBee". The fuzzy pass is skipped exactly when the words were prompted, so corrections never double-apply.
+
+How it lands: the §4.5 personal dictionary feeds Whisper's initial prompt (§4.3 step 4) and the fuzzy pass runs only when the engine reports the prompt was not applied. Thresholds exposed in Settings as "strictness". **[call]**
+
+### 18.9 Text normalisation without an LLM
+What Handy does: collapse stutters (three or more repeats of a word to one), remove filler words with language gating (universal fillers always; "um", "ah", "eh" only with evidence the output is English, since "um" is a word in Portuguese and German), restore the capital a removed sentence-opening filler owed to the next word, collapse spaces. This runs on every transcript, LLM or not.
+
+How it lands: a `text` module runs these before history save and before the LLM (shorter prompt, fewer tokens). Raw mode gets them for free; a toggle turns filler removal off. **[call]**
+
+Own tuning to test in the spike, not from Handy: greedy decoding versus beam size 5 (whisper.cpp's CLI default) for the "fast" tier, flash attention on Metal, and reduced `audio_ctx` for clips under 10 s. These need whisper-rs (§18.2) and are measured, not assumed. **[call]**
+
+### 18.10 Hotkey state machine
+What Handy does: one pure state machine drives all activation modes. Hold-or-toggle uses a 300 ms threshold: a release before it is a tap that locks recording on, a release after it is push-to-talk. Key-up is deferred by a short grace so a synthesized auto-repeat press cannot end a hold. A press that arrives while the previous dictation is still processing is remembered and starts recording when the pipeline drains, so toggle parity never desyncs. The "Recording" state is entered optimistically and rolled back if the mic fails to open.
+
+How it lands: §4.2 gains hold-or-toggle as a third activation mode on the same key, the 300 ms threshold as a setting, busy-press memory, and the optimistic-start rollback. The machine is pure and unit-tested with a fake clock, as in Handy. **[call]**
+
+### 18.11 Receipt-sequenced clipboard restore — supersedes §4.3 step 6's fixed 150 ms delay
+What Handy does: restoring the clipboard after a fixed delay races the target app's event loop and can paste the old clipboard back. Handy publishes the transcript as a lazy clipboard promise (macOS `declareTypes:owner:`, Windows delayed rendering) and restores only after the OS reports a real read that happened after the paste chord, after a short quiet period (apps like Chromium read twice), guarded by the pasteboard change count so a newer user copy is never clobbered, and bounded by a timeout whose failure mode is "transcript stays on the clipboard a bit longer", never stale content pasted. Concealment marker types tell clipboard managers to skip the transcript.
+
+How it lands: this is the default paste path on macOS and Windows. The disk-backed clipboard backup from §10 stays for the crash case. Typing fallback unchanged. **[call]**
+
+### 18.12 macOS secure input detection
+What Handy does: when any process enables Secure Event Input (password fields, Terminal's Secure Keyboard Entry, a stuck loginwindow), event-tap based keyed hotkeys stop firing while modifier-only ones still work. Handy polls the state, shadow-registers vulnerable bindings through the Carbon path while it lasts, and keeps the cancel key alive.
+
+How it lands: same detection, a one-line warning in the pill ("secure input on in <app>, hotkey may not fire"), and the Carbon fallback for keyed bindings. The default Right-Option hold is modifier-only and unaffected. **[call]**
+
+### 18.13 First-launch GPU preparation
+What Handy does: on macOS, opening the GPU compiles ggml's Metal shader library when the system cache does not have it (about 15 s after an install or update), so device listing and engine init run on a background thread, never on the startup path. On Windows, an x64 build running under ARM emulation is detected and sent to CPU.
+
+How it lands: first-run flow shows "Preparing GPU" with a spinner while the worker initialises in the background; the pill is usable (recording works, decode waits) from the first second. **[call]**
+
+### 18.14 Per-dictation timing
+What Handy does: records `wait_seconds` per dictation and logs stage timings (stop, VAD, transcribe, post-process, paste). How it lands: each history row stores a timing breakdown (capture, VAD, decode, polish, paste) which feeds the benchmark view and the stats pick. **[call]**
+
+### Not adopted
+glibc `malloc_trim` tuning (Linux only). Parakeet, Moonshine and the other families: out of scope for v1 but reachable later through transcribe-cpp without an engine change.
+
+### Changes this section makes to earlier sections
+- §5: engine runs in a child worker (`WorkerEngine`), default library decided by the spike between transcribe-cpp and whisper-rs.
+- §4.3: post-release buffer, smoothed VAD with "nothing heard" vs "mic silent", 1.25 s padding, chunked decode while speaking, language fixed before decode, text normalisation before history and LLM, receipt-sequenced clipboard restore.
+- §4.2: hold-or-toggle mode, 300 ms threshold, busy-press memory.
+- §4.5: "spoken languages" multi-select; mic warm policy; post-release buffer; dictionary strictness.
+- §10: worker death on pipe EOF, crash report with native stderr, GPU-suspect flag and Retry GPU, supervisor deadlines replace the flat watchdog.
+- §13: chunked decode and text normalisation move into v1 step 3; spike compares two engine libraries.
+- §16 table: Handy's lifecycle column is stronger than first written; corrected in `docs/harness-vs-handy.html`.
 - Exact Mac model and memory (changes the default polish model on the Mac and whether LAN polish should be the default there).
 - Whether the Mac should default to using the PC's Whisper over LAN when both are on, or always transcribe locally and only send polish to the PC. Current design: local Whisper on each machine, polish wherever the priority list says. **[call]**

@@ -1,0 +1,244 @@
+<title>Harness vs Handy</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: reading column for the summary, full-width bench for the two-column feature table. Same tokens as the brainstorm page. */
+:root{
+  --bg:#f6f8f8; --surface:#ffffff; --surface-2:#eef2f2; --fg:#15201f; --muted:#5b6b69; --line:#d6dedd;
+  --accent:#0f766e; --accent-soft:#d9f0ec; --accent-fg:#0a4f4a;
+  --warn:#b7791f; --warn-soft:#fbeedb; --ok:#2f855a; --ok-soft:#dff3e6; --no:#b42329; --no-soft:#fde3e4;
+  --adopt:#5b4fb8; --adopt-soft:#e6e2f7;
+  --display:"Sora",ui-sans-serif,system-ui,sans-serif;
+  --body:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0f1514; --surface:#161e1d; --surface-2:#1e2827; --fg:#e8eeed; --muted:#9aaba8; --line:#2b3736;
+  --accent:#3fbfb2; --accent-soft:#143732; --accent-fg:#a8e8df;
+  --warn:#e0a84a; --warn-soft:#3a2d16; --ok:#5fc48a; --ok-soft:#16382a; --no:#ff8a8e; --no-soft:#3a1d1f;
+  --adopt:#b3a6f0; --adopt-soft:#262043; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#0f1514; --surface:#161e1d; --surface-2:#1e2827; --fg:#e8eeed; --muted:#9aaba8; --line:#2b3736;
+  --accent:#3fbfb2; --accent-soft:#143732; --accent-fg:#a8e8df;
+  --warn:#e0a84a; --warn-soft:#3a2d16; --ok:#5fc48a; --ok-soft:#16382a; --no:#ff8a8e; --no-soft:#3a1d1f;
+  --adopt:#b3a6f0; --adopt-soft:#262043; color-scheme:dark }
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:16px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 80px}
+.wrap{max-width:68ch;margin:0 auto}
+.bench{max-width:1100px;margin:0 auto}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;line-height:1.15;margin:0}
+h1{font-size:clamp(2rem,5vw,3rem);font-weight:700;letter-spacing:-.02em}
+h2{font-size:1.5rem;font-weight:600;margin-top:3.5rem;margin-bottom:.75rem;padding-top:1.5rem;border-top:1px solid var(--line)}
+h3{font-size:1.05rem;font-weight:600;margin-top:1.5rem;margin-bottom:.5rem}
+p{margin:.6rem 0}
+a{color:var(--accent-fg)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.lede{font-size:1.15rem;color:var(--muted);max-width:60ch}
+header{padding-top:3rem;padding-bottom:1rem}
+code{font-family:var(--mono);font-size:.88em;background:var(--surface-2);padding:.08em .35em;border-radius:3px}
+ul{padding-left:1.3rem}
+li{margin:.3rem 0}
+.note{border-left:3px solid var(--accent);padding:.5rem .9rem;background:var(--surface);margin:1rem 0;border-radius:0 6px 6px 0}
+
+/* Summary tiles */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.7rem;margin:1.2rem 0}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:.8rem .9rem;min-width:0;border-top:3px solid var(--line)}
+.tile.same{border-top-color:var(--ok)}.tile.adopt{border-top-color:var(--adopt)}.tile.adds{border-top-color:var(--accent)}.tile.only{border-top-color:var(--muted)}
+.tile .k{font-family:var(--mono);font-size:.68rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.tile .v{font-family:var(--display);font-weight:600;font-size:1.05rem;margin:.2rem 0}
+.tile .n{font-family:var(--mono);font-size:1.6rem;font-weight:500;line-height:1;margin:.3rem 0 .4rem;font-variant-numeric:tabular-nums}
+.tile p{font-size:.88rem;color:var(--muted);margin:.2rem 0 0}
+
+/* Table */
+.tbl{overflow-x:auto;margin:1rem 0}
+table{border-collapse:collapse;width:100%;font-size:.9rem}
+th,td{text-align:left;padding:.6rem .7rem;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500;position:sticky;top:env(safe-area-inset-top,0px);background:var(--bg);z-index:1}
+td:first-child{font-weight:500;width:20%}
+td.c{width:40%}
+tr.group td{background:var(--surface-2);font-family:var(--display);font-weight:600;font-size:.9rem;padding-top:.8rem}
+.chip{display:inline-block;font-family:var(--mono);font-size:.68rem;letter-spacing:.04em;padding:.1rem .45rem;border-radius:4px;margin-right:.4rem;vertical-align:1px;white-space:nowrap}
+.chip.has{background:var(--ok-soft);color:var(--ok)}
+.chip.part{background:var(--warn-soft);color:var(--warn)}
+.chip.none{background:var(--no-soft);color:var(--no)}
+.chip.same{background:var(--ok-soft);color:var(--ok)}
+.chip.adopt{background:var(--adopt-soft);color:var(--adopt)}
+.chip.adds{background:var(--accent-soft);color:var(--accent-fg)}
+.chip.skip{background:var(--surface-2);color:var(--muted)}
+.chip.ph{background:transparent;border:1px solid var(--line);color:var(--muted)}
+tr[data-k="adds"] td{box-shadow:inset 3px 0 0 var(--accent)}
+tr[data-k="adopt"] td{box-shadow:inset 3px 0 0 var(--adopt)}
+.filters{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center;margin:.5rem 0 0;font-size:.85rem;color:var(--muted)}
+.filters button{font:inherit;font-size:.82rem;padding:.3rem .7rem;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:6px;cursor:pointer}
+.filters button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+.filters button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.legend{display:flex;flex-wrap:wrap;gap:.5rem 1rem;margin:.6rem 0 0;font-size:.82rem;color:var(--muted)}
+
+/* Two-column "what each does" */
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem;margin:1rem 0}
+.col{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:1rem 1.1rem;min-width:0}
+.col h3{margin-top:0}
+.col ul{margin:.5rem 0 0;padding-left:1.1rem}
+.col li{font-size:.92rem}
+footer{margin-top:4rem;padding-top:1rem;border-top:1px solid var(--line);font-size:.85rem;color:var(--muted)}
+</style>
+
+<header class="wrap">
+  <div class="eyebrow">Comparison · 28 Oct 2026 · Handy v0.9.8 read from source · Harness from the design doc §1–18</div>
+  <h1 style="margin-top:.4rem">Harness vs Handy</h1>
+  <p class="lede">What Handy has today, and what the Whisper Harness is going to do. Where the Harness does the same thing it is because Handy's way is right, and in fourteen places it is Handy's way we are taking.</p>
+</header>
+
+<section class="wrap">
+  <h2>In one screen</h2>
+  <div class="tiles">
+    <div class="tile same"><span class="k">Same</span><div class="n">13</div><div class="v">Features both have</div><p>The core loop: hotkey, local Whisper on GPU, paste into any app, history, LLM cleanup, custom words, idle unload, keep audio, translate, tray.</p></div>
+    <div class="tile adopt"><span class="k">Adopted from Handy</span><div class="n">14</div><div class="v">Techniques we take</div><p>Engine in a worker process, chunked decode while speaking, warm mic, VAD timing, language fixed before decode, receipt-sequenced paste, and more.</p></div>
+    <div class="tile adds"><span class="k">Harness adds</span><div class="n">11</div><div class="v">Things Handy lacks</div><p>GPU memory view with recommendations, local-first with LAN failover, engine sharing, editable history with re-polish, undo paste, draggable pill, LLM warm-up, free-form idle timer.</p></div>
+    <div class="tile only"><span class="k">Handy only</span><div class="n">6</div><div class="v">Not planned</div><p>Other model families, streaming models, internet LLM providers, always-on mic extras, auto-update, UI translations. Reachable later, not v1.</p></div>
+  </div>
+</section>
+
+<section class="wrap">
+  <h2>What each one does</h2>
+  <div class="cols">
+    <div class="col">
+      <h3>Handy today</h3>
+      <ul>
+        <li>Press a shortcut, speak, release; text is pasted into the front app.</li>
+        <li>Whisper Turbo and Large-v3, plus Parakeet, Moonshine, Canary and custom GGML models, through its own ggml library transcribe.cpp.</li>
+        <li>Metal on Apple Silicon, Vulkan on Windows and Linux, CPU fallback with runtime variant selection.</li>
+        <li>Engine in a child worker process with crash and hang recovery.</li>
+        <li>Long recordings decoded in chunks while you speak; live text for streaming models.</li>
+        <li>History with audio replay, favourite, delete, retry; retention and limit settings.</li>
+        <li>LLM post-processing with OpenAI, Anthropic, Groq, OpenRouter, Ollama and custom endpoints; multiple prompts.</li>
+        <li>Custom words, filler removal, translate, language detection, idle unload presets, tray, CLI and Raycast control.</li>
+        <li>MIT code, ~35k stars, active releases. Name and logo are not open.</li>
+      </ul>
+    </div>
+    <div class="col">
+      <h3>Harness, as designed</h3>
+      <ul>
+        <li>Same core loop, same engine architecture, same decode and paste techniques where Handy's are best.</li>
+        <li>Three Whisper tiers switchable from the history panel: large-v3-turbo, large-v3, distil-large-v3. One resident at a time.</li>
+        <li>A GPU memory strip: total, used by others, cost of the selected model and LLM, Recommended and Best-that-fits, projected usage before loading, per-model benchmark.</li>
+        <li>Local first, LAN second: ordered LLM endpoints with health checks, automatic failover and fail-back, discovery later, and sharing the Whisper engine so the Mac can use the PC's RX 9070.</li>
+        <li>History as a workbench: edit in place, re-polish with another mode, paste again, search, export.</li>
+        <li>Undo last paste. Draggable pill with states. LLM warm-up fired on hotkey down. Idle unload in any number of minutes.</li>
+        <li>Written exit and crash contract on top of the worker-process design: lock-file crash detection, disk-backed clipboard backup, one unload path.</li>
+        <li>Mac first, then Windows on the RX 9070. Personal use first, then open source under its own name.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="bench">
+  <h2 style="max-width:68ch;margin-left:auto;margin-right:auto">Feature by feature</h2>
+  <div class="wrap">
+    <div class="legend"><span>Handy column:</span><span><span class="chip has">has</span>shipped</span><span><span class="chip part">partial</span>narrower</span><span><span class="chip none">none</span>not in source</span></div>
+    <div class="legend"><span>Harness column:</span><span><span class="chip same">same</span>equivalent</span><span><span class="chip adopt">adopted</span>Handy's technique, taken</span><span><span class="chip adds">adds</span>new in Harness</span><span><span class="chip skip">not planned</span></span><span><span class="chip ph">v1</span> <span class="chip ph">v1.x</span> <span class="chip ph">v2</span> phase</span></div>
+    <div class="filters" role="group" aria-label="Filter rows"><span>Show:</span><button aria-pressed="true" data-f="all">Everything</button><button aria-pressed="false" data-f="adds">Harness adds</button><button aria-pressed="false" data-f="adopt">Adopted from Handy</button><button aria-pressed="false" data-f="same">Same</button><button aria-pressed="false" data-f="skip">Handy only</button></div>
+  </div>
+  <div class="tbl"><table id="cmp">
+    <thead><tr><th>Area</th><th>Handy has</th><th>Harness will do</th></tr></thead>
+    <tbody>
+      <tr class="group"><td colspan="3">Engine and models</td></tr>
+      <tr data-k="adopt"><td>Engine architecture</td><td class="c"><span class="chip has">has</span>Native code runs only in a child worker process over pipes. One owner thread, one worker slot. Cancel kills and respawns. A crash or hang is recovered: native stderr kept for a report, GPU marked suspect, reload on CPU, "retry GPU" later. Worker exits the instant the parent's pipe closes.</td><td class="c"><span class="chip adopt">adopted</span><span class="chip ph">v1</span>Same design behind an engine trait. Supervisor deadlines scale with clip length.</td></tr>
+      <tr data-k="adopt"><td>Engine library</td><td class="c"><span class="chip has">has</span>transcribe.cpp (ggml, MIT) through the <code>transcribe-cpp</code> crate: Whisper and other families, Silero VAD and a language-ID model as GGUF, Metal/Vulkan/CUDA/ROCm feature flags, dynamic CPU backends on Windows x64.</td><td class="c"><span class="chip adopt">adopted</span><span class="chip ph">spike</span>Measured against whisper-rs on the Mac; transcribe-cpp is the default if within 15%. whisper-rs stays as a second engine for greedy-vs-beam, flash attention and audio-context experiments.</td></tr>
+      <tr data-k="same"><td>Whisper models</td><td class="c"><span class="chip has">has</span>Turbo (large-v3-turbo f16), Large (large-v3 Q5_0), Medium, Small, plus custom GGML files.</td><td class="c"><span class="chip same">same</span><span class="chip ph">v1</span>large-v3-turbo Q5_0 default, large-v3 Q5_0, distil-large-v3. Q8_0 offered on 12 GB+ cards.</td></tr>
+      <tr data-k="adds"><td>Model switching</td><td class="c"><span class="chip part">partial</span>Dropdown in Settings and tray.</td><td class="c"><span class="chip adds">adds</span><span class="chip ph">v1</span>Dropdown in the history panel next to search; each row records the model that produced it.</td></tr>
+      <tr data-k="same"><td>GPU acceleration</td><td class="c"><span class="chip has">has</span>Auto/CPU/GPU with device picker. Metal, Vulkan, CPU variants.</td><td class="c"><span class="chip same">same</span><span class="chip ph">v1</span>Metal on macOS, Vulkan on Windows, ROCm benchmarked on the RX 9070.</td></tr>
+      <tr data-k="same"><td>Model downloads</td><td class="c"><span class="chip has">has</span>Own mirror with Hugging Face fallback, resume, cancel.</td><td class="c"><span class="chip same">same</span><span class="chip ph">v1</span>Hugging Face with progress and resume.</td></tr>
+      <tr data-k="adds"><td>Per-model benchmark</td><td class="c"><span class="chip none">none</span></td><td class="c"><span class="chip adds">adds</span><span class="chip ph">v1</span>Fixed 30 s sample; records load time, speed and memory footprint per model on this machine.</td></tr>
+      <tr data-k="skip"><td>Other model families</td><td class="c"><span class="chip has">has</span>Parakeet, Moonshine, Canary, SenseVoice, GigaAM, Cohere, Breeze, Medical.</td><td class="c"><span class="chip skip">not planned</span>Whisper only in v1. Reachable later through the same library without an engine change.</td></tr>
+
+      <tr class="group"><td colspan="3">GPU memory</td></tr>
+      <tr data-k="adds"><td>Memory view</td><td class="c"><span class="chip none">none</span>No VRAM total or usage display.</td><td class="c"><span class="chip adds">adds</span><span class="chip ph">v1</span>Strip in the panel: total, used by other apps, selected Whisper model, polish LLM, free. Refreshes every 5 s while open.</td></tr>
+      <tr data-k="adds"><td>Recommended and best model</td><td class="c"><span class="chip none">none</span></td><td class="c"><span class="chip adds">adds</span><span class="chip ph">v1</span>Recommended is the fastest model under 80% of memory with the current LLM; Best accuracy that fits steps down from large-v3. Projected usage shown before loading.</td></tr>
+      <tr data-k="adds"><td>Idle unload</td><td class="c"><span class="chip has">has</span>Presets: Never, Immediately, 2, 5, 10, 15 min, 1 h.</td><td class="c"><span class="chip adds">adds</span><span class="chip ph">v1</span>Any value 1–240 min or Never, changeable from tray or Settings, countdown in tray. Also unloads the local LLM.</td></tr>
+      <tr data-k="adds"><td>Keeping the LLM warm</td><td class="c"><span class="chip none">none</span>Relies on the LLM runtime's own idle behaviour.</td><td class="c"><span class="chip adds">adds</span><span class="chip ph">v1</span>Warm-up request fired on hotkey down so a cold LLM loads while you speak; keep-alive to Ollama; explicit unload on the idle timer.</td></tr>
+      <tr data-k="adopt"><td>First-launch GPU preparation</td><td class="c"><span class="chip has">has</span>Device listing and engine init on a background thread, because the first Metal shader compile after an install can take ~15 s.</td><td class="c"><span class="chip adopt">adopted</span><span class="chip ph">v1</span>"Preparing GPU" state in first run and pill; recording works from the first second.</td></tr>
+
+      <tr class="group"><td colspan="3">Capture and decode</td></tr>
+      <tr data-k="adopt"><td>Warm microphone</td><td class="c"><span class="chip has">has</span>Always-on mic, or lazy stream close after a dictation, so key-down never waits on a stream opening. Post-release capture buffer setting.</td><td class="c"><span class="chip adopt">adopted</span><span class="chip ph">v1</span>Lazy close after 60 s by default, always-on as a setting, 150 ms post-release buffer as a setting.</td></tr>
+      <tr data-k="adopt"><td>Silence trimming (VAD)</td><td class="c"><span class="chip has">has</span>Silero v6.2 as GGUF, smoothed: 450 ms pre-roll, 60 ms onset, 450 ms hangover. "Nothing heard" vs "microphone silent". Clips under 1 s padded to 1.25 s.</td><td class="c"><span class="chip adopt">adopted</span><span class="chip ph">v1</span>Same constants as the starting point, both empty-input states in the pill, same padding.</td></tr>
+      <tr data-k="adopt"><td>Chunked decode while speaking</td><td class="c"><span class="chip has">has</span>Long audio cut at pauses into 5–40 s chunks (aiming at 30 s) from Silero probabilities; each chunk decoded as soon as its cut is certain. At stop only the last chunk remains. Clips of 40 s or less never cut.</td><td class="c"><span class="chip adopt">adopted</span><span class="chip ph">v1</span>In the core transcribe path. Biggest latency win for anything over 40 s, and more accurate per run.</td></tr>
+      <tr data-k="adopt"><td>Language before decode</td><td class="c"><span class="chip has">has</span>List of spoken languages. One language: Whisper runs with it fixed. Several: a 107-language identifier runs on the first 5 s of speech, restricted to the list, then Whisper runs with the answer.</td><td class="c"><span class="chip adopt">adopted</span><span class="chip ph">v1</span>"Spoken languages" multi-select setting; history records the language and how it was chosen.</td></tr>
+      <tr data-k="same"><td>Translate to English</td><td class="c"><span class="chip has">has</span>Toggle.</td><td class="c"><span class="chip same">same</span><span class="chip ph">v1</span>Translate mode.</td></tr>
+      <tr data-k="skip"><td>Live text for streaming models</td><td class="c"><span class="chip has">has</span>Moonshine streaming and Parakeet show live text in the overlay. Whisper is not a streaming model.</td><td class="c"><span class="chip skip">not planned</span><span class="chip ph">v2</span>Whisper live preview would need a streaming-capable model; revisit in v2.</td></tr>
+
+      <tr class="group"><td colspan="3">Text after decode</td></tr>
+      <tr data-k="adopt"><td>Custom words</td><td class="c"><span class="chip has">has</span>Sent to the model as vocabulary when supported; otherwise a fuzzy pass (Levenshtein + Soundex + n-gram, threshold 0.18) fixes near-misses. Never both.</td><td class="c"><span class="chip adopt">adopted</span><span class="chip ph">v1</span>Dictionary to the initial prompt first; fuzzy safety net only when the prompt was not applied.</td></tr>
+      <tr data-k="adopt"><td>Rule-based clean-up</td><td class="c"><span class="chip has">has</span>Stutter collapse, language-gated filler removal, capital restored after a removed opening filler.</td><td class="c"><span class="chip adopt">adopted</span><span class="chip ph">v1</span>Runs before history save and before the LLM, so Raw mode gets it and the LLM prompt is shorter.</td></tr>
+      <tr data-k="same"><td>LLM cleanup</td><td class="c"><span class="chip has">has</span>Toggle, multiple prompts, per-provider model pick, structured output, retry without reasoning fields.</td><td class="c"><span class="chip same">same</span><span class="chip ph">v1</span>Modes: Raw, Clean, Email, Bullets, Code, Translate, Ask. Editable prompts with reset.</td></tr>
+      <tr data-k="skip"><td>Internet LLM providers</td><td class="c"><span class="chip has">has</span>OpenAI, Anthropic, Groq, OpenRouter, Z.AI, Cerebras, Bedrock, Apple Intelligence.</td><td class="c"><span class="chip skip">not planned</span>OpenAI-compatible endpoints on this machine or the LAN only. The connector could take an internet provider later.</td></tr>
+      <tr data-k="adds"><td>Local first, LAN second</td><td class="c"><span class="chip part">partial</span>One active provider at a time; a LAN box works if its URL is typed into Custom. Nothing happens when it goes away.</td><td class="c"><span class="chip adds">adds</span><span class="chip ph">v1</span>Ordered endpoints, health checks every 10 s, automatic failover and fail-back, "PC unreachable, polished locally" in the pill, raw fallback if nothing is up.</td></tr>
+      <tr data-k="adds"><td>Discovery</td><td class="c"><span class="chip none">none</span></td><td class="c"><span class="chip adds">adds</span><span class="chip ph">v1.x</span>mDNS browse for other harnesses; manual IP:port always works.</td></tr>
+
+      <tr class="group"><td colspan="3">Multi-machine</td></tr>
+      <tr data-k="adds"><td>Share the engine on the LAN</td><td class="c"><span class="chip none">none</span></td><td class="c"><span class="chip adds">adds</span><span class="chip ph">v1.x</span>"Share Whisper on this network" serves an OpenAI-shaped transcription endpoint so the Mac can use the PC's RX 9070.</td></tr>
+      <tr data-k="adds"><td>Remote Whisper client</td><td class="c"><span class="chip none">none</span></td><td class="c"><span class="chip adds">adds</span><span class="chip ph">v1.x</span>Second engine implementation behind the same trait.</td></tr>
+
+      <tr class="group"><td colspan="3">Hotkeys and paste</td></tr>
+      <tr data-k="adopt"><td>Activation modes</td><td class="c"><span class="chip has">has</span>Hold, toggle, hold-or-toggle on one key (300 ms threshold), release grace against auto-repeat, busy presses remembered, optimistic start rolled back if the mic fails. Pure, unit-tested state machine.</td><td class="c"><span class="chip adopt">adopted</span><span class="chip ph">v1</span>Same three modes and the same machine, plus clipboard-only and undo bindings. Single-modifier holds via a low-level hook.</td></tr>
+      <tr data-k="adopt"><td>Clipboard restore</td><td class="c"><span class="chip has">has</span>"Reliable paste": the transcript is a clipboard promise; the old clipboard is restored only after the target app actually reads it, after a quiet period, guarded by the change count, bounded by a timeout.</td><td class="c"><span class="chip adopt">adopted</span><span class="chip ph">v1</span>Default paste path on macOS and Windows. Disk-backed clipboard backup kept for the crash case. Typing fallback per app.</td></tr>
+      <tr data-k="adopt"><td>Secure input (macOS)</td><td class="c"><span class="chip has">has</span>Detects Secure Event Input, which silently kills event-tap hotkeys, and falls back to Carbon-registered shortcuts.</td><td class="c"><span class="chip adopt">adopted</span><span class="chip ph">v1</span>Detection, a pill warning, the same fallback.</td></tr>
+      <tr data-k="adds"><td>Undo last paste</td><td class="c"><span class="chip none">none</span></td><td class="c"><span class="chip adds">adds</span><span class="chip ph">v1</span>One hotkey sends undo to the same app if it is still in front, otherwise offers "copy again".</td></tr>
+      <tr data-k="skip"><td>Auto-submit, trailing space, mute while recording, audio cues</td><td class="c"><span class="chip has">has</span>All four, plus output device selection and sound themes.</td><td class="c"><span class="chip skip">not planned</span>Small; easy to add if missed.</td></tr>
+
+      <tr class="group"><td colspan="3">Floating UI and tray</td></tr>
+      <tr data-k="adds"><td>Overlay</td><td class="c"><span class="chip part">partial</span>Recording overlay with preset positions and styles; can be set to None.</td><td class="c"><span class="chip adds">adds</span><span class="chip ph">v1</span>Draggable pill that remembers its spot per display, with idle, listening, transcribing, polishing, pasted, loading and error states. Click opens the panel.</td></tr>
+      <tr data-k="same"><td>Tray / menu bar</td><td class="c"><span class="chip has">has</span>Model picker, unload, settings, quit; CLI flags and Raycast extension.</td><td class="c"><span class="chip same">same</span><span class="chip ph">v1</span>Pause and unload, mode and model pickers, unload countdown. No CLI in v1.</td></tr>
+
+      <tr class="group"><td colspan="3">History</td></tr>
+      <tr data-k="same"><td>History list</td><td class="c"><span class="chip has">has</span>Entries with audio replay, favourite, delete, retry transcription, history limit, retention period.</td><td class="c"><span class="chip same">same</span><span class="chip ph">v1</span>Raw and polished text, app, mode, model, duration, timing breakdown; search, filter, pin, export.</td></tr>
+      <tr data-k="adds"><td>Edit, re-polish, paste again</td><td class="c"><span class="chip part">partial</span>Retry transcription of the saved audio. No text edit, no re-run of the LLM, no paste-again.</td><td class="c"><span class="chip adds">adds</span><span class="chip ph">v1</span>Inline edit, re-polish with another mode, paste again into the front app, Markdown and JSON export.</td></tr>
+      <tr data-k="same"><td>Keep audio clips</td><td class="c"><span class="chip has">has</span>Retention period setting, replay in history.</td><td class="c"><span class="chip same">same</span><span class="chip ph">v1</span>Off by default, toggle to keep, replay next to transcript.</td></tr>
+
+      <tr class="group"><td colspan="3">Lifecycle and project</td></tr>
+      <tr data-k="adds"><td>Exit and crash contract</td><td class="c"><span class="chip part">partial</span>Worker process recovery is strong (above). No lock-file crash detector or clipboard backup across a crash.</td><td class="c"><span class="chip adds">adds</span><span class="chip ph">v1</span>Written paths for quit, OS shutdown, force close and crash; lock file as heartbeat and single-instance guard; disk-backed clipboard backup; one unload path shared by quit, idle timer and Pause.</td></tr>
+      <tr data-k="same"><td>Single instance</td><td class="c"><span class="chip has">has</span>Plugin forwards CLI args to the running app.</td><td class="c"><span class="chip same">same</span><span class="chip ph">v1</span>Lock file.</td></tr>
+      <tr data-k="skip"><td>Auto-update, UI translations</td><td class="c"><span class="chip has">has</span>Update checks, what's-new, many UI languages.</td><td class="c"><span class="chip skip">not planned</span>Considered at the open-source release.</td></tr>
+      <tr data-k="same"><td>Licence and name</td><td class="c"><span class="chip has">has</span>MIT code; name, logo and brand not open.</td><td class="c"><span class="chip same">same</span><span class="chip ph">v1</span>MIT proposed, own name and icon from the start.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section class="wrap">
+  <h2>Why the adopted pieces make transcription faster</h2>
+  <p>Handy sets no special Whisper decode parameters. Its run options carry only the task, the language and the custom vocabulary. The speed is in the pipeline around the model, and that is what transfers:</p>
+  <ul>
+    <li><b>Work happens before the key comes up.</b> Chunks decode while you are still talking; the mic stream is already open; the language is already known; the GPU was prepared at launch.</li>
+    <li><b>Whisper sees only speech.</b> Pre-roll and hangover keep word edges, true silence is dropped, sub-second clips are padded, and empty input never reaches the model.</li>
+    <li><b>Output is cleaned without a round trip.</b> Stutters, fillers and vocabulary misses are fixed by rules in microseconds; the LLM gets a shorter prompt or is skipped entirely in Raw mode.</li>
+    <li><b>Nothing waits on a dead engine.</b> A hung or crashed worker is replaced in the background; the pill reports it and the next hotkey press works.</li>
+  </ul>
+  <div class="note">Our own tuning to measure in the spike, not from Handy: greedy decoding against beam size 5 for the fast tier, flash attention on Metal, and a reduced audio context for clips under 10 s. These need direct whisper.cpp access, which is why whisper-rs stays as the second engine.</div>
+</section>
+
+<section class="wrap">
+  <h2>Direction</h2>
+  <p>Own codebase, built to the design, taking Handy's MIT-licensed techniques with attribution wherever they are the right answer. Handy stays open in a second window as the reference implementation. Forking Handy or contributing upstream remain possible; the GPU-memory logic will be written as a standalone crate so it can be offered to Handy as a pull request either way.</p>
+  <p>Full detail of each adopted technique, and which earlier design decision it changes, is §18 of <code>docs/superpowers/specs/2026-10-28-whisper-harness-design.md</code>.</p>
+</section>
+
+<footer class="wrap">Handy facts come from the public repository at <a href="https://github.com/cjpais/Handy">github.com/cjpais/Handy</a>, read on 28 Oct 2026 at v0.9.8, and the <code>transcribe-cpp</code> 0.4.1 crate docs. If Handy adds something listed as "none", this page is out of date.</footer>
+
+<script>
+(function(){
+  var rows=document.querySelectorAll('#cmp tbody tr'),btns=document.querySelectorAll('.filters button');
+  function apply(f){
+    btns.forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.f===f));});
+    rows.forEach(function(r){if(!r.classList.contains('group'))r.hidden=!(f==='all'||r.dataset.k===f);});
+    var g=null,any=false;
+    rows.forEach(function(r){
+      if(r.classList.contains('group')){if(g)g.hidden=!any;g=r;any=false;}
+      else if(!r.hidden)any=true;
+    });
+    if(g)g.hidden=!any;
+  }
+  document.querySelector('.filters').addEventListener('click',function(e){var b=e.target.closest('button');if(b)apply(b.dataset.f);});
+})();
+</script>
