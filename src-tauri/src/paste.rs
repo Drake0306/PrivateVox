@@ -60,7 +60,8 @@ impl KeySender for EnigoSender {
         #[cfg(target_os = "macos")]
         {
             self.enigo.key(Key::Meta, Direction::Press).map_err(|e| anyhow::anyhow!("{e:?}"))?;
-            let r = self.enigo.key(Key::Other(6), Direction::Click); // kVK_ANSI_Z
+            // Layout-aware: on QWERTZ the physical Z key is Y, so look the character up instead of using key code 6.
+            let r = self.enigo.key(Key::Unicode('z'), Direction::Click);
             let _ = self.enigo.key(Key::Meta, Direction::Release);
             r.map_err(|e| anyhow::anyhow!("{e:?}"))?;
         }

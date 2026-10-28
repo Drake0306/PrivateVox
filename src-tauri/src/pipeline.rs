@@ -14,6 +14,7 @@ use lvw_engine::protocol::DecodeOptions;
 use lvw_engine::supervisor::{Engine, LoadInfo};
 use serde::Serialize;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -117,11 +118,52 @@ struct Recording {
     started: Instant,
     ticks: u64,
     chunker: Chunker,
+    /// Frames (512 samples) already scored; scoring continues from here with a short overlap.
+    scored_frames: usize,
+    /// One Silero probability per scored frame, used to trim chunks without re-running the VAD.
+    probs: Vec<f32>,
     /// Chunks handed to the decode worker so far.
     chunks_sent: usize,
     /// Decode worker (created on the first chunk) and its results by chunk index.
     worker: Option<(Sender<ChunkJob>, std::thread::JoinHandle<()>)>,
     results: Arc<Mutex<std::collections::BTreeMap<usize, String>>>,
+    /// Set on cancel/pause: the worker stops before its next job and never reloads the model.
+    cancelled: Arc<AtomicBool>,
+}
+
+const FRAME: usize = 512;
+/// About one second: enough for Silero's state to settle before the frames we keep.
+const SCORE_OVERLAP_FRAMES: usize = 31;
+
+/// Crops a chunk to its speech using the probabilities already scored for it (pre-roll/hangover as in
+/// `VadConfig::default`). Returns an empty vector when the chunk has no speech.
+fn trim_with_probs(pcm: &[f32], probs: &[f32], chunk_start: usize) -> Vec<f32> {
+    let first = chunk_start / FRAME;
+    let last = ((chunk_start + pcm.len()) / FRAME).min(probs.len());
+    if first >= last {
+        return pad_min(pcm.to_vec(), 1.25); // unscored tail: decode as is
+    }
+    let segs = lvw_core::chunking::speech_segments(&probs[first..last], FRAME, pcm.len());
+    if segs.is_empty() {
+        return Vec::new();
+    }
+    let cfg = VadConfig::default();
+    let pre = cfg.pre_roll_ms as usize * SAMPLE_RATE as usize / 1000;
+    let post = cfg.hangover_ms as usize * SAMPLE_RATE as usize / 1000;
+    let start = segs.first().unwrap().start.saturating_sub(pre);
+    let end = (segs.last().unwrap().end + post).min(pcm.len());
+    pad_min(pcm[start..end].to_vec(), 1.25)
+}
+
+/// Which frames to score this tick: the new ones plus an overlap, or everything the first time.
+pub fn score_window(scored_frames: usize, available_frames: usize, overlap_frames: usize) -> std::ops::Range<usize> {
+    if available_frames <= scored_frames {
+        return scored_frames..scored_frames;
+    }
+    if scored_frames == 0 {
+        return 0..available_frames;
+    }
+    scored_frames.saturating_sub(overlap_frames)..available_frames
 }
 
 /// Seconds left before the clip cap, shown from 30 s out.
@@ -363,7 +405,7 @@ impl Coordinator {
         self.preload_model();
         match self.deps.capture.start(on_pcm, on_error) {
             Ok(()) => {
-                self.recording = Some(Recording { buffer, level, started: Instant::now(), ticks: 0, chunker: Chunker::new(), chunks_sent: 0, worker: None, results: Arc::new(Mutex::new(Default::default())) });
+                self.recording = Some(Recording { buffer, level, started: Instant::now(), ticks: 0, chunker: Chunker::new(), scored_frames: 0, probs: Vec::new(), chunks_sent: 0, worker: None, results: Arc::new(Mutex::new(Default::default())), cancelled: Arc::new(AtomicBool::new(false)) });
                 self.generation += 1;
                 let _ = self.machine.on(Input::StartResult(true), Instant::now());
                 schedule(tx, Cmd::Tick(self.generation), Duration::from_millis(100));
@@ -405,13 +447,21 @@ impl Coordinator {
 
     /// Switches to `id` if needed, then decodes the benchmark clip once and reports seconds-per-second.
     fn benchmark(&mut self, id: &str) {
-        let active = self.settings().model_id;
-        if active != id {
+        let previous = self.settings().model_id;
+        if previous != id {
             self.switch_model(id);
             if self.settings().model_id != id {
                 return; // the switch reported its own error
             }
         }
+        self.benchmark_loaded(id);
+        if previous != id {
+            self.switch_model(&previous);
+        }
+    }
+
+    /// Benchmarks whatever model is currently selected and loaded.
+    fn benchmark_loaded(&mut self, id: &str) {
         let pcm = match (self.deps.benchmark_clip)() {
             Ok(p) => p,
             Err(e) => {
@@ -496,45 +546,63 @@ impl Coordinator {
         schedule(tx, Cmd::Tick(gen), Duration::from_millis(100));
     }
 
-    /// Every 500 ms while recording: rescore the audio so far and hand any certain chunk to the decode worker.
+    /// Every 500 ms while recording: score only the new audio (plus a short overlap) and hand any certain
+    /// chunk to the decode worker. Work per tick is bounded whatever the clip length.
     fn score_and_cut(&mut self) {
         let Some(rec) = self.recording.as_mut() else { return };
-        let pcm: Vec<f32> = match rec.buffer.lock() {
-            Ok(b) => b.peek().to_vec(),
+        let (available_frames, total) = match rec.buffer.lock() {
+            Ok(b) => (b.peek().len() / FRAME, b.peek().len()),
             Err(_) => return,
         };
-        if pcm.len() < MAX_CHUNK {
+        if total < MAX_CHUNK {
             return; // short clips are decoded in one piece at stop
         }
-        let frames = pcm.len() / 512;
-        let probs = match self.vad.score(&pcm[..frames * 512]) {
+        let window = score_window(rec.scored_frames, available_frames, SCORE_OVERLAP_FRAMES);
+        if window.is_empty() {
+            return;
+        }
+        let slice: Vec<f32> = match rec.buffer.lock() {
+            Ok(b) => b.peek()[window.start * FRAME..window.end * FRAME].to_vec(),
+            Err(_) => return,
+        };
+        let probs = match self.vad.score(&slice) {
             Ok(p) => p,
             Err(e) => {
                 log::warn!("live vad score failed: {e}");
                 return;
             }
         };
-        let ranges = rec.chunker.rescore(probs, 512, frames * 512);
+        let skip = rec.scored_frames - window.start;
+        let new_probs = &probs[skip.min(probs.len())..];
+        rec.probs.extend_from_slice(new_probs);
+        rec.scored_frames = window.end;
+        let ranges = rec.chunker.push(new_probs, FRAME, window.end * FRAME);
+        if ranges.is_empty() {
+            return;
+        }
+        let mut trimmed_chunks = Vec::with_capacity(ranges.len());
         for r in ranges {
-            let slice = pcm[r.clone()].to_vec();
-            self.send_chunk(slice);
+            let slice: Vec<f32> = match rec.buffer.lock() {
+                Ok(b) => b.peek()[r.clone()].to_vec(),
+                Err(_) => return,
+            };
+            trimmed_chunks.push(trim_with_probs(&slice, &rec.probs, r.start));
+        }
+        for chunk in trimmed_chunks {
+            self.send_chunk(chunk);
         }
     }
 
-    /// Queues one chunk on the ordered decode worker (started on first use).
+    /// Queues one already-trimmed chunk on the ordered decode worker (started on first use).
     fn send_chunk(&mut self, pcm: Vec<f32>) {
         let settings = self.settings();
-        let cls = self.vad.classify(&pcm, &VadConfig::default());
-        let pcm = match cls {
-            Ok(ClipClass::Speech(sp)) => pad_min(sp, 1.25),
-            Ok(_) => Vec::new(), // silence: nothing to decode, keeps the index
-            Err(_) => pcm,
-        };
         let Some(rec) = self.recording.as_mut() else { return };
         if rec.worker.is_none() {
             let (jtx, jrx) = std::sync::mpsc::channel::<ChunkJob>();
             let engine = self.deps.engine.clone();
             let results = rec.results.clone();
+            let cancelled = rec.cancelled.clone();
+            let idle = self.deps.idle.clone();
             let language = if settings.spoken_languages.len() == 1 { settings.spoken_languages.first().cloned() } else { None };
             let flash = settings.flash_attention;
             let model_path = self.deps.model_path.clone();
@@ -542,11 +610,18 @@ impl Coordinator {
                 .name("lvw-chunks".into())
                 .spawn(move || {
                     for job in jrx {
+                        if cancelled.load(Ordering::SeqCst) {
+                            break;
+                        }
                         let text = if job.pcm.is_empty() {
                             String::new()
                         } else {
                             let opts = DecodeOptions { language: language.clone(), translate: false, initial_prompt: None, n_threads: 4 };
+                            let cancelled = cancelled.clone();
                             let r = engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| {
+                                if cancelled.load(Ordering::SeqCst) {
+                                    anyhow::bail!("cancelled");
+                                }
                                 if !e.is_loaded() {
                                     if let Some(p) = model_path.as_ref() {
                                         e.load(p, flash)?;
@@ -554,6 +629,9 @@ impl Coordinator {
                                 }
                                 e.transcribe(&job.pcm, &opts)
                             });
+                            if let Ok(mut t) = idle.lock() {
+                                t.touch(Instant::now());
+                            }
                             match r {
                                 Ok(t) => normalize(&t.text),
                                 Err(e) => {
@@ -597,11 +675,17 @@ impl Coordinator {
     }
 
     fn cancel(&mut self) {
-        if self.recording.take().is_some() {
+        if let Some(rec) = self.recording.take() {
+            rec.cancelled.store(true, Ordering::SeqCst);
+            drop(rec); // closes the worker's channel; it exits before its next job
             self.deps.capture.stop();
+            self.generation += 1;
         }
         self.queued = None;
         self.idle();
+        if let Some(id) = self.pending_switch.take() {
+            self.switch_model(&id);
+        }
     }
 
     fn stop(&mut self, tx: &Sender<Cmd>) {
@@ -636,22 +720,29 @@ impl Coordinator {
         self.recording = Some(rec);
         // Make sure everything is scored, then plan the remainder.
         let total = pcm.len();
-        let frames = total / 512;
-        let ranges = match self.vad.score(&pcm[..frames * 512]) {
-            Ok(probs) => {
-                let r = self.recording.as_mut().unwrap();
-                let mut out = r.chunker.rescore(probs, 512, frames * 512);
-                out.extend(r.chunker.finish(total));
-                out
+        let frames = total / FRAME;
+        let scored = self.recording.as_ref().map(|r| r.scored_frames).unwrap_or(0);
+        let window = score_window(scored, frames, SCORE_OVERLAP_FRAMES);
+        let ranges = {
+            let r = self.recording.as_mut().unwrap();
+            if !window.is_empty() {
+                if let Ok(probs) = self.vad.score(&pcm[window.start * FRAME..window.end * FRAME]) {
+                    let skip = scored - window.start;
+                    let new_probs = &probs[skip.min(probs.len())..];
+                    r.probs.extend_from_slice(new_probs);
+                    let _ = r.chunker.push(new_probs, FRAME, window.end * FRAME);
+                    r.scored_frames = window.end;
+                }
             }
-            Err(_) => {
-                let r = self.recording.as_mut().unwrap();
-                r.chunker.finish(total)
-            }
+            let mut out = Vec::new();
+            // Chunks whose cuts became certain only now, then the remainder.
+            out.extend(r.chunker.finish(total));
+            out
         };
+        let probs_snapshot = self.recording.as_ref().map(|r| r.probs.clone()).unwrap_or_default();
         for r in ranges {
-            let slice = pcm[r].to_vec();
-            self.send_chunk(slice);
+            let trimmed = trim_with_probs(&pcm[r.clone()], &probs_snapshot, r.start);
+            self.send_chunk(trimmed);
         }
         let rec = self.recording.take().unwrap();
         let chunks = rec.chunks_sent;
@@ -1214,6 +1305,70 @@ mod tests {
         h.join.join().unwrap();
         assert_eq!(h.pasted.lock().unwrap().clone(), vec!["from history".to_string()]);
         assert_eq!(h.store.lock().unwrap().count().unwrap(), 0, "pasting again does not add a history row");
+    }
+
+    #[test]
+    fn switch_requested_then_cancelled_is_applied() {
+        let loads: Arc<Mutex<Vec<PathBuf>>> = Default::default();
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: Default::default(), decodes: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::SwitchModel("large-v3".into())).unwrap();
+        h.tx.send(Cmd::Cancel).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+        assert!(loads.lock().unwrap().iter().any(|p| p.ends_with("ggml-large-v3-q5_0.bin")), "a switch requested during a cancelled recording must still be applied");
+        assert_eq!(h.settings.lock().unwrap().model_id, "large-v3");
+    }
+
+    #[test]
+    fn pause_during_long_recording_stops_chunk_worker() {
+        let loads: Arc<Mutex<Vec<PathBuf>>> = Default::default();
+        let unloads: Arc<Mutex<u32>> = Default::default();
+        let decodes: Arc<Mutex<Vec<std::time::Instant>>> = Default::default();
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "{n}".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: unloads.clone(), decodes: decodes.clone() }, FakeCapture { pcm: long_fixture(150), fail: false, die_after_start: false });
+        h.tx.send(Cmd::Start).unwrap();
+        std::thread::sleep(Duration::from_millis(700)); // first scoring tick hands chunks to the worker
+        h.tx.send(Cmd::PauseAndUnload).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while *unloads.lock().unwrap() == 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(*unloads.lock().unwrap() >= 1, "pause must unload");
+        std::thread::sleep(Duration::from_millis(150));
+        let decodes_after_pause = decodes.lock().unwrap().len();
+        let loads_after_pause = loads.lock().unwrap().len();
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(loads.lock().unwrap().len(), loads_after_pause, "the chunk worker must not reload the model after a pause");
+        assert_eq!(decodes.lock().unwrap().len(), decodes_after_pause, "no further chunk decodes after the pause");
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+        assert!(h.pasted.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn benchmark_restores_previous_model() {
+        let loads: Arc<Mutex<Vec<PathBuf>>> = Default::default();
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "bench".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: Default::default(), decodes: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        h.tx.send(Cmd::Benchmark("large-v3".into())).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+        assert_eq!(h.benchmarks.lock().unwrap()[0].0, "large-v3");
+        assert_eq!(h.settings.lock().unwrap().model_id, "large-v3-turbo", "benchmarking must not change the active model");
+        let l = loads.lock().unwrap();
+        assert!(l.iter().any(|p| p.ends_with("ggml-large-v3-q5_0.bin")));
+        assert!(l.last().unwrap().ends_with("ggml-large-v3-turbo-q5_0.bin"), "previous model reloaded last: {l:?}");
+    }
+
+    #[test]
+    fn score_window_is_bounded_and_overlapping() {
+        // nothing scored yet: score everything available
+        assert_eq!(score_window(0, 100, 31), 0..100);
+        // 100 frames scored, 120 available: rescore 31 frames of overlap plus the 20 new ones
+        assert_eq!(score_window(100, 120, 31), 69..120);
+        // no new frames: nothing to do
+        assert_eq!(score_window(120, 120, 31), 120..120);
     }
 
     #[test]

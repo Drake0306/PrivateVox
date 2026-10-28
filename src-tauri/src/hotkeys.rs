@@ -56,22 +56,32 @@ fn register_combo(app: &AppHandle, combo: &str, binding: Binding, tx: Sender<Cmd
     Ok(())
 }
 
-fn bind(app: &AppHandle, b: &HotkeyBinding, binding: Binding, tx: &Sender<Cmd>, modifiers: &mut Vec<(rdev::Key, Binding)>) -> anyhow::Result<()> {
-    if let Some(m) = b.modifier {
-        modifiers.push((modifier_key(m), binding));
-    }
+fn bind(app: &AppHandle, b: &HotkeyBinding, binding: Binding, tx: &Sender<Cmd>) -> anyhow::Result<()> {
     if let Some(c) = &b.combo {
         register_combo(app, c, binding, tx.clone())?;
     }
     Ok(())
 }
 
-/// Registers every binding from the settings. Lone modifiers start one rdev listener thread.
+/// The lone-modifier bindings from the settings, in the form the key hook matches on.
+pub fn modifier_mapping(settings: &Settings) -> Vec<(rdev::Key, Binding)> {
+    let mut m = Vec::new();
+    if let Some(k) = settings.ptt.modifier {
+        m.push((modifier_key(k), Binding::Ptt));
+    }
+    if let Some(k) = settings.toggle.modifier {
+        m.push((modifier_key(k), Binding::Toggle));
+    }
+    m
+}
+
+/// Registers every binding from the settings. Lone modifiers go through one rdev listener thread whose
+/// mapping is replaced on every install, so a removed modifier stops firing.
 pub fn install(app: &AppHandle, settings: &Settings, tx: Sender<Cmd>) -> anyhow::Result<()> {
     let _ = app.global_shortcut().unregister_all();
-    let mut modifiers: Vec<(rdev::Key, Binding)> = Vec::new();
-    bind(app, &settings.ptt, Binding::Ptt, &tx, &mut modifiers)?;
-    bind(app, &settings.toggle, Binding::Toggle, &tx, &mut modifiers)?;
+    bind(app, &settings.ptt, Binding::Ptt, &tx)?;
+    bind(app, &settings.toggle, Binding::Toggle, &tx)?;
+    let modifiers = modifier_mapping(settings);
     if let Some(c) = &settings.undo.combo {
         let shortcut: Shortcut = c.parse().map_err(|e| anyhow::anyhow!("undo hotkey {c:?}: {e}"))?;
         let utx = tx.clone();
@@ -84,24 +94,33 @@ pub fn install(app: &AppHandle, settings: &Settings, tx: Sender<Cmd>) -> anyhow:
             .map_err(|e| anyhow::anyhow!("register undo {c:?}: {e}"))?;
         log::info!("hotkey registered: {c} -> Undo");
     }
+    set_modifier_mapping(modifiers.clone());
     if !modifiers.is_empty() {
         if !input_monitoring_granted(true) {
             log::warn!("Input Monitoring not granted: the modifier-only hotkey will not fire until it is");
         }
-        start_modifier_listener(modifiers, tx);
+        start_modifier_listener(tx);
     }
     Ok(())
 }
 
-fn start_modifier_listener(modifiers: Vec<(rdev::Key, Binding)>, tx: Sender<Cmd>) {
-    use std::sync::OnceLock;
-    static STARTED: OnceLock<std::sync::Mutex<Vec<(rdev::Key, Binding)>>> = OnceLock::new();
-    let slot = STARTED.get_or_init(|| std::sync::Mutex::new(Vec::new()));
-    let first = slot.lock().map(|v| v.is_empty()).unwrap_or(false);
+use std::sync::OnceLock;
+static MAPPING: OnceLock<std::sync::Mutex<Vec<(rdev::Key, Binding)>>> = OnceLock::new();
+static LISTENER_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn set_modifier_mapping(modifiers: Vec<(rdev::Key, Binding)>) {
+    let slot = MAPPING.get_or_init(|| std::sync::Mutex::new(Vec::new()));
     if let Ok(mut v) = slot.lock() {
         *v = modifiers;
     }
-    if !first {
+}
+
+fn current_mapping() -> Vec<(rdev::Key, Binding)> {
+    MAPPING.get().and_then(|m| m.lock().ok().map(|v| v.clone())).unwrap_or_default()
+}
+
+fn start_modifier_listener(tx: Sender<Cmd>) {
+    if LISTENER_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return; // the listener thread reads the current mapping on every event
     }
     std::env::set_var("KEYBOARD_ONLY", "1");
@@ -110,7 +129,7 @@ fn start_modifier_listener(modifiers: Vec<(rdev::Key, Binding)>, tx: Sender<Cmd>
         .spawn(move || {
             let mut down: Vec<rdev::Key> = Vec::new();
             let result = rdev::listen(move |ev| {
-                let mapping = STARTED.get().and_then(|m| m.lock().ok().map(|v| v.clone())).unwrap_or_default();
+                let mapping = current_mapping();
                 match ev.event_type {
                     rdev::EventType::KeyPress(k) => {
                         if let Some((_, b)) = mapping.iter().find(|(mk, _)| *mk == k) {
@@ -134,4 +153,20 @@ fn start_modifier_listener(modifiers: Vec<(rdev::Key, Binding)>, tx: Sender<Cmd>
             }
         })
         .expect("key hook thread");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lvw_core::settings::{HotkeyBinding, ModifierKey, Settings};
+
+    #[test]
+    fn modifier_mapping_is_empty_when_hold_key_is_a_combo() {
+        let mut s = Settings::default();
+        assert_eq!(modifier_mapping(&s), vec![(rdev::Key::AltGr, Binding::Ptt)]);
+        s.ptt = HotkeyBinding { combo: Some("Ctrl+Alt+Space".into()), modifier: None };
+        assert!(modifier_mapping(&s).is_empty(), "switching to a combo must clear the old Right Option entry");
+        s.toggle = HotkeyBinding { combo: None, modifier: Some(ModifierKey::RightCommand) };
+        assert_eq!(modifier_mapping(&s), vec![(rdev::Key::MetaRight, Binding::Toggle)]);
+    }
 }

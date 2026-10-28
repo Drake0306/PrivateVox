@@ -58,7 +58,9 @@ pub fn ensure_model(app: AppHandle, model_id: &str, models_dir: &Path, tx: Sende
                 let pct = (received * 100 / total.max(1)) as i64;
                 if pct != last_pct {
                     last_pct = pct;
-                    emit_pill(PillState::LoadingModel { progress: Some(received as f32 / total.max(1) as f32) });
+                    if activate {
+                        emit_pill(PillState::LoadingModel { progress: Some(received as f32 / total.max(1) as f32) });
+                    }
                     let _ = app2.emit("model-download", DownloadProgress { model: model.clone(), received, total, done: false, error: None });
                 }
             });
@@ -67,14 +69,14 @@ pub fn ensure_model(app: AppHandle, model_id: &str, models_dir: &Path, tx: Sende
                     let _ = app.emit("model-download", DownloadProgress { model: spec.id.into(), received: spec.bytes, total: spec.bytes, done: true, error: None });
                     if activate {
                         let _ = tx.send(Cmd::ModelReady(path));
-                    } else {
-                        emit_pill(PillState::Idle { hotkey_hint: String::new() });
                     }
                 }
                 Err(e) => {
                     log::error!("model download failed: {e:#}");
                     let _ = app.emit("model-download", DownloadProgress { model: spec.id.into(), received: 0, total: spec.bytes, done: false, error: Some(e.to_string()) });
-                    emit_pill(PillState::Error { message: "Model download failed; open the panel to retry".into() });
+                    if activate {
+                        emit_pill(PillState::Error { message: "Model download failed; open the panel to retry".into() });
+                    }
                 }
             }
             finish();
