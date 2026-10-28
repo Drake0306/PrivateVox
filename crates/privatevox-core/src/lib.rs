@@ -11,6 +11,7 @@ pub mod models;
 pub mod placement;
 pub mod settings;
 pub mod store;
+pub mod polish;
 pub mod textnorm;
 pub mod undo;
 pub mod vad;

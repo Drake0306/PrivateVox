@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
 
 /// How the dictation key behaves (design §4.2, §18.10).
@@ -63,6 +64,14 @@ pub struct Settings {
     pub pill_position: Option<(i32, i32)>,
     /// Remove filler words ("uh", "hmm"; "um" only in English) before saving and before the LLM (design §18.9).
     pub remove_fillers: bool,
+    /// Active polish mode (design §7). Raw and Translate skip the LLM.
+    pub mode: crate::polish::Mode,
+    /// Per-mode prompt overrides keyed by mode id; empty or missing means the default prompt.
+    pub mode_prompts: HashMap<String, String>,
+    /// Seconds to wait for the LLM before pasting the raw transcript (spec default 8).
+    pub llm_timeout_secs: u64,
+    /// Master switch for the LLM step; off pastes Whisper's text in every mode.
+    pub polish_enabled: bool,
 }
 
 impl Default for Settings {
@@ -84,6 +93,10 @@ impl Default for Settings {
             flash_attention: true,
             pill_position: None,
             remove_fillers: true,
+            mode: crate::polish::Mode::Clean,
+            mode_prompts: HashMap::new(),
+            llm_timeout_secs: 8,
+            polish_enabled: true,
         }
     }
 }
