@@ -31,6 +31,12 @@ Every endpoint is health-checked every 10 seconds. A dictation uses the first re
 
 On an 8 GB Mac, `ollama pull qwen2.5:3b` is the recommended local model (about 2 GB resident, roughly one second per dictation once warm). The model is warmed when you press the key and unloaded on the same idle timer as Whisper. Filler words ("uh", "hmm", and "um" when the language is English) are removed before the LLM and in Raw mode too; switch that off under Settings → Polish.
 
+## Use your PC as the host
+
+Any PrivateVox can do the work for another one on the same network. On the machine with the big GPU, open Settings → Network and switch on **Act as host for other machines** (port 8765, optional token); the card shows the address to type elsewhere. On the Mac, switch on **Use a host on this network**, enter that `ip:port`, press Test, then Apply. From then on, while the host answers, what you dictate on the Mac is transcribed and polished on the PC; the memory strip shows the PC's figures; nothing is loaded on the Mac. When the PC is not reachable the Mac does the work itself and the pill says so, and it goes back to the PC as soon as it answers again.
+
+Both machines keep a history: the PC stores what it processed (marked "host", with the client's name), the Mac stores its copy (marked "via PC"). The toggle in the History header shows the PC's list from the Mac.
+
 ## Download
 
 Alpha builds for macOS (Apple Silicon), Windows and Linux are on the [Releases page](https://github.com/Drake0306/PrivateVox/releases); 0.3.0-alpha.1 is the current one. Read the release notes there for the one-time macOS permission steps; builds are unsigned for now.

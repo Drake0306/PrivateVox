@@ -19,7 +19,8 @@ pub fn machine_name(s: &Settings) -> String {
         return n.to_string();
     }
     let host = std::process::Command::new("hostname").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|h| !h.is_empty());
-    host.map(|h| h.trim_end_matches(".local").to_string()).unwrap_or_else(|| "PrivateVox".into())
+    // "MacBookAir.lan" / "pc.local" → "MacBookAir" / "pc": the domain part says nothing to a person.
+    host.map(|h| h.split('.').next().unwrap_or(&h).to_string()).filter(|h| !h.is_empty()).unwrap_or_else(|| "PrivateVox".into())
 }
 
 /// Push the remote settings into the live state. Enabling configures the client; disabling clears it.
@@ -92,6 +93,8 @@ mod tests {
         assert!(!auto.trim().is_empty());
         s.machine_name = Some("  Roy's Mac ".into());
         assert_eq!(machine_name(&s), "Roy's Mac");
+        s.machine_name = None;
+        assert!(!machine_name(&s).contains('.'), "domain suffix dropped: {}", machine_name(&s));
     }
 
     #[test]

@@ -50,8 +50,8 @@ footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--line);font-si
   <h1 style="margin-top:.4rem">PrivateVox Roadmap</h1>
   <p class="lede">What the design promised, what is built, what is next. Three of four plans are done: the Mac build dictates, switches models, shows its memory, and cleans up the text with a local or LAN LLM that fails over on its own. The extras, the Windows pass on the RX 9070 and the release polish are what is left.</p>
   <div class="summary">
-    <div class="sum done"><div class="n">3 / 4</div><div class="k">plans complete</div></div>
-    <div class="sum next"><div class="n">4a</div><div class="k">up next: PC as host, Mac as interface</div></div>
+    <div class="sum done"><div class="n">4 / 5</div><div class="k">plans complete</div></div>
+    <div class="sum next"><div class="n">4b</div><div class="k">up next: extras, Windows pass, release</div></div>
     <div class="sum later"><div class="n">6</div><div class="k">installers on the alpha release</div></div>
     <div class="sum you"><div class="n">2</div><div class="k">things only you can do</div></div>
   </div>
@@ -101,18 +101,18 @@ footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--line);font-si
 </section>
 
 <section class="wrap">
-  <h2>Phase 4a · PC as host, Mac as interface <span class="chip next">next</span></h2>
+  <h2>Phase 4a · PC as host, Mac as interface <span class="chip done">done</span></h2>
   <div class="phase"><ul class="list">
-    <li><span class="mark next"></span><div><b>Host mode</b><small>The same app on the PC serves transcription and polish on port 8765: status with GPU and memory, dictations in, history out, model pick. LAN only, optional token.</small></div></li>
-    <li><span class="mark next"></span><div><b>Use a host (Mac side)</b><small>Toggle plus ip:port. Capture, VAD and the pill stay local; every chunk goes to the PC; the local Whisper is never loaded while the host is in use. Falls back to local when the PC is unreachable and back again when it returns.</small></div></li>
-    <li><span class="mark next"></span><div><b>PC specs in the strip</b><small>While the host is in use the memory strip shows the PC's adapter, totals and loaded models, labelled "On PC".</small></div></li>
-    <li><span class="mark next"></span><div><b>Two histories, one marker</b><small>The PC stores what it processed; the Mac stores its copy marked "via PC". A toggle in the history header shows the PC's list live.</small></div></li>
-    <li><span class="mark next"></span><div><b>Discovery</b><small>Manual ip:port first; mDNS advertising and an "Add" button once that works.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>Host mode</b><small>The same app on the PC serves transcription and polish on port 8765: status with GPU and memory, dictations in, history out, model pick. LAN only, optional token.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>Use a host (Mac side)</b><small>Toggle plus ip:port. Capture, VAD and the pill stay local; every chunk goes to the PC; the local Whisper is never loaded while the host is in use. Falls back to local when the PC is unreachable and back again when it returns.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>PC specs in the strip</b><small>While the host is in use the memory strip shows the PC's adapter, totals and loaded models, labelled "On PC".</small></div></li>
+    <li><span class="mark done">✓</span><div><b>Two histories, one marker</b><small>The PC stores what it processed; the Mac stores its copy marked "via PC". A toggle in the history header shows the PC's list live.</small></div></li>
+    <li><span class="mark todo"></span><div><b>Discovery</b><small>Manual ip:port works; mDNS advertising and an "Add" button are still to do.</small></div></li>
   </ul></div>
 </section>
 
 <section class="wrap">
-  <h2>Phase 4b · Extras, Windows, release <span class="chip later">after</span></h2>
+  <h2>Phase 4b · Extras, Windows, release <span class="chip next">next</span></h2>
   <div class="phase"><ul class="list">
     <li><span class="mark todo"></span><div><b>Personal dictionary</b><small>Names and jargon fed to Whisper as its prompt, fuzzy safety net when the prompt was not applied.</small></div></li>
     <li><span class="mark todo"></span><div><b>Spoken languages</b><small>Multi-select with the language identifier; translate mode. Today only the first language is used.</small></div></li>
@@ -126,7 +126,7 @@ footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--line);font-si
 </section>
 
 <section class="wrap">
-  <div class="note">Measured on the M1 with qwen2.5:3b through Ollama: a warm polish takes about one second; the warm-up on key press is under 100 ms once the model is resident; with Ollama stopped a dictation pastes the raw text and the row is marked unpolished. Phase 4a is built and tested on the Mac against a host on localhost (the same app in host mode); the first real PC-to-Mac run is a five-minute check when you are at the PC. Phase 4b follows.</div>
+  <div class="note">Measured on the M1 with qwen2.5:3b through Ollama: a warm polish takes about one second; the warm-up on key press is under 100 ms once the model is resident; with Ollama stopped a dictation pastes the raw text and the row is marked unpolished. Phase 4a was built and checked on the Mac against itself as host (transcription and polish round-tripped through the host, two marked histories). The first real PC-to-Mac run is a five-minute check when you are at the PC: host mode on there, the address typed here.</div>
 </section>
 
 <footer class="wrap">Source of truth: <code>docs/superpowers/specs/2026-10-28-whisper-harness-design.md</code> and the plan files beside it. Repo: github.com/Drake0306/PrivateVox.</footer>

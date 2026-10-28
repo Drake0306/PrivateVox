@@ -2,6 +2,15 @@
 
 All notable changes to PrivateVox. Versions follow the plans in `docs/superpowers/plans/`.
 
+## Unreleased
+
+### Host mode and the remote interface (phase 4a)
+- Any PrivateVox can act as a host (Settings → Network): it serves transcription, polish, its history and its model list on port 8765, LAN only, optional token.
+- "Use a host on this network" sends each dictation chunk and the polish to the host; the local Whisper is not loaded while the host is in use; automatic fallback to local when the host is unreachable and back again.
+- The memory strip shows the host's adapter and figures while the host is in use; the Whisper picker switches the host's model.
+- Two histories: the host keeps rows marked "host" with the client's name, the client keeps its copy marked "via PC"; a toggle in the History header shows the host's list.
+- History rows have an `engine_kind` column (local, remote:<host>, host).
+
 ## 0.3.0-alpha.1 — 2026-10-28
 
 Second alpha: phase 3, LLM polish and LAN failover. macOS on Apple Silicon tested by hand; Windows and Linux built by CI.
