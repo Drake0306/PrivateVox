@@ -1,10 +1,11 @@
-//! Paste into the frontmost app: clipboard save, Cmd+V, restore after a short delay (design §4.3 step 6).
-//! The receipt-sequenced restore from §18.11 replaces the fixed delay in a later plan.
+//! Paste into the frontmost app: clipboard save, Cmd+V, restore (design §4.3 step 6).
+//! On macOS the restore is receipt-sequenced (§18.11): the transcript is published as a lazy pasteboard promise and
+//! the old clipboard comes back only after the target app actually read it. Elsewhere a fixed delay still applies.
 
 use anyhow::{Context, Result};
 use privatevox_core::settings::PasteMethod;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Sends the paste chord or types text. Abstracted so the pipeline is testable without Accessibility.
 pub trait KeySender: Send {
@@ -106,6 +107,142 @@ impl ClipboardBackup {
     }
 }
 
+/// What to do with the old clipboard right now (design §18.11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Decision {
+    Wait,
+    Restore,
+    /// A newer user copy is on the pasteboard, or the transcript should stay: never clobber it.
+    Leave,
+}
+
+/// `read_after_chord`: when the target app read our promise (after the chord). Restore after `quiet` has passed
+/// since that read, or at the `deadline` when nothing read it (the chord was swallowed); never when the change count
+/// moved past ours (the user copied something meanwhile).
+pub fn restore_decision(read_after_chord: Option<Instant>, now: Instant, quiet: Duration, deadline: Instant, change_count_now: i64, change_count_ours: i64) -> Decision {
+    if change_count_now != change_count_ours {
+        return Decision::Leave;
+    }
+    match read_after_chord {
+        Some(t) if now.duration_since(t) >= quiet => Decision::Restore,
+        Some(_) => Decision::Wait,
+        None if now >= deadline => Decision::Restore,
+        None => Decision::Wait,
+    }
+}
+
+/// How long to wait after the app's read before restoring (some apps read twice).
+pub const RESTORE_QUIET: Duration = Duration::from_millis(100);
+/// Give up waiting for a read after this long; failure mode: the transcript stays on the clipboard.
+pub const RESTORE_TIMEOUT: Duration = Duration::from_secs(3);
+
+#[cfg(target_os = "macos")]
+mod macos_receipt {
+    //! The transcript as a lazy pasteboard promise: AppKit asks our owner object for the string when an app reads
+    //! the pasteboard, which is the receipt that the paste happened.
+
+    use super::{restore_decision, Decision, KeySender, PasteOutcome, RESTORE_QUIET, RESTORE_TIMEOUT};
+    use anyhow::Result;
+    use objc2::rc::Retained;
+    use objc2::runtime::{AnyObject, NSObjectProtocol};
+    use objc2::{define_class, msg_send, AnyThread, DefinedClass};
+    use objc2_app_kit::{NSPasteboard, NSPasteboardType, NSPasteboardTypeString};
+    use objc2_foundation::{NSArray, NSObject, NSString};
+    use std::sync::{Arc, Mutex};
+    use std::time::Instant;
+
+    #[derive(Default)]
+    pub struct Receipt {
+        pub read_at: Option<Instant>,
+        pub reads: u32,
+    }
+
+    pub struct PromiseIvars {
+        text: String,
+        receipt: Arc<Mutex<Receipt>>,
+    }
+
+    define_class!(
+        // SAFETY: NSObject has no subclassing requirements and PromiseOwner does not implement Drop.
+        #[unsafe(super(NSObject))]
+        #[name = "PVXPasteboardPromise"]
+        #[ivars = PromiseIvars]
+        pub struct PromiseOwner;
+
+        impl PromiseOwner {
+            #[unsafe(method(pasteboard:provideDataForType:))]
+            fn provide(&self, pasteboard: &NSPasteboard, data_type: &NSPasteboardType) {
+                let text = NSString::from_str(&self.ivars().text);
+                let _ = pasteboard.setString_forType(&text, data_type);
+                if let Ok(mut r) = self.ivars().receipt.lock() {
+                    r.read_at = Some(Instant::now());
+                    r.reads += 1;
+                }
+            }
+        }
+
+        unsafe impl NSObjectProtocol for PromiseOwner {}
+    );
+
+    impl PromiseOwner {
+        fn new(text: &str, receipt: Arc<Mutex<Receipt>>) -> Retained<Self> {
+            let this = Self::alloc().set_ivars(PromiseIvars { text: text.to_string(), receipt });
+            unsafe { msg_send![super(this), init] }
+        }
+    }
+
+    fn put_string(pb: &NSPasteboard, text: &str) -> i64 {
+        let types = NSArray::from_slice(&[unsafe { NSPasteboardTypeString }]);
+        let count = unsafe { pb.declareTypes_owner(&types, None) };
+        let _ = pb.setString_forType(&NSString::from_str(text), unsafe { NSPasteboardTypeString });
+        count as i64
+    }
+
+    /// Publish `text` as a promise, send the chord, wait for the receipt, restore `previous` (design §18.11).
+    pub fn paste_with_receipt<S: KeySender>(text: &str, previous: Option<&str>, sender: &mut S) -> Result<PasteOutcome> {
+        let pb = NSPasteboard::generalPasteboard();
+        let receipt = Arc::new(Mutex::new(Receipt::default()));
+        let owner = PromiseOwner::new(text, receipt.clone());
+        let types = NSArray::from_slice(&[unsafe { NSPasteboardTypeString }]);
+        let ours = unsafe { pb.declareTypes_owner(&types, Some(owner.as_ref() as &AnyObject)) } as i64;
+        let chord_at = Instant::now();
+        if let Err(e) = sender.paste_chord() {
+            // No chord went out: make the transcript a real string so it survives our owner, and leave it there.
+            put_string(&pb, text);
+            return Ok(PasteOutcome::CopiedOnly(e.to_string()));
+        }
+        let deadline = chord_at + RESTORE_TIMEOUT;
+        loop {
+            let now = Instant::now();
+            let read_after = receipt.lock().ok().and_then(|r| r.read_at).filter(|t| *t >= chord_at);
+            match restore_decision(read_after, now, RESTORE_QUIET, deadline, pb.changeCount() as i64, ours) {
+                Decision::Wait => std::thread::sleep(std::time::Duration::from_millis(20)),
+                Decision::Restore => {
+                    match previous {
+                        Some(prev) => {
+                            put_string(&pb, prev);
+                        }
+                        None => {
+                            // Nothing to restore; keep the transcript readable after our owner goes away.
+                            put_string(&pb, text);
+                        }
+                    }
+                    if read_after.is_none() {
+                        log::info!("paste: nothing read the pasteboard within {:?}; clipboard restored", RESTORE_TIMEOUT);
+                    }
+                    break;
+                }
+                Decision::Leave => {
+                    log::info!("paste: the pasteboard changed under us; leaving it alone");
+                    break;
+                }
+            }
+        }
+        drop(owner);
+        Ok(PasteOutcome::Pasted)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum PasteOutcome {
     Pasted,
@@ -138,6 +275,14 @@ impl Paster {
         let mut cb = arboard::Clipboard::new().context("clipboard")?;
         let previous = cb.get_text().ok();
         ClipboardBackup::save(&self.backup_path, previous.as_deref())?;
+        #[cfg(target_os = "macos")]
+        {
+            drop(cb);
+            let outcome = macos_receipt::paste_with_receipt(text, previous.as_deref(), sender)?;
+            let _ = std::fs::remove_file(&self.backup_path);
+            return Ok(outcome);
+        }
+        #[allow(unreachable_code)]
         cb.set_text(text.to_string()).context("set clipboard")?;
         match sender.paste_chord() {
             Ok(()) => {
@@ -291,5 +436,41 @@ mod tests {
         assert!(matches!(p.paste("typed text", &mut s).unwrap(), PasteOutcome::Pasted));
         assert_eq!(s.typed, vec!["typed text".to_string()]);
         assert_eq!(s.chords, 0);
+    }
+
+    #[test]
+    fn restores_after_read_plus_quiet() {
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let quiet = Duration::from_millis(100);
+        let deadline = t0 + Duration::from_secs(3);
+        assert_eq!(restore_decision(Some(t0), t0 + Duration::from_millis(150), quiet, deadline, 7, 7), Decision::Restore);
+    }
+
+    #[test]
+    fn waits_while_read_is_fresh_or_absent_before_the_deadline() {
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let quiet = Duration::from_millis(100);
+        let deadline = t0 + Duration::from_secs(3);
+        assert_eq!(restore_decision(Some(t0), t0 + Duration::from_millis(50), quiet, deadline, 7, 7), Decision::Wait, "Chromium reads twice; wait out the quiet period");
+        assert_eq!(restore_decision(None, t0 + Duration::from_millis(500), quiet, deadline, 7, 7), Decision::Wait);
+    }
+
+    #[test]
+    fn timeout_restores_when_nothing_read() {
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let deadline = t0 + Duration::from_secs(3);
+        assert_eq!(restore_decision(None, deadline, Duration::from_millis(100), deadline, 7, 7), Decision::Restore, "the chord was swallowed: put the old clipboard back");
+    }
+
+    #[test]
+    fn never_restores_after_a_user_copy() {
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let deadline = t0 + Duration::from_secs(3);
+        assert_eq!(restore_decision(Some(t0), t0 + Duration::from_millis(500), Duration::from_millis(100), deadline, 9, 7), Decision::Leave);
+        assert_eq!(restore_decision(None, deadline, Duration::from_millis(100), deadline, 9, 7), Decision::Leave);
     }
 }
