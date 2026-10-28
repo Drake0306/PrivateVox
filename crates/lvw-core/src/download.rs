@@ -33,6 +33,15 @@ pub const LARGE_V3_Q5_0: ModelSpec = ModelSpec {
     sha256: None,
 };
 
+/// distil-large-v3, f16 (the only ggml file published), English only.
+pub const DISTIL_LARGE_V3_F16: ModelSpec = ModelSpec {
+    id: "distil-large-v3",
+    file: "ggml-distil-large-v3.bin",
+    url: "https://huggingface.co/distil-whisper/distil-large-v3-ggml/resolve/main/ggml-distil-large-v3.bin",
+    bytes: 1_519_521_155,
+    sha256: None,
+};
+
 /// True when the finished file exists with the expected size.
 pub fn is_present(spec: &ModelSpec, dir: &Path) -> bool {
     std::fs::metadata(dir.join(spec.file)).map(|m| m.len() == spec.bytes).unwrap_or(false)

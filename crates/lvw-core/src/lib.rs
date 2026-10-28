@@ -5,6 +5,7 @@ pub mod download;
 pub mod hotkeys;
 pub mod lifecycle;
 pub mod memory;
+pub mod models;
 pub mod placement;
 pub mod settings;
 pub mod store;

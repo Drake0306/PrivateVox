@@ -60,7 +60,22 @@ CREATE TABLE IF NOT EXISTS dictations (
 );
 CREATE INDEX IF NOT EXISTS dictations_created ON dictations(created_at_ms DESC);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS models (
+  id TEXT PRIMARY KEY,
+  load_ms INTEGER,
+  speed_x REAL,
+  mem_bytes INTEGER,
+  measured_at_ms INTEGER NOT NULL
+);
 ";
+
+/// What was measured about a model on this machine (design §4.6, §9).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, Default)]
+pub struct ModelStats {
+    pub load_ms: Option<u64>,
+    pub speed_x: Option<f32>,
+    pub mem_bytes: Option<u64>,
+}
 
 fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
@@ -149,6 +164,33 @@ impl Store {
 
     pub fn set_pinned(&mut self, id: i64, pinned: bool) -> Result<()> {
         self.conn.execute("UPDATE dictations SET pinned = ?1 WHERE id = ?2", params![pinned as i64, id])?;
+        Ok(())
+    }
+
+    pub fn model_stats(&self, id: &str) -> Result<Option<ModelStats>> {
+        Ok(self
+            .conn
+            .query_row("SELECT load_ms, speed_x, mem_bytes FROM models WHERE id = ?1", params![id], |r| {
+                Ok(ModelStats {
+                    load_ms: r.get::<_, Option<i64>>(0)?.map(|v| v as u64),
+                    speed_x: r.get::<_, Option<f64>>(1)?.map(|v| v as f32),
+                    mem_bytes: r.get::<_, Option<i64>>(2)?.map(|v| v as u64),
+                })
+            })
+            .optional()?)
+    }
+
+    /// Upsert; `None` fields keep the stored value.
+    pub fn set_model_stats(&mut self, id: &str, stats: &ModelStats) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO models(id, load_ms, speed_x, mem_bytes, measured_at_ms) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(id) DO UPDATE SET
+               load_ms = coalesce(excluded.load_ms, models.load_ms),
+               speed_x = coalesce(excluded.speed_x, models.speed_x),
+               mem_bytes = coalesce(excluded.mem_bytes, models.mem_bytes),
+               measured_at_ms = excluded.measured_at_ms",
+            params![id, stats.load_ms.map(|v| v as i64), stats.speed_x.map(|v| v as f64), stats.mem_bytes.map(|v| v as i64), now_ms()],
+        )?;
         Ok(())
     }
 
@@ -246,6 +288,19 @@ mod tests {
         let id = s.insert(&row("keep")).unwrap();
         s.set_pinned(id, true).unwrap();
         assert!(s.list(10, 0).unwrap()[0].pinned);
+    }
+
+    #[test]
+    fn model_stats_roundtrip() {
+        let (_d, mut s) = fresh();
+        assert!(s.model_stats("large-v3").unwrap().is_none());
+        s.set_model_stats("large-v3", &ModelStats { load_ms: Some(1300), speed_x: Some(4.2), mem_bytes: Some(1_050_000_000) }).unwrap();
+        let st = s.model_stats("large-v3").unwrap().unwrap();
+        assert_eq!(st.load_ms, Some(1300));
+        assert_eq!(st.speed_x, Some(4.2));
+        assert_eq!(st.mem_bytes, Some(1_050_000_000));
+        s.set_model_stats("large-v3", &ModelStats { load_ms: None, speed_x: Some(5.0), mem_bytes: Some(1_050_000_000) }).unwrap();
+        assert_eq!(s.model_stats("large-v3").unwrap().unwrap().speed_x, Some(5.0));
     }
 
     #[test]
