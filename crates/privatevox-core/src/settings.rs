@@ -61,6 +61,8 @@ pub struct Settings {
     pub flash_attention: bool,
     /// Last dragged pill position in physical pixels; `None` means bottom-centre above the Dock.
     pub pill_position: Option<(i32, i32)>,
+    /// Remove filler words ("uh", "hmm"; "um" only in English) before saving and before the LLM (design §18.9).
+    pub remove_fillers: bool,
 }
 
 impl Default for Settings {
@@ -81,6 +83,7 @@ impl Default for Settings {
             paste_method: PasteMethod::Clipboard,
             flash_attention: true,
             pill_position: None,
+            remove_fillers: true,
         }
     }
 }
