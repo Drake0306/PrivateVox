@@ -329,12 +329,15 @@ impl Inner {
             None => (String::new(), d.language.clone()),
             Some(s) => {
                 let opts = DecodeOptions { language: d.language.clone(), translate: d.translate, initial_prompt: None, n_threads: 4, final_chunk: d.final_ };
-                let r = self.deps.engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| {
-                    if !e.is_loaded() {
-                        let path = self.deps.model_path.lock().ok().and_then(|p| p.clone()).ok_or_else(|| anyhow::anyhow!("no model on the host"))?;
-                        e.load(&path, settings.flash_attention)?;
-                    }
-                    e.transcribe(&s, &opts)
+                // A host does the work itself, even if it is also set up to use a host.
+                let r = privatevox_engine::routing::with_local_only(|| {
+                    self.deps.engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| {
+                        if !e.is_loaded() {
+                            let path = self.deps.model_path.lock().ok().and_then(|p| p.clone()).ok_or_else(|| anyhow::anyhow!("no model on the host"))?;
+                            e.load(&path, settings.flash_attention)?;
+                        }
+                        e.transcribe(&s, &opts)
+                    })
                 });
                 match r {
                     Ok(tr) => (tr.text, tr.language.or(d.language.clone())),

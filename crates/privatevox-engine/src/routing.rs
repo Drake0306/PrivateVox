@@ -4,8 +4,26 @@ use crate::protocol::DecodeOptions;
 use crate::remote::{RemoteEngine, RemoteState, FALLBACK_NOTICE};
 use crate::supervisor::{Engine, LoadInfo, Transcript};
 use anyhow::Result;
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+
+thread_local! {
+    static FORCE_LOCAL: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Run `f` with the host ignored on this thread: a host serving a client must do the work itself, never forward
+/// it (to itself, when one machine plays both roles, or to a third machine).
+pub fn with_local_only<R>(f: impl FnOnce() -> R) -> R {
+    let before = FORCE_LOCAL.with(|c| c.replace(true));
+    let r = f();
+    FORCE_LOCAL.with(|c| c.set(before));
+    r
+}
+
+fn local_only() -> bool {
+    FORCE_LOCAL.with(|c| c.get())
+}
 
 pub struct RoutingEngine {
     local: Box<dyn Engine>,
@@ -34,7 +52,7 @@ impl Engine for RoutingEngine {
     fn load(&mut self, model: &Path, flash_attn: bool) -> Result<LoadInfo> {
         *self.model_path.lock().unwrap() = Some(model.to_path_buf());
         self.flash = flash_attn;
-        if self.state.in_use() {
+        if self.state.in_use() && !local_only() {
             return self.remote.load(model, flash_attn);
         }
         self.local.load(model, flash_attn)
@@ -45,11 +63,11 @@ impl Engine for RoutingEngine {
     }
 
     fn is_loaded(&self) -> bool {
-        self.state.in_use() || self.local.is_loaded()
+        (self.state.in_use() && !local_only()) || self.local.is_loaded()
     }
 
     fn transcribe(&mut self, pcm: &[f32], opts: &DecodeOptions) -> Result<Transcript> {
-        if self.state.in_use() {
+        if self.state.in_use() && !local_only() {
             match self.remote.transcribe(pcm, opts) {
                 Ok(t) => return Ok(t),
                 Err(e) => {
@@ -216,5 +234,19 @@ mod tests {
         assert!(st.in_use());
         st.clear();
         assert!(!st.in_use());
+    }
+
+    #[test]
+    fn with_local_only_bypasses_the_host() {
+        let h = FakeHost::start(HostBehaviour::Ok { text: "remote".into(), polished: "".into(), token: None });
+        let st = in_use_state(&h);
+        let mut r = routing(FakeLocal::default(), &st, 2000, Some("/m.bin"));
+        assert!(r.is_loaded());
+        with_local_only(|| {
+            assert!(!r.is_loaded(), "the local model is not loaded yet");
+            assert_eq!(r.transcribe(&[0.1; 1600], &DecodeOptions::default()).unwrap().text, "local:1");
+        });
+        assert!(h.requests.lock().unwrap().is_empty(), "nothing went to the host");
+        assert_eq!(r.transcribe(&[0.1; 1600], &DecodeOptions::default()).unwrap().text, "remote", "back to routing outside the scope");
     }
 }

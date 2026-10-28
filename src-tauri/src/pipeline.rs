@@ -246,6 +246,30 @@ fn hotkey_hint(s: &Settings) -> String {
     }
 }
 
+/// Transcribe on the host when it is in use, without holding the local engine lock while waiting on the network
+/// (a host served from this same process needs that lock). On a host failure the notice is set and the local engine
+/// takes over, loading `model_path` if it has to.
+fn transcribe_routed(remote: &Arc<RemoteState>, engine: &Arc<Mutex<Box<dyn Engine>>>, pcm: &[f32], opts: &DecodeOptions, model_path: Option<&PathBuf>, flash: bool) -> anyhow::Result<privatevox_engine::supervisor::Transcript> {
+    if remote.in_use() {
+        match privatevox_engine::remote::RemoteEngine::new(remote.clone(), Duration::from_secs(15)).transcribe(pcm, opts) {
+            Ok(t) => return Ok(t),
+            Err(e) => {
+                log::warn!("remote transcription failed, falling back to local: {e}");
+                remote.set_notice(privatevox_engine::remote::FALLBACK_NOTICE);
+            }
+        }
+    }
+    privatevox_engine::routing::with_local_only(|| {
+        engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| {
+            if !e.is_loaded() {
+                let path = model_path.ok_or_else(|| anyhow::anyhow!("no local model available"))?;
+                e.load(path, flash)?;
+            }
+            e.transcribe(pcm, opts)
+        })
+    })
+}
+
 /// Polish on the host when it is in use. `None` means the host failed (and is now marked unhealthy): polish locally.
 fn remote_polish(remote: &RemoteState, mode: Mode, text: &str, timeout: Duration) -> Option<PolishOutcome> {
     let client = remote.client()?;
@@ -731,17 +755,7 @@ impl Coordinator {
                         } else {
                             let opts = DecodeOptions { language: language.clone(), translate, initial_prompt: None, n_threads: 4, final_chunk: job.final_ };
                             let cancelled = cancelled.clone();
-                            let r = engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| {
-                                if cancelled.load(Ordering::SeqCst) {
-                                    anyhow::bail!("cancelled");
-                                }
-                                if !e.is_loaded() {
-                                    if let Some(p) = model_path.as_ref() {
-                                        e.load(p, flash)?;
-                                    }
-                                }
-                                e.transcribe(&pcm, &opts)
-                            });
+                            let r = if cancelled.load(Ordering::SeqCst) { Err(anyhow::anyhow!("cancelled")) } else { transcribe_routed(&remote, &engine, &pcm, &opts, model_path.as_ref(), flash) };
                             if let Ok(mut t) = idle.lock() {
                                 t.touch(Instant::now());
                             }
@@ -1084,7 +1098,7 @@ impl Coordinator {
         // A short clip is decoded in one go, so this is also the last chunk of its session.
         let opts = DecodeOptions { language, translate: settings.mode.whisper_translate(), initial_prompt: None, n_threads: 4, final_chunk: true };
         let t = Instant::now();
-        let transcript = self.deps.engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| e.transcribe(&speech, &opts));
+        let transcript = transcribe_routed(&self.deps.remote, &self.deps.engine, &speech, &opts, self.deps.model_path.as_ref(), settings.flash_attention);
         let transcript = match transcript {
             Ok(t) => t,
             Err(e) => {
