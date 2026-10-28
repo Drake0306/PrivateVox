@@ -23,22 +23,22 @@ panel_frame() {
   osascript -e 'tell application "System Events" to tell process "privatevox" to get {position, size} of every window' 2>/dev/null \
     | tr -d ' ' | awk -F, '{ n = NF / 4; for (i = 1; i <= n; i++) { w = $(2*n + 2*i - 1); if (w + 0 > 600) { printf "%s,%s,%s,%s\n", $(2*i - 1), $(2*i), w, $(2*n + 2*i); exit } } }'
 }
-# Always go through the tray: it shows the panel when it was closed and brings it forward.
-osascript >/dev/null 2>&1 <<'EOF'
-tell application "System Events"
-  tell process "privatevox"
-    click menu bar item 1 of menu bar 2
-    delay 0.4
-    click menu item "Open history" of menu 1 of menu bar item 1 of menu bar 2
-  end tell
-end tell
-EOF
-sleep 1
-FRAME=$(panel_frame)
+# Show the panel through the single-instance hook: launching the binary again tells the running app to show
+# and focus the panel, then exits. No menu clicking needed. PRIVATEVOX_BIN overrides the binary.
+open_panel() {
+  "${PRIVATEVOX_BIN:-./target/debug/privatevox}" >/dev/null 2>&1 || true
+  sleep 1.5
+}
+tries=0; FRAME=""
+while [ $tries -lt 3 ] && [ -z "$FRAME" ]; do
+  open_panel; sleep 1; FRAME=$(panel_frame); tries=$((tries + 1))
+done
 [ -n "$FRAME" ] || { echo "no panel window" >&2; exit 1; }
 osascript -e 'tell application "System Events" to tell process "privatevox" to set frontmost to true' >/dev/null 2>&1
 WX=$(echo "$FRAME" | cut -d, -f1); WY=$(echo "$FRAME" | cut -d, -f2); WW=$(echo "$FRAME" | cut -d, -f3); WH=$(echo "$FRAME" | cut -d, -f4)
-osascript -e "tell application \"System Events\" to click at {$((WX + TX)), $((WY + 155))}" >/dev/null
+# A click right after the window appears can fail with -25208; retry a few times.
+sleep 0.8
+n=0; until osascript -e "tell application \"System Events\" to click at {$((WX + TX)), $((WY + 155))}" >/dev/null 2>&1; do n=$((n + 1)); [ $n -ge 4 ] && { echo "tab click failed" >&2; exit 1; }; sleep 0.8; done
 sleep 0.6
 if [ "$PD" -gt 0 ]; then
   # Focus the page (empty space right of the tab bar) so Page Down scrolls the content rather than the tab button.

@@ -10,6 +10,8 @@ use std::time::{Duration, Instant};
 pub enum Binding {
     Ptt,
     Toggle,
+    /// Clipboard-only dictation (§4.2): tap to start, tap to stop; the text is copied, never pasted.
+    CopyOnly,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,7 +75,7 @@ impl Machine {
     }
 
     fn locked_from_start(&self, binding: Binding) -> bool {
-        binding == Binding::Toggle || matches!(self.activation, Activation::Toggle)
+        matches!(binding, Binding::Toggle | Binding::CopyOnly) || matches!(self.activation, Activation::Toggle)
     }
 
     fn start(&mut self, binding: Binding, now: Instant) -> Effect {
@@ -246,5 +248,16 @@ mod tests {
         mc.on(Input::StartResult(true), t);
         assert!(matches!(mc.on(Input::Cancel, ms(t, 100)), Effect::CancelRecording));
         assert!(matches!(mc.stage(), Stage::Idle));
+    }
+
+    #[test]
+    fn copy_only_binding_toggles_and_marks_the_recording() {
+        // §4.2: clipboard-only dictation behaves like toggle whatever the activation, and the stage says so.
+        let t = Instant::now();
+        let mut mc = Machine::new(Activation::PushToTalk, Duration::from_millis(300));
+        assert!(matches!(mc.on(Input::Down(Binding::CopyOnly), t), Effect::StartRecording));
+        assert!(matches!(mc.stage(), Stage::Recording { locked: true, binding: Binding::CopyOnly, .. }));
+        assert!(matches!(mc.on(Input::Up(Binding::CopyOnly), ms(t, 100)), Effect::Nothing));
+        assert!(matches!(mc.on(Input::Down(Binding::CopyOnly), ms(t, 2000)), Effect::StopRecording));
     }
 }

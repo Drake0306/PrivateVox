@@ -81,6 +81,7 @@ pub fn install(app: &AppHandle, settings: &Settings, tx: Sender<Cmd>) -> anyhow:
     let _ = app.global_shortcut().unregister_all();
     bind(app, &settings.ptt, Binding::Ptt, &tx)?;
     bind(app, &settings.toggle, Binding::Toggle, &tx)?;
+    bind(app, &settings.copy_only, Binding::CopyOnly, &tx)?;
     let modifiers = modifier_mapping(settings);
     if let Some(c) = &settings.undo.combo {
         let shortcut: Shortcut = c.parse().map_err(|e| anyhow::anyhow!("undo hotkey {c:?}: {e}"))?;

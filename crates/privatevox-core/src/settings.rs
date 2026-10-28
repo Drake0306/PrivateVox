@@ -33,6 +33,10 @@ pub struct HotkeyBinding {
     pub modifier: Option<ModifierKey>,
 }
 
+fn default_copy_only() -> HotkeyBinding {
+    HotkeyBinding { combo: Some("Ctrl+Shift+Alt+Space".to_string()), modifier: None }
+}
+
 /// How text reaches the frontmost app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -82,6 +86,9 @@ pub struct Settings {
     pub toggle: HotkeyBinding,
     /// Undo the last paste (sends the app's undo keystroke within the undo window).
     pub undo: HotkeyBinding,
+    /// Clipboard-only dictation key (§4.2): the text is copied, not pasted.
+    #[serde(default = "default_copy_only")]
+    pub copy_only: HotkeyBinding,
     pub hold_threshold_ms: u64,
     pub microphone: Option<String>,
     pub spoken_languages: Vec<String>,
@@ -138,6 +145,7 @@ impl Default for Settings {
             ptt: HotkeyBinding { combo: None, modifier: Some(ModifierKey::RightOption) },
             toggle: HotkeyBinding { combo: Some("Ctrl+Shift+Space".to_string()), modifier: None },
             undo: HotkeyBinding { combo: Some("Ctrl+Shift+Z".to_string()), modifier: None },
+            copy_only: default_copy_only(),
             hold_threshold_ms: 300,
             microphone: None,
             spoken_languages: vec!["en".to_string()],
@@ -354,5 +362,10 @@ mod tests {
         let s = Settings::default();
         assert_eq!(s.live_preview, crate::preview::Preview::On);
         assert!(crate::preview::preview_enabled(s.live_preview, false, 8 * 1024 * 1024 * 1024));
+    }
+
+    #[test]
+    fn copy_only_hotkey_defaults_to_ctrl_shift_alt_space() {
+        assert_eq!(Settings::default().copy_only.combo.as_deref(), Some("Ctrl+Shift+Alt+Space"));
     }
 }

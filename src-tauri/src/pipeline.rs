@@ -262,6 +262,8 @@ pub struct Coordinator {
     secure_input: bool,
     /// The mode of the dictation in flight, resolved once at Start from the per-app table (A4).
     dictation_mode: Mode,
+    /// Set at start from the key that started it: the result is copied, not pasted (§4.2).
+    copy_only: bool,
     /// This machine's memory, for the live-preview Auto rule (read once).
     total_memory: u64,
 }
@@ -374,7 +376,7 @@ impl Coordinator {
             let s = settings.lock().map(|s| s.clone()).unwrap_or_default();
             Machine::new(s.activation, Duration::from_millis(s.hold_threshold_ms))
         };
-        Coordinator { deps, settings, store, vad, emit, recording: None, queued: None, generation: 0, machine, pending_switch: None, last_paste: None, idle_tx: None, last_used_remote: false, fell_back: Arc::new(AtomicBool::new(false)), secure_input: false, dictation_mode: Mode::Clean, total_memory: privatevox_core::memory::system_memory().0 }
+        Coordinator { deps, settings, store, vad, emit, recording: None, queued: None, generation: 0, machine, pending_switch: None, last_paste: None, idle_tx: None, last_used_remote: false, fell_back: Arc::new(AtomicBool::new(false)), secure_input: false, dictation_mode: Mode::Clean, copy_only: false, total_memory: privatevox_core::memory::system_memory().0 }
     }
 
     /// Unloads the current model and loads `id` from the models directory. Refused if the file is missing.
@@ -416,7 +418,10 @@ impl Coordinator {
 
     fn apply(&mut self, effect: Effect, tx: &Sender<Cmd>) {
         match effect {
-            Effect::StartRecording => self.start(tx),
+            Effect::StartRecording => {
+                self.copy_only = matches!(self.machine.stage(), privatevox_core::hotkeys::Stage::Recording { binding: privatevox_core::hotkeys::Binding::CopyOnly, .. });
+                self.start(tx)
+            }
             Effect::StopRecording => self.stop(tx),
             Effect::CancelRecording => self.cancel(),
             Effect::Nothing => {}
@@ -1286,7 +1291,9 @@ impl Coordinator {
         let polished_text = polished_text.map(|p| format!("{p}{suffix}"));
         let t = Instant::now();
         let app_name = (self.deps.frontmost)();
-        let (status, preview) = match self.deps.paste.paste(&text) {
+        let paste_result = if self.copy_only { self.deps.paste.copy_only(&text).map(|_| PasteOutcome::CopiedOnly("copy-only key".into())) } else { self.deps.paste.paste(&text) };
+        let (status, preview) = match paste_result {
+            Ok(PasteOutcome::CopiedOnly(_)) if self.copy_only => ("copied_only", format!("Copied: {}", first_chars(&text, 60))),
             Ok(PasteOutcome::Pasted) => {
                 self.last_paste = Some(privatevox_core::undo::LastPaste { text: text.clone(), app: app_name.clone(), at: Instant::now() });
                 ("ok", format!("Pasted: {}", first_chars(&text, 60)))
@@ -3140,6 +3147,27 @@ mod tests {
         std::thread::sleep(Duration::from_millis(3600));
         assert_eq!(decodes.lock().unwrap().len(), 0, "no preview decode of a silent window");
         h.tx.send(Cmd::Cancel).unwrap();
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn copy_only_dictation_is_copied_not_pasted() {
+        use privatevox_core::hotkeys::{Binding, Input};
+        let h = harness(engine_saying("secret"), capture_ok());
+        h.settings.lock().unwrap().mode = Mode::Raw;
+        h.tx.send(Cmd::Key(Input::Down(Binding::CopyOnly))).unwrap();
+        h.tx.send(Cmd::Key(Input::Up(Binding::CopyOnly))).unwrap();
+        std::thread::sleep(Duration::from_millis(400));
+        h.tx.send(Cmd::Key(Input::Down(Binding::CopyOnly))).unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        assert_eq!(h.pasted.lock().unwrap().as_slice(), ["copy:secret"], "copied, never pasted");
+        let row = last_row(&h);
+        assert_eq!(row.status, "copied_only");
+        assert_eq!(row.raw_text, "secret");
+        h.tx.send(Cmd::Undo).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(*h.undos.lock().unwrap(), 0, "a copy leaves the undo target untouched");
         h.tx.send(Cmd::Quit).unwrap();
         h.join.join().unwrap();
     }

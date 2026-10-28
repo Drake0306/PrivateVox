@@ -117,6 +117,7 @@
           <label>Hold key (push to talk) <select name="ptt_modifier"><option value="right_option">Right ⌥ Option</option><option value="left_option">Left ⌥ Option</option><option value="right_command">Right ⌘ Command</option><option value="right_control">Right ⌃ Control</option><option value="">Use a key combination instead</option></select><input name="ptt_combo" placeholder="e.g. Ctrl+Alt+Space" hidden><button type="button" class="btn sm" data-rec="ptt_combo" hidden>Record key</button></label>
           <label>Toggle key <span style="display:flex;gap:6px"><input name="toggle_combo" placeholder="Ctrl+Shift+Space" style="flex:1"><button type="button" class="btn sm" data-rec="toggle_combo">Record key</button></span></label>
           <label>Undo last paste <span style="display:flex;gap:6px"><input name="undo_combo" placeholder="Ctrl+Shift+Z" style="flex:1"><button type="button" class="btn sm" data-rec="undo_combo">Record key</button></span></label>
+          <label>Copy-only key (dictate to the clipboard, no paste) <span style="display:flex;gap:6px"><input name="copy_only_combo" placeholder="Ctrl+Shift+Alt+Space" style="flex:1"><button type="button" class="btn sm" data-rec="copy_only_combo">Record key</button></span></label>
           <label>Microphone <select name="microphone"><option value="">System default</option></select></label>
           <label>Paste method <select name="paste_method"><option value="clipboard">Clipboard + ⌘V</option><option value="type">Type the text</option></select></label>
           <label>Unload model after idle (minutes, 1–240) <input name="idle_unload_minutes" type="number" min="1" max="240"></label>
@@ -370,7 +371,7 @@
     f.ptt_modifier.value = s.ptt.modifier || ''; f.ptt_combo.value = s.ptt.combo || '';
     const pttMode = () => { const combo = !f.ptt_modifier.value; f.ptt_combo.hidden = !combo; f.querySelector('[data-rec=ptt_combo]').hidden = !combo; };
     f.ptt_modifier.onchange = pttMode; pttMode();
-    f.toggle_combo.value = s.toggle.combo || ''; f.undo_combo.value = (s.undo && s.undo.combo) || '';
+    f.toggle_combo.value = s.toggle.combo || ''; f.undo_combo.value = (s.undo && s.undo.combo) || ''; f.copy_only_combo.value = (s.copy_only && s.copy_only.combo) || '';
     f.querySelectorAll('[data-rec]').forEach(b => b.onclick = () => {
       const input = f[b.dataset.rec]; const old = b.textContent; b.textContent = 'Press keys… (Esc cancels)';
       const onKey = (e) => {
@@ -394,7 +395,7 @@
       const live = await inv('get_settings');
       const n = { ...live, activation: f.activation.value, hold_threshold_ms: +f.hold_threshold_ms.value, microphone: f.microphone.value || null, paste_method: f.paste_method.value,
         ptt: f.ptt_modifier.value ? { modifier: f.ptt_modifier.value, combo: null } : { modifier: null, combo: f.ptt_combo.value || null },
-        toggle: { modifier: null, combo: f.toggle_combo.value || null }, undo: { modifier: null, combo: f.undo_combo.value || null },
+        toggle: { modifier: null, combo: f.toggle_combo.value || null }, undo: { modifier: null, combo: f.undo_combo.value || null }, copy_only: { modifier: null, combo: f.copy_only_combo.value || null },
         idle_unload_minutes: f.idle_never.checked ? null : +f.idle_unload_minutes.value, post_release_ms: +f.post_release_ms.value, max_clip_seconds: +f.max_clip_seconds.value };
       try { await inv('set_settings', { settings: n }); $('settingsOk').textContent = 'Saved'; } catch (err) { $('settingsErr').textContent = String(err); }
     };

@@ -23,6 +23,9 @@ pub fn set_settings(app: AppHandle, state: State<'_, AppState>, mut settings: Se
     if let Some(c) = settings.undo.combo.clone() {
         settings.undo.combo = Some(validate_combo(&c)?);
     }
+    if let Some(c) = settings.copy_only.combo.clone() {
+        settings.copy_only.combo = Some(validate_combo(&c)?);
+    }
     apply_settings(&state.settings, &state.paths.settings(), settings.clone())?;
     crate::llm::apply_settings(&state.polisher, &settings);
     crate::remote::apply_settings(&state.remote, &settings);
