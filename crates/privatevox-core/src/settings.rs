@@ -121,6 +121,8 @@ pub struct Settings {
     pub keep_audio: bool,
     /// Toggle mode: end the dictation by itself after this many seconds of silence; `None` means never (phase 5, A2).
     pub auto_stop_silence_secs: Option<u32>,
+    /// Per-app default modes, first match wins (phase 5, A4).
+    pub app_modes: Vec<crate::appmodes::AppMode>,
 }
 
 impl Default for Settings {
@@ -155,6 +157,7 @@ impl Default for Settings {
             dictionary_strictness: 0.18,
             keep_audio: false,
             auto_stop_silence_secs: Some(2),
+            app_modes: Vec::new(),
         }
     }
 }

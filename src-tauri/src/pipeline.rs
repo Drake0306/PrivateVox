@@ -2,6 +2,7 @@
 //! Generic over the engine, capture source and paste sink so it runs under test without hardware.
 
 use crate::paste::PasteOutcome;
+use privatevox_core::appmodes::resolve as resolve_app_mode;
 use privatevox_core::audio::{level_db, ClipBuffer, SAMPLE_RATE};
 use privatevox_core::chunking::{Chunker, MAX_CHUNK};
 use privatevox_core::dictionary::{correct, initial_prompt};
@@ -237,6 +238,8 @@ pub struct Coordinator {
     fell_back: Arc<AtomicBool>,
     /// macOS Secure Event Input is on: the pill warns that the hold key may not fire.
     secure_input: bool,
+    /// The mode of the dictation in flight, resolved once at Start from the per-app table (A4).
+    dictation_mode: Mode,
 }
 
 /// The hold key as the pill names it ("right ⌥", or a combination), if one is set.
@@ -333,7 +336,7 @@ impl Coordinator {
             let s = settings.lock().map(|s| s.clone()).unwrap_or_default();
             Machine::new(s.activation, Duration::from_millis(s.hold_threshold_ms))
         };
-        Coordinator { deps, settings, store, vad, emit, recording: None, queued: None, generation: 0, machine, pending_switch: None, last_paste: None, idle_tx: None, last_used_remote: false, fell_back: Arc::new(AtomicBool::new(false)), secure_input: false }
+        Coordinator { deps, settings, store, vad, emit, recording: None, queued: None, generation: 0, machine, pending_switch: None, last_paste: None, idle_tx: None, last_used_remote: false, fell_back: Arc::new(AtomicBool::new(false)), secure_input: false, dictation_mode: Mode::Clean }
     }
 
     /// Unloads the current model and loads `id` from the models directory. Refused if the file is missing.
@@ -555,16 +558,19 @@ impl Coordinator {
         let on_error: Box<dyn FnMut(String) + Send> = Box::new(move |msg| {
             let _ = err_tx.send(Cmd::CaptureError(msg));
         });
+        // The mode is decided once, from the app in front (per-app table) or the picker; it stays for the dictation.
+        let mode = resolve_app_mode(&settings.app_modes, (self.deps.frontmost)().as_deref(), settings.mode);
+        self.dictation_mode = mode;
         // A fresh host session per dictation; chunk indexes restart at 0. The host learns the mode and whether a polish call follows.
         self.deps.remote.new_session();
-        self.deps.remote.set_dictation(settings.mode.id(), settings.polish_enabled && settings.mode.uses_llm());
+        self.deps.remote.set_dictation(mode.id(), settings.polish_enabled && mode.uses_llm());
         let used_remote = self.deps.remote.in_use();
         self.last_used_remote = used_remote;
         self.fell_back = Arc::new(AtomicBool::new(false));
         let loading = !self.deps.engine.try_lock().map(|e| e.is_loaded()).unwrap_or(false);
-        (self.emit)(PillState::Listening { seconds: 0.0, level_db: -100.0, countdown: None, loading, mode: settings.mode.label().to_string(), stop_hint: stop_hint(&settings, self.machine.stage()), stopping: false });
+        (self.emit)(PillState::Listening { seconds: 0.0, level_db: -100.0, countdown: None, loading, mode: mode.label().to_string(), stop_hint: stop_hint(&settings, self.machine.stage()), stopping: false });
         self.preload_model();
-        if settings.polish_enabled && settings.mode.uses_llm() {
+        if settings.polish_enabled && mode.uses_llm() {
             let warm = self.deps.llm_warm.clone();
             if let Err(e) = std::thread::Builder::new().name("privatevox-llm-warm".into()).spawn(move || warm()) {
                 log::warn!("llm warm thread: {e}");
@@ -703,7 +709,7 @@ impl Coordinator {
         }
         let settings = self.settings();
         let max_clip = settings.max_clip_seconds;
-        let mode = settings.mode.label().to_string();
+        let mode = self.dictation_mode.label().to_string();
         let stop_hint = stop_hint(&settings, self.machine.stage());
         let latched = matches!(self.machine.stage(), privatevox_core::hotkeys::Stage::Recording { locked: true, .. });
         let Some(rec) = self.recording.as_mut() else {
@@ -810,7 +816,7 @@ impl Coordinator {
             let idle = self.deps.idle.clone();
             // Chunks decode with the first spoken language fixed; per-chunk detection would cost a pass per chunk (ruling, §18.7).
             let language = settings.spoken_languages.first().cloned();
-            let translate = settings.mode.whisper_translate();
+            let translate = self.dictation_mode.whisper_translate();
             let prompt = initial_prompt(&settings.dictionary);
             let flash = settings.flash_attention;
             let model_path = self.deps.model_path.clone();
@@ -1113,7 +1119,7 @@ impl Coordinator {
     /// Shared tail of both decode paths: polish (when the mode asks for it), paste, store.
     fn paste_and_store(&mut self, raw: String, duration_ms: u32, mut timing: serde_json::Value, audio: Option<Vec<f32>>, tx: &Sender<Cmd>) {
         let settings = self.settings();
-        let mode = settings.mode;
+        let mode = self.dictation_mode;
         let t_polish = Instant::now();
         let engine_notice = self.deps.remote.take_notice();
         let outcome = if settings.polish_enabled && mode.uses_llm() {
@@ -1269,7 +1275,7 @@ impl Coordinator {
         (self.emit)(PillState::Transcribing);
         let language = decode_language(&settings.spoken_languages);
         // A short clip is decoded in one go, so this is also the last chunk of its session.
-        let opts = DecodeOptions { language, translate: settings.mode.whisper_translate(), initial_prompt: initial_prompt(&settings.dictionary), n_threads: 4, final_chunk: true };
+        let opts = DecodeOptions { language, translate: self.dictation_mode.whisper_translate(), initial_prompt: initial_prompt(&settings.dictionary), n_threads: 4, final_chunk: true };
         let t = Instant::now();
         let transcript = transcribe_routed(&self.deps.remote, &self.deps.engine, &speech, &opts, self.last_used_remote, &self.fell_back, self.deps.model_path.as_ref(), settings.flash_attention);
         let mut transcript = match transcript {
@@ -2638,6 +2644,43 @@ mod tests {
         let states = h.states.lock().unwrap().clone();
         assert!(!states.iter().any(|s| matches!(s, PillState::Transcribing | PillState::Pasted { .. })), "{:?}", kinds(&states));
         h.tx.send(Cmd::Cancel).unwrap();
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn mode_resolved_at_start_only() {
+        use privatevox_core::appmodes::AppMode;
+        let h = harness(engine_saying("dear team hello"), capture_ok());
+        {
+            let mut s = h.settings.lock().unwrap();
+            s.mode = Mode::Clean;
+            s.app_modes = vec![AppMode { app: "mail".into(), mode: Mode::Email }];
+        }
+        *h.frontmost.lock().unwrap() = Some("Mail".into());
+        h.tx.send(Cmd::Start).unwrap();
+        std::thread::sleep(Duration::from_millis(150));
+        *h.frontmost.lock().unwrap() = Some("Safari".into()); // switched apps mid-sentence
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(400));
+        let row = last_row(&h);
+        assert_eq!(row.mode, "email", "the mode was decided when the dictation started");
+        assert_eq!(h.polish_calls.lock().unwrap()[0].0, Mode::Email);
+        let states = h.states.lock().unwrap().clone();
+        assert!(states.iter().any(|s| matches!(s, PillState::Listening { mode, .. } if mode == "Email")), "{:?}", kinds(&states));
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn without_a_rule_the_picked_mode_applies() {
+        let h = harness(engine_saying("x"), capture_ok());
+        h.settings.lock().unwrap().mode = Mode::Bullets;
+        *h.frontmost.lock().unwrap() = Some("Mail".into());
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(last_row(&h).mode, "bullets");
         h.tx.send(Cmd::Quit).unwrap();
         h.join.join().unwrap();
     }
