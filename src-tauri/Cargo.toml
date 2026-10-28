@@ -1,0 +1,23 @@
+[package]
+name = "lvw"
+description = "LVW (Local Voice Wisper): local Whisper dictation with a floating pill"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "lvw_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.3", features = [] }
+
+[dependencies]
+tauri = { version = "2.12.4", features = ["tray-icon", "image-png", "macos-private-api"] }
+tauri-plugin-log = "2.10.1"
+log.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+lvw-core = { path = "../crates/lvw-core" }
+lvw-engine = { path = "../crates/lvw-engine" }

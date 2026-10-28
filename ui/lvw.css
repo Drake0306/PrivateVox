@@ -1,0 +1,13 @@
+/* LVW shared styles. Dark pill on a transparent window; panel follows the system theme. */
+:root { --pill: #1b2423; --pill-fg: #f3f6f5; --rec: #e5484d; --ok: #5fc48a; --warn: #e0a84a;
+  --bg: #f6f8f8; --surface: #fff; --fg: #15201f; --muted: #5b6b69; --line: #d6dedd; --accent: #0f766e; }
+@media (prefers-color-scheme: dark) { :root { --bg: #0f1514; --surface: #161e1d; --fg: #e8eeed; --muted: #9aaba8; --line: #2b3736; --accent: #3fbfb2; } }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; font: 14px/1.4 -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif; }
+body.pill-body { background: transparent; display: flex; align-items: center; justify-content: center; overflow: hidden; user-select: none; -webkit-user-select: none; }
+.pill { background: var(--pill); color: var(--pill-fg); border-radius: 999px; padding: 8px 14px 8px 11px; display: inline-flex; align-items: center; gap: 9px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.28); font-size: 13px; font-weight: 500; cursor: default; max-width: 270px; white-space: nowrap; overflow: hidden; }
+.pill .dot { width: 10px; height: 10px; border-radius: 50%; background: #6c7a78; flex: none; }
+.pill.listening .dot { background: var(--rec); box-shadow: 0 0 0 4px rgba(229,72,77,.3); }
+.pill .label { overflow: hidden; text-overflow: ellipsis; }
+body.panel-body { background: var(--bg); color: var(--fg); padding: 16px; }

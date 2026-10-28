@@ -7,3 +7,8 @@ spike/engine-bench/clips/*.wav
 spike/engine-bench/clips/*.aiff
 spike/engine-bench/target/
 .superpowers/
+
+# Rust
+target/
+src-tauri/gen/
+src-tauri/icon-src.png

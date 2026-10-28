@@ -1,0 +1,12 @@
+[package]
+name = "lvw-engine"
+description = "LVW speech engine: Engine trait, whisper-rs backend, worker process and supervisor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+log.workspace = true
+serde.workspace = true
+lvw-core = { path = "../lvw-core" }
