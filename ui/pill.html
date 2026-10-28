@@ -23,7 +23,15 @@
       dot.hidden = !(s.state === 'idle' || s.state === 'listening' || s.state === 'error' || s.state === 'pasted');
       switch (s.state) {
         case 'idle': label.textContent = s.hotkey_hint; break;
-        case 'listening': label.textContent = (s.countdown != null ? s.seconds.toFixed(0) + 's · stops in ' + s.countdown + 's' : s.seconds.toFixed(0) + 's') + (s.stop_hint ? ' · ' + s.stop_hint : '') + (s.mode && s.mode !== 'Clean' ? ' · ' + s.mode : '') + (s.loading ? ' · loading model, keep talking' : ''); document.documentElement.style.setProperty('--lvl', Math.max(0, Math.min(1, (s.level_db + 60) / 60))); break;
+        case 'listening': {
+          // One message at a time, most urgent first: model loading, then the auto-stop countdown, then how to stop a latched recording.
+          const secs = s.seconds >= 60 ? Math.floor(s.seconds / 60) + ':' + String(Math.floor(s.seconds % 60)).padStart(2, '0') : s.seconds.toFixed(0) + 's';
+          if (s.loading) label.textContent = 'Loading model, keep talking · ' + secs;
+          else if (s.countdown != null) label.textContent = secs + ' · stops in ' + s.countdown + 's';
+          else label.textContent = secs + (s.stop_hint ? ' · ' + s.stop_hint : '') + (s.mode && s.mode !== 'Clean' ? ' · ' + s.mode : '');
+          document.documentElement.style.setProperty('--lvl', Math.max(0, Math.min(1, (s.level_db + 60) / 60)));
+          break;
+        }
         case 'transcribing': label.textContent = 'Transcribing…'; break;
         case 'polishing': label.textContent = 'Polishing…'; break;
         case 'loading_model': label.textContent = s.progress == null ? 'Loading model…' : 'Downloading ' + Math.round(s.progress * 100) + '%'; break;
