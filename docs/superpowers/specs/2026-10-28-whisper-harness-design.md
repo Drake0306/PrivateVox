@@ -265,9 +265,10 @@ Both: respect reduced motion, dark/light theme following the OS, high-DPI pill r
 - Host mode and the remote interface (§8.6), then mDNS discovery.
 - Long-form notes: toggle mode without the 30 s expectation; chunked transcription; result opens in the panel as a document to copy or export.
 
-**v2**
+**v2** — candidates and the owner's pick are in `docs/superpowers/plans/2026-10-29-privatevox-phase5-proposal.md` (2026-10-29).
 - Live preview while speaking (streaming partials, toggle, off by default on ≤ 8 GB).
-- MLX engine on macOS behind the `Engine` trait.
+- MLX engine on macOS behind the `Engine` trait (spike first).
+- Auto-stop on silence in toggle mode; per-app default modes; spoken end-of-dictation commands; sound cues.
 
 **Parked (not picked):** per-app automatic modes, spoken commands, snippets, stats.
 
