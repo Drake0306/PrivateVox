@@ -6,14 +6,17 @@ Hold a key, talk, let go: the words land in whatever app is in front. Whisper ru
 
 ## What works today (macOS)
 
-- Floating pill that shows idle / listening / transcribing / pasted / error, draggable, visible on every space, never steals focus.
-- Push-to-talk on **Right Option**, toggle on **Ctrl+Shift+Space**, or hold-or-toggle; all set in `settings.json`.
-- Whisper large-v3-turbo on Metal in a child worker process (crash and hang recovery, no stranded GPU memory on force quit).
-- Silence trimming, 300 ms minimum clip, 5 minute maximum, reduced audio context for short clips (about 1 s per dictation on an M1).
+- Floating pill at the bottom of the screen above the Dock (drag it anywhere; it remembers), showing idle / listening / transcribing / pasted / error, visible on every space, never steals focus.
+- Push-to-talk on **Right Option**, toggle on **Ctrl+Shift+Space**, hold-or-toggle, and **Ctrl+Shift+Z** to undo the last paste; all rebindable from the Settings tab with a key recorder, applied without restart.
+- Three Whisper tiers switchable from the panel: large-v3-turbo (fast, default), large-v3 (accuracy), distil-large-v3 (English only). Download, delete and benchmark each from the Models tab.
+- A memory strip showing total memory, what other apps hold, what the selected model will take (measured after its first load), Recommended and Best-that-fits.
+- Whisper on Metal in a child worker process (crash and hang recovery, no stranded GPU memory on force quit); the model starts loading the moment you press the key.
+- Silence trimming, 300 ms minimum clip, 5 minute maximum with a countdown in the last 30 s; long dictations are cut at pauses and decoded while you are still speaking.
+- Reduced audio context for short clips (about 1 s per dictation on an M1).
 - Paste into the frontmost app via the clipboard with the previous clipboard restored.
-- SQLite history with search, copy and delete, in a panel opened by clicking the pill or from the menu bar.
-- Idle unload of the model after a configurable number of minutes; menu bar item to pause and unload now.
-- First-run download of the model with resume and progress.
+- SQLite history with search, inline edit, pin, copy, paste again, delete, and export to Markdown or JSON in ~/Downloads.
+- Idle unload of the model after any number of minutes you choose; menu bar item to pause and unload now.
+- First-run download of the model with resume and progress; Setup tab for the three macOS permissions.
 
 ## Build and run
 
