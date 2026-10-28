@@ -1,0 +1,574 @@
+<title>Whisper Harness</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a single reading column (68ch) with full-bleed "bench" sections for mockups and tables. */
+:root{
+  --bg:#f6f8f8; --surface:#ffffff; --surface-2:#eef2f2; --fg:#15201f; --muted:#5b6b69; --line:#d6dedd;
+  --accent:#0f766e; --accent-soft:#d9f0ec; --accent-fg:#0a4f4a;
+  --rec:#e5484d; --rec-soft:#fde3e4; --warn:#b7791f; --warn-soft:#fbeedb; --ok:#2f855a;
+  --pill:#1b2423; --pill-fg:#f3f6f5;
+  --m-other:#8069b8; --m-whisper:#0d9488; --m-llm:#c47f17;
+  --display:"Sora",ui-sans-serif,system-ui,sans-serif;
+  --body:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0f1514; --surface:#161e1d; --surface-2:#1e2827; --fg:#e8eeed; --muted:#9aaba8; --line:#2b3736;
+  --accent:#3fbfb2; --accent-soft:#143732; --accent-fg:#a8e8df;
+  --rec:#ff6b70; --rec-soft:#3a1d1f; --warn:#e0a84a; --warn-soft:#3a2d16; --ok:#5fc48a;
+  --pill:#0b100f; --pill-fg:#f3f6f5; --m-other:#8f7fd0; --m-whisper:#0f9b8e; --m-llm:#b8821c; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#0f1514; --surface:#161e1d; --surface-2:#1e2827; --fg:#e8eeed; --muted:#9aaba8; --line:#2b3736;
+  --accent:#3fbfb2; --accent-soft:#143732; --accent-fg:#a8e8df;
+  --rec:#ff6b70; --rec-soft:#3a1d1f; --warn:#e0a84a; --warn-soft:#3a2d16; --ok:#5fc48a;
+  --pill:#0b100f; --pill-fg:#f3f6f5; --m-other:#8f7fd0; --m-whisper:#0f9b8e; --m-llm:#b8821c; color-scheme:dark }
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:16px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 80px}
+.wrap{max-width:68ch;margin:0 auto}
+.bench{max-width:980px;margin:0 auto}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;line-height:1.15;margin:0}
+h1{font-size:clamp(2rem,5vw,3rem);font-weight:700;letter-spacing:-.02em}
+h2{font-size:1.5rem;font-weight:600;margin-top:3.5rem;margin-bottom:.75rem;padding-top:1.5rem;border-top:1px solid var(--line)}
+h3{font-size:1.05rem;font-weight:600;margin-top:1.75rem;margin-bottom:.5rem}
+p{margin:.6rem 0}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.lede{font-size:1.15rem;color:var(--muted);max-width:60ch}
+header{padding-top:3rem;padding-bottom:1rem}
+.tag{display:inline-block;font-family:var(--mono);font-size:.72rem;padding:.15rem .5rem;border-radius:4px;background:var(--surface-2);color:var(--muted);letter-spacing:.03em;vertical-align:middle}
+.tag.call{background:var(--accent-soft);color:var(--accent-fg)}
+.tag.ask{background:var(--warn-soft);color:var(--warn)}
+.tag.yours{background:var(--surface-2);color:var(--fg)}
+ul,ol{padding-left:1.3rem}
+li{margin:.3rem 0}
+li::marker{color:var(--muted)}
+code{font-family:var(--mono);font-size:.88em;background:var(--surface-2);padding:.08em .35em;border-radius:3px}
+kbd{font-family:var(--mono);font-size:.8em;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:.05em .4em;background:var(--surface)}
+.note{border-left:3px solid var(--accent);padding:.5rem .9rem;background:var(--surface);margin:1rem 0;border-radius:0 6px 6px 0}
+.note.ask{border-color:var(--warn)}
+.legend{display:flex;flex-wrap:wrap;gap:.6rem 1.2rem;margin:1.2rem 0;font-size:.9rem;color:var(--muted)}
+
+/* Flow */
+.flow{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin:1.2rem 0}
+.step{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:.7rem .8rem;min-width:0;position:relative}
+.step .n{font-family:var(--mono);font-size:.7rem;color:var(--muted)}
+.step b{display:block;font-family:var(--display);font-size:.95rem;font-weight:600;margin:.15rem 0}
+.step small{color:var(--muted);display:block;line-height:1.35}
+.step .t{font-family:var(--mono);font-size:.72rem;color:var(--accent-fg);background:var(--accent-soft);padding:.1rem .4rem;border-radius:3px;display:inline-block;margin-top:.4rem;font-variant-numeric:tabular-nums}
+
+/* Pill mockup */
+.stage{background:
+  repeating-linear-gradient(0deg,transparent 0 23px,var(--line) 23px 24px),
+  repeating-linear-gradient(90deg,transparent 0 23px,var(--line) 23px 24px),
+  var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:2rem 1rem;display:flex;flex-direction:column;align-items:center;gap:1.2rem;margin:1rem 0}
+.pill{background:var(--pill);color:var(--pill-fg);border-radius:999px;padding:.55rem .9rem .55rem .7rem;display:inline-flex;align-items:center;gap:.6rem;
+  box-shadow:0 10px 30px rgba(0,0,0,.25),0 1px 0 rgba(255,255,255,.08) inset;font-family:var(--display);font-size:.9rem;font-weight:500;cursor:grab;user-select:none;max-width:100%;min-height:40px;transition:transform .15s}
+.pill:active{cursor:grabbing}
+.pill .dot{width:10px;height:10px;border-radius:50%;background:#6c7a78;flex:none}
+.pill.listening .dot{background:var(--rec);box-shadow:0 0 0 4px rgba(229,72,77,.3);animation:pulse 1s infinite}
+.pill .bars{display:inline-flex;gap:2px;align-items:center;height:18px}
+.pill .bars i{display:block;width:3px;border-radius:2px;background:var(--pill-fg);height:6px;animation:bar .7s infinite ease-in-out}
+.pill .bars i:nth-child(2){animation-delay:.1s}.pill .bars i:nth-child(3){animation-delay:.2s}.pill .bars i:nth-child(4){animation-delay:.3s}.pill .bars i:nth-child(5){animation-delay:.15s}.pill .bars i:nth-child(6){animation-delay:.05s}
+.pill .time{font-family:var(--mono);font-size:.8rem;opacity:.8;font-variant-numeric:tabular-nums}
+.pill .spin{width:14px;height:14px;border:2px solid rgba(255,255,255,.25);border-top-color:var(--pill-fg);border-radius:50%;animation:spin .8s linear infinite;flex:none}
+.pill .ok{color:var(--ok);font-weight:700}
+.pill .preview{opacity:.75;font-family:var(--body);font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}
+.pill .mode{font-family:var(--mono);font-size:.7rem;opacity:.6;border:1px solid rgba(255,255,255,.2);padding:.05rem .35rem;border-radius:3px}
+.pill.err .dot{background:var(--warn)}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 3px rgba(229,72,77,.35)}50%{box-shadow:0 0 0 7px rgba(229,72,77,.12)}}
+@keyframes bar{0%,100%{height:5px}50%{height:16px}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.pill .bars i,.pill .spin,.pill.listening .dot{animation:none}}
+.states{display:flex;flex-wrap:wrap;gap:.4rem;justify-content:center}
+.states button, .btn{font:inherit;font-size:.85rem;padding:.35rem .7rem;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:6px;cursor:pointer}
+.states button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+.states button:focus-visible,.btn:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.caption{font-size:.85rem;color:var(--muted);text-align:center;max-width:60ch}
+
+/* History panel mock */
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin:1rem 0;box-shadow:0 12px 40px rgba(0,0,0,.12)}
+.panel .bar{display:flex;align-items:center;gap:.6rem;padding:.6rem .9rem;border-bottom:1px solid var(--line);background:var(--surface-2);flex-wrap:wrap}
+.panel .bar b{font-family:var(--display);font-weight:600;font-size:.95rem}
+.panel .bar input{font:inherit;font-size:.85rem;padding:.3rem .6rem;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--fg);flex:1;min-width:140px}
+.panel .bar select{font:inherit;font-size:.82rem;padding:.3rem .5rem;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--fg);max-width:100%}
+.panel .bar .stats{font-family:var(--mono);font-size:.72rem;color:var(--muted);margin-left:auto;font-variant-numeric:tabular-nums}
+.row{display:grid;grid-template-columns:1fr auto;gap:.4rem 1rem;padding:.75rem .9rem;border-bottom:1px solid var(--line);align-items:start}
+.row:last-child{border-bottom:0}
+.row .meta{font-family:var(--mono);font-size:.72rem;color:var(--muted);display:flex;gap:.7rem;flex-wrap:wrap;grid-column:1/-1}
+.row .txt{min-width:0;font-size:.95rem;line-height:1.45}
+.row .txt[contenteditable="true"]{outline:2px dashed var(--accent);border-radius:4px;padding:.1rem .3rem;background:var(--accent-soft)}
+.row .acts{display:flex;gap:.3rem;flex-wrap:wrap;justify-content:flex-end}
+.row .acts button{font:inherit;font-size:.75rem;padding:.2rem .5rem;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:5px;cursor:pointer}
+.row .acts button:hover{border-color:var(--accent)}
+.row .raw{font-size:.8rem;color:var(--muted);font-style:italic;grid-column:1/-1}
+.toast{font-size:.8rem;color:var(--ok);min-height:1.2em;text-align:right;padding:.3rem .9rem}
+@media (max-width:520px){.row{grid-template-columns:1fr}.row .acts{justify-content:flex-start}}
+
+/* VRAM gauge */
+.gpu{padding:.8rem .9rem;border-bottom:1px solid var(--line);display:grid;gap:.6rem}
+.gpu .head{display:flex;flex-wrap:wrap;gap:.5rem 1rem;align-items:center}
+.gpu .head b{font-family:var(--display);font-weight:600;font-size:.9rem}
+.gpu .head select{font:inherit;font-size:.82rem;padding:.25rem .5rem;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--fg);max-width:100%}
+.gpu .head label{font-size:.78rem;color:var(--muted);display:inline-flex;gap:.35rem;align-items:center}
+.gpu .meter{height:12px;border-radius:6px;background:var(--surface-2);display:flex;gap:2px;overflow:hidden}
+.gpu .meter i{display:block;height:100%;transition:flex-basis .25s;flex:0 0 0%}
+.gpu .meter .o{background:var(--m-other)}.gpu .meter .w{background:var(--m-whisper)}.gpu .meter .l{background:var(--m-llm)}
+.gpu .meter.over{outline:2px solid var(--rec);outline-offset:1px}
+.gpu .ticks{display:flex;justify-content:space-between;font-family:var(--mono);font-size:.68rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.gpu .leg{display:flex;flex-wrap:wrap;gap:.3rem 1rem;font-size:.8rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.gpu .leg span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:.35rem;vertical-align:-1px;background:var(--sw)}
+.gpu .leg b{color:var(--fg);font-weight:500;font-family:var(--mono);font-size:.78rem}
+.gpu .verdict{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.5rem}
+.gpu .verdict div{background:var(--surface-2);border-radius:6px;padding:.45rem .6rem;font-size:.82rem;min-width:0}
+.gpu .verdict .k{font-family:var(--mono);font-size:.66rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);display:block}
+.gpu .verdict .v{font-family:var(--display);font-weight:600;font-size:.92rem}
+.gpu .verdict .s{color:var(--muted);display:block;font-size:.78rem}
+.gpu .verdict div.bad .v{color:var(--rec)}
+.gpu .verdict div.good .v{color:var(--ok)}
+
+/* Tables */
+.tbl{overflow-x:auto;margin:1rem 0}
+table{border-collapse:collapse;width:100%;font-size:.9rem}
+th,td{text-align:left;padding:.55rem .7rem;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500}
+td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+tr.pick td{background:var(--accent-soft)}
+.vbar{height:8px;border-radius:4px;background:var(--surface-2);position:relative;min-width:120px;margin-top:.35rem}
+.vbar i{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--accent)}
+.vbar i.l{background:var(--warn)}
+
+/* Idea bank */
+.ideas{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:.7rem;margin:1rem 0}
+.idea{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:.7rem .8rem;display:grid;grid-template-columns:auto 1fr;gap:.6rem;min-width:0}
+.idea input{margin-top:.25rem;accent-color:var(--accent);width:16px;height:16px}
+.idea b{font-family:var(--display);font-weight:600;font-size:.95rem;display:block}
+.idea small{color:var(--muted);display:block;line-height:1.4}
+.idea .tier{font-family:var(--mono);font-size:.68rem;letter-spacing:.05em;color:var(--muted);text-transform:uppercase}
+.idea:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}
+.picks{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin:.8rem 0}
+.picks output{font-family:var(--mono);font-size:.8rem;color:var(--muted)}
+
+/* Questions */
+.q{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:.8rem 1rem;margin:.7rem 0}
+.q b{font-family:var(--display);font-weight:600}
+.q .guess{font-size:.9rem;color:var(--muted);margin-top:.3rem}
+a{color:var(--accent-fg)}
+.q .guess::before{content:"My default if you don't say: ";color:var(--accent-fg);font-weight:600}
+footer{margin-top:4rem;padding-top:1rem;border-top:1px solid var(--line);font-size:.85rem;color:var(--muted)}
+</style>
+
+<header class="wrap">
+  <div class="eyebrow">Brainstorm · 28 Oct 2026 · draft for discussion</div>
+  <h1 style="margin-top:.4rem">Whisper Harness</h1>
+  <p class="lede">A hold-a-key, talk, release, and the text lands where your cursor is dictation tool. Runs fully local on an AMD Windows box or an M1 Mac, keeps Whisper warm in GPU memory, and remembers everything you dictated.</p>
+  <div class="legend">
+    <span><span class="tag yours">yours</span> something you asked for</span>
+    <span><span class="tag call">my call</span> a default I picked, overrideable</span>
+    <span><span class="tag ask">open</span> needs your answer</span>
+  </div>
+</header>
+
+<section class="wrap">
+  <h2>The moment it exists for</h2>
+  <p>You are in Slack, VS Code, a browser form, anywhere. You hold the hotkey, say two sentences, let go. About two seconds later clean punctuated text appears at the cursor, as if you had typed it. No window switching, no upload, no account. If you got it wrong you open the little history panel, fix the line, and copy it again.</p>
+  <p>That is the whole v1. Everything else on this page is either in service of that moment or parked in the idea bank at the bottom.</p>
+</section>
+
+<section class="bench">
+  <h2 style="max-width:68ch;margin-left:auto;margin-right:auto">The pipeline <span class="tag yours">yours</span></h2>
+  <div class="flow">
+    <div class="step"><span class="n">1</span><b>Hotkey down</b><small>Global listener, works in any app. Pill pops to "Listening".</small><span class="t">~0 ms</span></div>
+    <div class="step"><span class="n">2</span><b>Capture</b><small>Mic at 16 kHz mono straight into a buffer. Nothing hits disk by default.</small><span class="t">while held</span></div>
+    <div class="step"><span class="n">3</span><b>Hotkey up</b><small>Trim leading/trailing silence with a voice-activity detector.</small><span class="t">~20 ms</span></div>
+    <div class="step"><span class="n">4</span><b>Whisper</b><small>Model already resident on the GPU. Returns raw transcript.</small><span class="t">0.5–1.5 s</span></div>
+    <div class="step"><span class="n">5</span><b>LLM polish</b><small>Optional. Punctuation, filler removal, a "mode" prompt (email, bullets, code).</small><span class="t">1–2 s</span></div>
+    <div class="step"><span class="n">6</span><b>Paste</b><small>Write clipboard, send ⌘V / Ctrl+V to the front app, restore old clipboard.</small><span class="t">~50 ms</span></div>
+    <div class="step"><span class="n">7</span><b>Remember</b><small>Raw + polished text, app name, duration, mode saved to local history.</small><span class="t">async</span></div>
+  </div>
+  <p class="caption" style="margin:0 auto">Timings are rough targets for a 10-second utterance on an M1 or an RX 6600-class card. We benchmark in the first week and tune from there. "LLM polish" can be switched off for a sub-second path.</p>
+</section>
+
+<section class="bench">
+  <h2 style="max-width:68ch;margin-left:auto;margin-right:auto">The floating pill <span class="tag yours">yours</span></h2>
+  <div class="wrap" style="margin-bottom:.5rem">
+    <p>Frameless, transparent, always on top, draggable anywhere on the screen and it remembers where you left it. It is tiny at rest and only grows while it has something to say. Click the states below to see each one. Drag the pill itself to feel the idea.</p>
+  </div>
+  <div class="stage">
+    <div class="pill idle" id="pill" tabindex="0" aria-label="Floating pill mockup"><span class="dot"></span><span class="label">Hold ⌥ to talk</span></div>
+    <div class="states" id="states">
+      <button aria-pressed="true" data-s="idle">Idle</button>
+      <button data-s="listening">Listening</button>
+      <button data-s="transcribing">Transcribing</button>
+      <button data-s="polishing">Polishing</button>
+      <button data-s="pasted">Pasted</button>
+      <button data-s="err">Mic blocked</button>
+    </div>
+    <p class="caption">Idle shows the current hotkey so you never forget it. Listening shows a live level meter and a timer. Pasted shows the first words for two seconds and then shrinks back. Right-click or click the pill opens the history panel below it.</p>
+  </div>
+</section>
+
+<section class="bench">
+  <h2 style="max-width:68ch;margin-left:auto;margin-right:auto">The history panel <span class="tag yours">yours</span></h2>
+  <div class="wrap" style="margin-bottom:.5rem">
+    <p>Every dictation is kept with both versions: what Whisper heard and what the LLM made of it. You asked for view, edit, remove and copy. This mock actually does those four things so you can feel the interaction (changes are not saved anywhere).</p>
+  </div>
+  <div class="panel" id="panel">
+    <div class="bar"><b>History</b><input id="search" type="search" placeholder="Search dictations…" aria-label="Search dictations"><select id="modelPick" aria-label="Whisper model" title="Whisper model in use"><option value="turbo">large-v3-turbo · fast</option><option value="v3">large-v3 · accuracy</option><option value="distil">distil-large-v3 · English</option></select><span class="stats" id="stats"></span></div>
+    <div class="gpu" id="gpu">
+      <div class="head"><b>GPU memory</b>
+        <label>Detected <select id="gpuPick" aria-label="GPU (mock of auto-detection)"><option value="rx9070" selected>AMD RX 9070 · 16 GB</option><option value="rx6600">AMD RX 6600 · 8 GB</option><option value="m1_8">Apple M1 · 8 GB unified</option><option value="m1p_16">Apple M1 Pro · 16 GB unified</option><option value="rtx3060">NVIDIA RTX 3060 · 12 GB</option></select></label>
+        <label>Polish LLM <select id="llmPick" aria-label="Polish LLM"><option value="none">Off</option><option value="3b">3B local</option><option value="8b" selected>8B local</option><option value="lan">On LAN machine (0 GB here)</option></select></label>
+      </div>
+      <div class="meter" id="meter" role="img" aria-label="GPU memory usage"><i class="o"></i><i class="w"></i><i class="l"></i></div>
+      <div class="ticks"><span>0</span><span id="tickMid"></span><span id="tickMax"></span></div>
+      <div class="leg" id="leg"></div>
+      <div class="verdict" id="verdict"></div>
+    </div>
+    <div id="rows"></div>
+    <div class="toast" id="toast" aria-live="polite"></div>
+  </div>
+  <div class="wrap">
+    <p>The GPU memory strip under the header is the live picture you asked for. <span class="tag yours">yours</span> It shows the card the app detected, total memory, how much other apps already hold, and how much the selected Whisper model plus the polish LLM will take once loaded. Change the model dropdown and the bar updates before anything is loaded, so you see the cost first. "Recommended" is the fastest model that fits with room to spare. "Best" is the most accurate one that still fits. The GPU picker in the mock stands in for auto-detection; the real app reads it from the driver.</p>
+    <p>The model dropdown in the panel header is the switcher you asked for. <span class="tag yours">yours</span> All three Whisper checkpoints are installed, the dropdown changes which one is loaded on the GPU, and the pill shows a one-second "Loading large-v3…" while it swaps. Each history row records which model produced it, so you can compare them on the same phrase.</p>
+    <p>Per row: <b>Copy</b>, <b>Edit</b> (inline, Enter to save, Esc to cancel), <b>Re-polish</b> (run the LLM again with a different mode), <b>Paste again</b> (into whatever app is in front), <b>Delete</b>. Panel-level: search, filter by app or mode, pin, export everything as Markdown or JSON, and "clear all". Stored in a local SQLite file so it survives restarts and is trivially backed up. <span class="tag call">my call</span></p>
+  </div>
+</section>
+
+<section class="wrap">
+  <h2>Which Whisper <span class="tag call">my call</span></h2>
+  <p>The link you sent is <code>openai/whisper-large</code>, the original 2022 "large" (v1). It still works, but two newer checkpoints from the same family are strictly better for this job.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Checkpoint</th><th>Params</th><th>Size on GPU (5-bit)</th><th>Relative speed</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td>large (v1), the one you linked</td><td class="num">1.55 B</td><td class="num">~1.1 GB</td><td class="num">1×</td><td>Superseded. Skip.</td></tr>
+      <tr class="pick"><td>large-v3</td><td class="num">1.55 B</td><td class="num">~1.1 GB</td><td class="num">1×</td><td>Best accuracy, 100 languages. The "Accuracy" option.</td></tr>
+      <tr class="pick"><td>large-v3-turbo</td><td class="num">0.81 B</td><td class="num">~0.55 GB</td><td class="num">~6–8×</td><td>Loaded by default. Same encoder as v3, four decoder layers instead of 32. Tiny accuracy loss, huge speed win.</td></tr>
+      <tr class="pick"><td>distil-large-v3</td><td class="num">0.76 B</td><td class="num">~0.5 GB</td><td class="num">~6×</td><td>English only. Third option, for when turbo misbehaves on an English clip.</td></tr>
+    </tbody>
+  </table></div>
+  <p><span class="tag yours">yours</span> All three highlighted rows (large-v3, large-v3-turbo, distil-large-v3) ship together and you switch between them from the history panel. Turbo is what loads at first launch. Switching unloads the current model and loads the new one, roughly one second on an M1 or a mid-range AMD card, and your choice is remembered across restarts. Only one is resident at a time so the VRAM budget below stays the same whichever you pick.</p>
+  <p>The app ships with a model manager that downloads the three from Hugging Face with a progress bar, picks the quantization that fits the GPU it detects, and has a "benchmark this model" button so you can see words-per-second on your own hardware.</p>
+</section>
+
+<section class="wrap">
+  <h2>Running it on AMD and on M1 <span class="tag call">my call</span></h2>
+  <p>The constraint that decides the whole engine choice: you want one codebase for an AMD GPU on Windows and an M1 Mac, with the model parked in GPU memory. Only one mature runtime covers both without CUDA.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Runtime</th><th>Windows + AMD</th><th>macOS M1</th><th>Keeps model warm</th><th>Fit</th></tr></thead>
+    <tbody>
+      <tr class="pick"><td><b>whisper.cpp</b> (ggml)</td><td>Vulkan backend. Works on any RX 5000/6000/7000. ROCm (HIP) also possible on supported cards.</td><td>Metal, plus optional Core ML encoder that uses the Neural Engine.</td><td>Yes, context lives in-process</td><td><b>Pick.</b> One engine, every target.</td></tr>
+      <tr><td>faster-whisper (CTranslate2)</td><td>CPU only. No AMD GPU path.</td><td>CPU only.</td><td>Yes</td><td>Great on NVIDIA, wrong for us.</td></tr>
+      <tr><td>PyTorch + ROCm</td><td>Linux only in practice. Windows ROCm for PyTorch is still thin.</td><td>MPS works, heavy install.</td><td>Yes</td><td>Too heavy to ship to users.</td></tr>
+      <tr><td>mlx-whisper</td><td>No</td><td>Fastest option on Apple Silicon.</td><td>Yes</td><td>Possible Mac-only "turbo" engine later.</td></tr>
+      <tr><td>ONNX Runtime + DirectML</td><td>Good AMD support on Windows.</td><td>No DirectML.</td><td>Yes</td><td>Windows-only alternative if Vulkan disappoints.</td></tr>
+    </tbody>
+  </table></div>
+  <h3>What fits in 8 GB of VRAM</h3>
+  <p>Your Windows card is an RX 9070 with 16 GB, so this table is the worst case rather than your case: an 8 GB card or an 8 GB M1. Whisper is the cheap part. The LLM polish stage is what eats memory, so it is sized to leave headroom for whatever game or browser is also running.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Resident on GPU</th><th>Memory</th><th>Share of 8 GB</th></tr></thead>
+    <tbody>
+      <tr><td>Whisper large-v3-turbo, 5-bit, plus working buffers</td><td class="num">~1.3 GB</td><td><div class="vbar"><i style="width:16%"></i></div></td></tr>
+      <tr><td>Whisper large-v3, 5-bit, plus working buffers ("Accuracy" mode)</td><td class="num">~2.4 GB</td><td><div class="vbar"><i style="width:30%"></i></div></td></tr>
+      <tr><td>Polish LLM, 3 B class (Qwen 2.5 3B / Llama 3.2 3B), 4-bit, 4k context</td><td class="num">~2.3 GB</td><td><div class="vbar"><i class="l" style="width:29%"></i></div></td></tr>
+      <tr><td>Polish LLM, 7–8 B class, 4-bit, 4k context</td><td class="num">~5.0 GB</td><td><div class="vbar"><i class="l" style="width:62%"></i></div></td></tr>
+      <tr><td><b>Default stack: turbo + 3 B polish</b></td><td class="num"><b>~3.6 GB</b></td><td><div class="vbar"><i style="width:16%"></i><i class="l" style="left:16%;width:29%"></i></div></td></tr>
+    </tbody>
+  </table></div>
+  <p>Turbo plus a 3 B polish model leaves more than half the card free. Turbo plus an 8 B model also fits but is tight, so that becomes an opt-in. On an M1 with 8 GB unified memory the same default stack is fine; 16 GB is comfortable. The "unload after idle" timer gives the memory back when you are gaming, and the number of minutes is yours to set and change at any time. <span class="tag yours">yours</span></p>
+</section>
+
+<section class="wrap">
+  <h2>The app shell <span class="tag call">my call</span></h2>
+  <p>You want the UI in HTML. Three realistic ways to wrap an HTML UI around a native audio + GPU engine:</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Shell</th><th>Binary</th><th>Idle RAM</th><th>Global hotkey, paste, tray</th><th>Talking to whisper.cpp</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr class="pick"><td><b>Tauri 2</b> (Rust core, system webview)</td><td class="num">~10 MB + model</td><td class="num">~40 MB</td><td>First-party plugins for shortcuts, clipboard, autostart, tray. Paste via <code>enigo</code>.</td><td>In-process through <code>whisper-rs</code> with the Metal or Vulkan feature flag. No sidecar, no IPC.</td><td><b>Pick.</b> Smallest, fastest, feels native.</td></tr>
+      <tr><td>Electron</td><td class="num">~150 MB</td><td class="num">~200 MB</td><td>Good support via Node modules.</td><td>Sidecar <code>whisper-server</code> process over localhost.</td><td>Fine, but heavy for a tool that is always running.</td></tr>
+      <tr><td>Python + pywebview</td><td class="num">~80 MB</td><td class="num">~120 MB</td><td>Patchy on macOS (hotkeys need Accessibility hacks).</td><td>Python bindings for whisper.cpp exist but GPU builds on Windows AMD are painful.</td><td>Fastest to prototype, worst to ship.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Tauri means the UI is plain HTML/CSS/JS (or any framework you like) and the Rust side is a few hundred lines: audio capture with <code>cpal</code>, Whisper via <code>whisper-rs</code>, SQLite via the Tauri SQL plugin. The engine sits behind one trait so a sidecar (mlx-whisper on Mac, a remote GPU box) can slot in later without touching the UI.</p>
+  <div class="note">One practical wrinkle: Tauri's global-shortcut plugin needs a real key combination like <kbd>Ctrl</kbd>+<kbd>Space</kbd>. If you want "hold a single modifier" like <kbd>Right ⌥</kbd> the way Wispr Flow and superwhisper do, we add a low-level key listener (<code>rdev</code>) for that one job. Both are doable; I plan for both from day one.</div>
+</section>
+
+<section class="wrap">
+  <h2>Exit and crash paths <span class="tag yours">yours</span></h2>
+  <p>However the app stops, the GPU and RAM it held must come back. There are four ways it can stop, and each gets its own handling.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>How it stops</th><th>What happens</th><th>Who frees the memory</th></tr></thead>
+    <tbody>
+      <tr><td><b>Normal exit</b> (tray Quit, <kbd>⌘</kbd>+<kbd>Q</kbd>, window close)</td><td>Finish or cancel any in-flight dictation, flush history to SQLite, drop the Whisper context (frees the GPU buffers), stop the audio stream, release the hotkey hook, remove the lock file, then exit.</td><td>The app, in order, in under a second.</td></tr>
+      <tr><td><b>Asked to stop by the OS</b> (SIGTERM / SIGINT on Mac, <code>WM_CLOSE</code> or console Ctrl event on Windows, logout, shutdown)</td><td>Same path as normal exit, triggered from a signal handler with a two-second deadline. If the deadline passes, exit anyway.</td><td>The app, falling back to the OS.</td></tr>
+      <tr><td><b>Force closed</b> (Task Manager End task, Activity Monitor Force Quit, <code>kill -9</code>)</td><td>No code runs. The OS reclaims process RAM immediately, and the Metal or Vulkan driver reclaims the GPU allocations when the process handle closes. Because the engine runs in-process there is no orphan helper left holding VRAM.</td><td>The OS and GPU driver.</td></tr>
+      <tr><td><b>Crash</b> (panic, driver fault, out of memory)</td><td>A crash handler writes a short report and exits. Memory is reclaimed as in force close. On the next launch the stale lock file tells the app it died uncleanly, so it opens with a "last session ended unexpectedly" line and offers to send the report nowhere, just show it.</td><td>The OS and GPU driver; the app only reports.</td></tr>
+    </tbody>
+  </table></div>
+  <h3>Rules that make this safe <span class="tag call">my call</span></h3>
+  <ul>
+    <li><b>Engine in-process, never a detached helper.</b> A separate server process is the classic way VRAM gets stranded after a force close. If a sidecar engine is ever added, it is spawned as a child with a parent-death watch so it dies with the app.</li>
+    <li><b>One owner for the model.</b> A single engine object owns the Whisper context. Loading, swapping between the three models and unloading all go through it, so there is exactly one place that frees GPU memory and it is also the one called on exit.</li>
+    <li><b>History writes are atomic.</b> SQLite in write-ahead mode, each dictation committed as one transaction. A crash mid-write loses at most that one entry and never corrupts the file.</li>
+    <li><b>Lock file as a heartbeat.</b> Written on start, removed on clean exit. Its presence at launch means the last run died, and it also stops two copies running at once.</li>
+    <li><b>Explicit Pause and timed unload.</b> Tray menu "Pause and unload" drops the model from the GPU without quitting, for when you want the memory back for a game. The automatic version is the idle timer: you set the number of minutes in Settings (1 to 240, or Never, default 10) and can change it whenever you like. <span class="tag yours">yours</span> Both go through the same single unload path as exit.</li>
+    <li><b>Clipboard restore survives a crash.</b> The old clipboard is saved to disk before paste, so an interrupted paste never leaves your clipboard holding the transcript.</li>
+  </ul>
+  <div class="note">The one case no app can fix on its own is a GPU driver hang, where the driver itself stops responding. That is rare on current Metal and Vulkan drivers, and the OS resets the device. The watchdog is a 30-second timeout on any single Whisper call: if it fires, the app drops the context, reloads the model, and tells you in the pill.</div>
+</section>
+
+<section class="wrap">
+  <h2>Hotkey and paste mechanics <span class="tag yours">yours</span></h2>
+  <h3>Two ways to trigger</h3>
+  <ul>
+    <li><b>Push-to-talk.</b> Hold the key, speak, release. Natural for short utterances, impossible to forget it is on.</li>
+    <li><b>Toggle.</b> Tap to start, tap to stop. Better for long dictation when holding a key gets tiring.</li>
+  </ul>
+  <p>Both exist, each bindable to its own key. A third binding, "dictate to clipboard only, don't paste", covers the case where the front app is something you do not want text shoved into. <span class="tag call">my call</span></p>
+  <h3>How the paste actually happens</h3>
+  <ol>
+    <li>Save whatever is on the clipboard.</li>
+    <li>Put the transcript on the clipboard and send <kbd>⌘</kbd>+<kbd>V</kbd> or <kbd>Ctrl</kbd>+<kbd>V</kbd> to the frontmost app.</li>
+    <li>After a short delay, restore the old clipboard contents.</li>
+    <li>Fallback for apps that block paste (some terminals, remote desktops): type the text keystroke by keystroke.</li>
+  </ol>
+  <h3>Permissions you will be asked for</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>OS</th><th>Microphone</th><th>Global hotkey</th><th>Simulated paste</th></tr></thead>
+    <tbody>
+      <tr><td>macOS</td><td>Standard prompt on first use</td><td>Input Monitoring (only for the single-modifier style)</td><td>Accessibility. The app walks you to the right settings pane.</td></tr>
+      <tr><td>Windows</td><td>Privacy setting, usually already on</td><td>None</td><td>None, unless the target app runs as administrator</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section class="wrap">
+  <h2>The LLM polish stage <span class="tag ask">open</span></h2>
+  <p>Whisper gives you decent punctuation but it keeps every "um", repeats your false starts, and has no idea you are writing an email. A small LLM pass fixes that in a second. It also unlocks "modes", which is where this becomes more than dictation.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Mode</th><th>What the prompt asks for</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>Raw</td><td>No LLM. Whisper output as is.</td><td>Speed, or when you trust yourself.</td></tr>
+      <tr><td>Clean</td><td>Remove fillers and false starts, fix punctuation, keep your words. Default.</td><td>Chat, notes.</td></tr>
+      <tr><td>Email</td><td>Clean plus paragraphs, greeting and sign-off left as spoken.</td><td>Mail clients.</td></tr>
+      <tr><td>Bullets</td><td>Turn a rambling list into tidy bullet points.</td><td>Docs, tickets.</td></tr>
+      <tr><td>Code</td><td>Spoken identifiers become <code>snake_case</code> or <code>camelCase</code>, "open paren" becomes <code>(</code>.</td><td>Editors, terminals.</td></tr>
+      <tr><td>Translate</td><td>Whisper's built-in translate-to-English, no LLM needed.</td><td>Speaking another language.</td></tr>
+      <tr><td>Ask</td><td>Treat the speech as a question, paste the answer instead.</td><td>Quick lookups without leaving the app.</td></tr>
+    </tbody>
+  </table></div>
+  <p><span class="tag yours">yours</span> Local first, LAN second. The polish LLM runs on the same machine when it can. A second machine on the same Wi-Fi or LAN, reached by IP and port, can be added as another endpoint, and once added it is used automatically whenever it is reachable and dropped automatically when it is not. That is what "seamless" means here: add it once, never think about it again. The connector speaks the OpenAI-compatible chat API, which LM Studio, Ollama and llama.cpp all serve, so a LAN box needs nothing more than one of those running with "serve on network" on.</p>
+  <div class="note">With the RX 9070's 16 GB on the Windows side, an 8B polish model (Qwen 2.5 7B class) is the comfortable default there, and that PC becomes the natural LAN endpoint for the Mac. LM Studio and llama.cpp run on it through Vulkan today; ROCm support for RDNA 4 is recent, so the spike benchmarks both and we ship the faster stable one.</div>
+</section>
+
+<section class="bench">
+  <h2 style="max-width:68ch;margin-left:auto;margin-right:auto">Idea bank, what else it could do</h2>
+  <div class="wrap">
+    <p>You asked what else is possible. Tick the ones you want and hit "copy my picks" to paste the list back to me. Your ticks are remembered in this browser only.</p>
+    <div class="note"><b>Your picks so far</b> <span class="tag yours">yours</span>: Personal dictionary, Silence trimming, Tray + launch at login, Model manager with benchmark, Undo last paste, Live preview while speaking, Unload after idle, Keep audio clips, Language pinning, Remote engine, MLX engine on Mac, Long-form notes. Twelve of sixteen. The tier labels below are my proposed order for building them, not whether they get built. <span class="tag call">my call</span></div>
+  </div>
+  <div class="ideas" id="ideas">
+    <label class="idea"><input type="checkbox" data-id="dictionary" checked><span><span class="tier">v1</span><b>Personal dictionary</b><small>Names, products, jargon fed to Whisper as its initial prompt so "Roy" never becomes "Roi" and "Tauri" never becomes "tory".</small></span></label>
+    <label class="idea"><input type="checkbox" data-id="vad" checked><span><span class="tier">v1</span><b>Silence trimming</b><small>Voice-activity detection removes dead air before and after, which speeds up Whisper and stops hallucinated "Thank you for watching".</small></span></label>
+    <label class="idea"><input type="checkbox" data-id="tray" checked><span><span class="tier">v1</span><b>Tray / menu bar + launch at login</b><small>Quit, pause, pick mode, open history from the tray. Pill can be hidden entirely and you still get the hotkey.</small></span></label>
+    <label class="idea"><input type="checkbox" data-id="modelmgr" checked><span><span class="tier">v1</span><b>Model manager with benchmark</b><small>Download from Hugging Face, auto-pick quantization for your VRAM, one-click speed test.</small></span></label>
+    <label class="idea"><input type="checkbox" data-id="undo" checked><span><span class="tier">v1</span><b>Undo last paste</b><small>One hotkey removes what was just inserted if it went into the wrong window.</small></span></label>
+    <label class="idea"><input type="checkbox" data-id="appmodes"><span><span class="tier">v2</span><b>Per-app modes</b><small>Detect the frontmost app and switch mode automatically: Code in VS Code, Email in Mail, Clean everywhere else.</small></span></label>
+    <label class="idea"><input type="checkbox" data-id="voicecmd"><span><span class="tier">v2</span><b>Spoken commands</b><small>"new line", "new paragraph", "scratch that", "all caps" handled before the LLM sees the text.</small></span></label>
+    <label class="idea"><input type="checkbox" data-id="live" checked><span><span class="tier">v2</span><b>Live preview while speaking</b><small>Partial transcript streams into the pill as you talk. Costs a second Whisper pass every few hundred ms, so it is a toggle, off by default on 8 GB cards.</small></span></label>
+    <label class="idea"><input type="checkbox" data-id="snippets"><span><span class="tier">v2</span><b>Snippets</b><small>"Insert my signature", "insert meeting link" expand to saved text.</small></span></label>
+    <label class="idea"><input type="checkbox" data-id="unload" checked><span><span class="tier">v1</span><b>Unload after idle</b><small>Free the GPU after a number of minutes you set yourself. <span class="tag yours">yours</span> A setting with a slider or field from 1 to 240 minutes plus "Never", default 10, changeable any time from Settings or the tray menu without restarting. The tray shows "unloads in 4 min" so you know where you stand. Reload on the next hotkey press takes about a second and the pill says "Loading…" while it does.</small></span></label>
+    <label class="idea"><input type="checkbox" data-id="stats"><span><span class="tier">v2</span><b>Stats</b><small>Words dictated, speaking WPM versus your typing speed, minutes saved this week.</small></span></label>
+    <label class="idea"><input type="checkbox" data-id="keepaudio" checked><span><span class="tier">v2</span><b>Keep audio clips</b><small>Off by default for privacy. On, you can replay what you said next to a transcript and re-run it with a bigger model.</small></span></label>
+    <label class="idea"><input type="checkbox" data-id="multi" checked><span><span class="tier">v2</span><b>Language pinning</b><small>Auto-detect is default; pin a language to avoid misfires on short clips, or run bilingual.</small></span></label>
+    <label class="idea"><input type="checkbox" data-id="remote" checked><span><span class="tier">later</span><b>Remote engine</b><small>Point the harness at a beefier GPU box on your LAN; the Mac stays thin.</small></span></label>
+    <label class="idea"><input type="checkbox" data-id="mlx" checked><span><span class="tier">later</span><b>MLX engine on Mac</b><small>Swap whisper.cpp for mlx-whisper on Apple Silicon for the last bit of speed.</small></span></label>
+    <label class="idea"><input type="checkbox" data-id="longform" checked><span><span class="tier">later</span><b>Long-form notes</b><small>Toggle mode that runs for 20 minutes and dumps a cleaned document. One step short of a meeting recorder, which I would keep out of scope.</small></span></label>
+  </div>
+  <div class="picks wrap"><button class="btn" id="copyPicks">Copy my picks</button><output id="pickCount"></output></div>
+</section>
+
+<section class="wrap">
+  <h2>Things it should not become</h2>
+  <ul>
+    <li><b>A meeting recorder.</b> System-audio capture, speaker labels and summaries are a different product with different privacy stakes.</li>
+    <li><b>A cloud service.</b> Local by default, always. Cloud LLM is an opt-in with a visible indicator on the pill.</li>
+    <li><b>A note-taking app.</b> History is a scratch log you copy out of, not a place to organize your life.</li>
+    <li><b>Slow to start.</b> If pressing the hotkey ever waits for a model to load, the tool has failed. Warm model is non-negotiable.</li>
+  </ul>
+</section>
+
+<section class="wrap">
+  <h2>Open questions <span class="tag ask">open</span></h2>
+  <p>Most important first. Each has the default I will use if you just say "go".</p>
+  <div class="q"><b>1. Where does the polish LLM run?</b> <span class="tag yours">answered</span><div class="guess">Local first. Second tier is another machine on the same Wi-Fi or LAN, reached by IP and port, used automatically when reachable and dropped automatically when not. No internet cloud in v1.</div></div>
+  <div class="q"><b>2. Which AMD card exactly, and which Windows version?</b> <span class="tag yours">answered</span><div class="guess">AMD Radeon RX 9070, 16 GB, Windows. That budget fits turbo plus an 8B polish model with more than half the card free. Vulkan is the known-good path; the engine spike also benchmarks ROCm on this card.</div></div>
+  <div class="q"><b>3. Hold-to-talk or tap-to-toggle as the primary gesture?</b><div class="guess">Hold <kbd>Right ⌥</kbd> on Mac and <kbd>Right Alt</kbd> on Windows for push-to-talk; <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> as toggle. All rebindable.</div></div>
+  <div class="q"><b>4. Tauri (Rust) as the shell is fine with you?</b><div class="guess">Yes. UI stays plain HTML/CSS/JS so you can tweak it freely; Rust is confined to audio, Whisper and paste.</div></div>
+  <div class="q"><b>5. Languages?</b><div class="guess">Auto-detect with English as the fallback, large-v3-turbo is multilingual anyway.</div></div>
+  <div class="q"><b>6. Keep audio recordings?</b><div class="guess">No. Text only. A toggle to keep clips arrives in v2.</div></div>
+  <div class="q"><b>7. Name?</b><div class="guess">"Whisper Harness" as the working title; the repo is already called localVoiceWisper, so maybe we lean into that.</div></div>
+</section>
+
+<section class="wrap">
+  <h2>Proposed v1 and build order <span class="tag call">my call</span></h2>
+  <ol>
+    <li><b>Engine spike (throwaway).</b> whisper.cpp with large-v3-turbo on both machines. Measure load time and seconds-of-audio-per-second with Metal and with Vulkan. This decides everything else, so it goes first.</li>
+    <li><b>Tauri shell.</b> Transparent draggable pill, tray icon, settings window, SQLite history, and the exit path (signal handlers, lock file, model unload) built in from the start rather than added later.</li>
+    <li><b>Hotkey → capture → Whisper → paste</b> with the Raw and Clean modes. This is the first usable build.</li>
+    <li><b>History panel.</b> List, search, edit, copy, delete, re-paste, export.</li>
+    <li><b>Model manager</b> and first-run setup (permissions walkthrough, mic test, model download).</li>
+    <li><b>Polish modes and dictionary.</b> Email, Bullets, Code; LLM endpoint setting; personal dictionary; undo last paste; configurable idle unload.</li>
+    <li><b>Packaging.</b> Signed .dmg for Mac, installer for Windows with the Vulkan build.</li>
+  </ol>
+  <p>After that, in the order I would take your remaining picks: language pinning and keep-audio (small), long-form notes (toggle mode plus a document view), live preview (needs streaming Whisper and a VRAM check), then the engine work: MLX on Mac and the remote engine, both of which slot behind the engine trait from step 2.</p>
+  <p>After you have been through this page, the next step is a written design doc from your answers, then a task-by-task plan. The engine spike can start as soon as you say so, since it only tells us numbers and does not commit to anything.</p>
+</section>
+
+<section class="bench">
+  <h2 style="max-width:68ch;margin-left:auto;margin-right:auto">Does this already exist? <span class="tag yours">yours</span></h2>
+  <div class="wrap"><p>You asked me to check. Short answer: yes, one project covers about two thirds of v1 on the same stack. What it lacks is almost exactly the list of things you asked for by name. Checked 28 Oct 2026.</p></div>
+  <div class="tbl"><table>
+    <thead><tr><th>Project</th><th>Stack and licence</th><th>State</th><th>Already does</th><th>Does not do (that we want)</th></tr></thead>
+    <tbody>
+      <tr class="pick"><td><b><a href="https://github.com/cjpais/Handy">Handy</a></b></td><td>Tauri 2, Rust, React UI, Whisper GGML, Silero VAD, Vulkan on Windows. MIT, but the name and logo are not open, forks must rebrand.</td><td>~35k stars, v0.9.8 on 3 Oct 2026, active</td><td>Hold and toggle hotkeys, paste into any app, recording overlay, history with audio playback, model manager with Hugging Face downloads, LLM post-processing over HTTP, GPU detection, streaming models</td><td>GPU memory strip with recommended/best, local-first with LAN failover and discovery, share-engine mode, configurable idle unload, three fixed Whisper tiers, documented exit/crash contract</td></tr>
+      <tr><td><a href="https://github.com/hudsonbrendon/wisper">Wisper</a></td><td>Tauri 2, Rust, whisper-rs, Metal only. MIT.</td><td>Brand new, 0 stars</td><td>Push-to-talk and hands-free, type or paste, pill overlay, history with stats, model downloads</td><td>No AMD/Vulkan, no LLM cleanup, no LAN, no VRAM view</td></tr>
+      <tr><td><a href="https://github.com/epicenter-so/epicenter">Whispering</a></td><td>Tauri 2, Svelte. AGPL-3.0.</td><td>~4.8k stars, part of a monorepo</td><td>Shortcuts, local whisper.cpp, chained transformations, local and cloud providers</td><td>Copyleft licence, broad scope, no GPU view or LAN failover</td></tr>
+      <tr><td><a href="https://github.com/Beingpax/VoiceInk">VoiceInk</a></td><td>Swift, whisper.cpp, macOS only. GPL-3.0, paid binary.</td><td>~5k stars</td><td>Polished Mac dictation with AI enhancement</td><td>Mac only, Swift, GPL</td></tr>
+      <tr><td><a href="https://openwhispr.com">OpenWhispr</a></td><td>Electron, whisper.cpp. MIT with a commercial tier.</td><td>Active</td><td>Cross-platform push-to-talk with AI cleanup</td><td>Electron footprint, freemium</td></tr>
+    </tbody>
+  </table></div>
+  <div class="wrap">
+    <h3>Two ways forward <span class="tag ask">open</span></h3>
+    <div class="q"><b>A. Own codebase, borrow from Handy.</b> Build to this design and lift proven MIT pieces with attribution where they save weeks: paste reliability, overlay positioning, Vulkan build config, download with mirror fallback. Clean architecture, a project that is yours to open source under its own name. Slower to the first working build.<div class="guess">A. Keep Handy open in a second window as the reference implementation whenever a platform quirk bites.</div></div>
+    <div class="q"><b>B. Fork Handy, rebrand, add the missing features.</b> Working dictation on day one. You inherit a React UI and someone else's structure, track or diverge from upstream, and the open-source story becomes "a Handy fork with X". Handy's licence requires a new name and icon either way.</div>
+  </div>
+</section>
+
+<footer class="wrap">The written design that came out of this page is at <code>docs/superpowers/specs/2026-10-28-whisper-harness-design.md</code> in the project. Draft page. Figures marked "~" are estimates from published model sizes and community benchmarks; the spike replaces them with measurements from your own machines.</footer>
+
+<script>
+(function(){
+  // Pill state mockup
+  var pill=document.getElementById('pill');
+  var tpl={
+    idle:'<span class="dot"></span><span class="label">Hold ⌥ to talk</span>',
+    listening:'<span class="dot"></span><span class="bars"><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="time" id="tm">0:04</span><span class="mode">clean</span>',
+    transcribing:'<span class="spin"></span><span class="label">Transcribing…</span>',
+    polishing:'<span class="spin"></span><span class="label">Cleaning up…</span><span class="mode">clean</span>',
+    pasted:'<span class="ok">✓</span><span class="label">Pasted</span><span class="preview">Can you send me the updated deck before the 3pm call?</span>',
+    err:'<span class="dot"></span><span class="label">Microphone blocked. Open settings</span>'
+  };
+  var timer=null,secs=4;
+  function setState(s){
+    pill.className='pill '+s; pill.innerHTML=tpl[s];
+    document.querySelectorAll('#states button').forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.s===s));});
+    clearInterval(timer);
+    if(s==='listening'){secs=4;timer=setInterval(function(){secs++;var t=document.getElementById('tm');if(t)t.textContent='0:'+String(secs).padStart(2,'0');},1000);}
+  }
+  document.getElementById('states').addEventListener('click',function(e){var b=e.target.closest('button');if(b)setState(b.dataset.s);});
+  // drag the pill around the stage
+  var dx=0,dy=0,drag=false,ox=0,oy=0;
+  pill.addEventListener('pointerdown',function(e){drag=true;ox=e.clientX-dx;oy=e.clientY-dy;pill.setPointerCapture(e.pointerId);});
+  pill.addEventListener('pointermove',function(e){if(!drag)return;dx=e.clientX-ox;dy=e.clientY-oy;pill.style.transform='translate('+dx+'px,'+dy+'px)';});
+  pill.addEventListener('pointerup',function(){drag=false;});
+  pill.addEventListener('pointercancel',function(){drag=false;});
+
+  // History mock
+  var rows=[
+    {app:'Slack',mode:'clean',dur:'0:06',when:'2 min ago',txt:'Can you send me the updated deck before the 3pm call?',raw:'um can you send me the the updated deck before the uh three pm call'},
+    {app:'VS Code',mode:'code',dur:'0:09',when:'14 min ago',txt:'const transcribeBuffer = async (samples) => engine.run(samples, { language: "auto" })',raw:'const transcribe buffer equals async samples arrow engine dot run samples language auto'},
+    {app:'Mail',mode:'email',model:'large-v3',dur:'0:21',when:'1 h ago',txt:'Hi Priya,\n\nThanks for the review. I have folded your comments into the spec and pushed a new revision. Two points still open: the retry budget and who owns the on-call rota.\n\nRoy',raw:'hi priya thanks for the review i have uh folded your comments into the spec and pushed a new revision two points still open the retry budget and and who owns the on call rota roy'},
+    {app:'Chrome',mode:'bullets',dur:'0:12',when:'Yesterday',txt:'• Benchmark turbo vs v3 on the 6600\n• Try Vulkan build with 8 threads\n• Ask about Right-Alt hook on Windows',raw:'benchmark turbo versus v3 on the sixty six hundred try the vulkan build with eight threads and ask about the right alt hook on windows'}
+  ];
+  var host=document.getElementById('rows'),toast=document.getElementById('toast'),stats=document.getElementById('stats'),search=document.getElementById('search');
+  function esc(s){return s.replace(/[&<>]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
+  function render(){
+    var q=(search.value||'').toLowerCase();
+    host.innerHTML='';
+    var shown=0,words=0;
+    rows.forEach(function(r,i){
+      if(q&&r.txt.toLowerCase().indexOf(q)<0&&r.app.toLowerCase().indexOf(q)<0)return;
+      shown++;words+=r.txt.split(/\s+/).length;
+      var d=document.createElement('div');d.className='row';d.dataset.i=i;
+      d.innerHTML='<div class="meta"><span>'+r.when+'</span><span>'+r.app+'</span><span>'+r.mode+'</span><span>'+(r.model||'turbo')+'</span><span>'+r.dur+'</span></div>'+
+        '<div class="txt" style="white-space:pre-wrap">'+esc(r.txt)+'</div>'+
+        '<div class="acts"><button data-a="copy">Copy</button><button data-a="edit">Edit</button><button data-a="raw">Raw</button><button data-a="del">Delete</button></div>';
+      host.appendChild(d);
+    });
+    if(!shown){host.innerHTML='<div class="row"><div class="txt" style="color:var(--muted)">Nothing matches. Clear the search or dictate something.</div></div>';}
+    stats.textContent=rows.length+' dictations · '+words+' words';
+  }
+  function say(m){toast.textContent=m;clearTimeout(say.t);say.t=setTimeout(function(){toast.textContent='';},1800);}
+  host.addEventListener('click',function(e){
+    var b=e.target.closest('button');if(!b)return;
+    var row=b.closest('.row'),i=+row.dataset.i,r=rows[i],txt=row.querySelector('.txt');
+    if(b.dataset.a==='copy'){
+      var done=function(){say('Copied');};
+      if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(r.txt).then(done,function(){selectNode(txt);say('Select-all ready, press copy');});}
+      else{selectNode(txt);say('Select-all ready, press copy');}
+    }
+    if(b.dataset.a==='del'){rows.splice(i,1);render();say('Deleted');}
+    if(b.dataset.a==='raw'){
+      var ex=row.querySelector('.raw');
+      if(ex){ex.remove();b.textContent='Raw';}else{var p=document.createElement('div');p.className='raw';p.textContent='Whisper heard: “'+r.raw+'”';row.appendChild(p);b.textContent='Hide raw';}
+    }
+    if(b.dataset.a==='edit'){
+      if(txt.getAttribute('contenteditable')==='true'){commit();return;}
+      txt.setAttribute('contenteditable','true');txt.focus();b.textContent='Save';
+      var orig=r.txt;
+      function commit(){r.txt=txt.innerText.trim()||orig;txt.removeAttribute('contenteditable');render();say('Saved');}
+      txt.onkeydown=function(ev){if(ev.key==='Enter'&&!ev.shiftKey){ev.preventDefault();commit();}if(ev.key==='Escape'){txt.innerText=orig;txt.removeAttribute('contenteditable');render();}};
+    }
+  });
+  function selectNode(n){try{var rg=document.createRange();rg.selectNodeContents(n);var s=getSelection();s.removeAllRanges();s.addRange(rg);}catch(e){}}
+  search.addEventListener('input',render);
+  render();
+  document.getElementById('modelPick').addEventListener('change',function(e){var n={turbo:'large-v3-turbo',v3:'large-v3',distil:'distil-large-v3'}[e.target.value];say('Loading '+n+'…');gauge();});
+
+  // VRAM gauge mock
+  var GPUS={rx9070:{total:16,other:1.6,unified:false},rx6600:{total:8,other:1.2,unified:false},m1_8:{total:8,other:3.2,unified:true},m1p_16:{total:16,other:4.0,unified:true},rtx3060:{total:12,other:1.4,unified:false}};
+  var WH={turbo:{name:'large-v3-turbo',gb:1.3},v3:{name:'large-v3',gb:2.4},distil:{name:'distil-large-v3',gb:1.2}};
+  var LLM={none:0,'3b':2.3,'8b':5.0,lan:0};
+  var gp=document.getElementById('gpuPick'),lp=document.getElementById('llmPick'),mp=document.getElementById('modelPick');
+  function fmt(n){return (Math.round(n*10)/10).toFixed(1)+' GB';}
+  function fits(g,w,l){return g.other+w+l<=g.total*0.8;}
+  function gauge(){
+    var g=GPUS[gp.value],w=WH[mp.value],l=LLM[lp.value];
+    var used=g.other+w.gb+l,free=g.total-used,pct=Math.round(used/g.total*100);
+    var m=document.getElementById('meter'),seg=m.children;
+    seg[0].style.flexBasis=(g.other/g.total*100)+'%';seg[1].style.flexBasis=(w.gb/g.total*100)+'%';seg[2].style.flexBasis=(l/g.total*100)+'%';
+    m.classList.toggle('over',used>g.total*0.9);
+    document.getElementById('tickMid').textContent=(g.total/2)+' GB';document.getElementById('tickMax').textContent=g.total+' GB'+(g.unified?' shared':'');
+    document.getElementById('leg').innerHTML='<span style="--sw:var(--m-other)">Other apps'+(g.unified?' + system':'')+' <b>'+fmt(g.other)+'</b></span><span style="--sw:var(--m-whisper)">Whisper '+w.name+' <b>'+fmt(w.gb)+'</b></span><span style="--sw:var(--m-llm)">Polish LLM <b>'+fmt(l)+'</b></span><span style="--sw:var(--surface-2)">Free after load <b>'+fmt(Math.max(free,0))+'</b></span>';
+    var rec=fits(g,WH.turbo.gb,l)?'turbo':fits(g,WH.distil.gb,l)?'distil':null;
+    var best=fits(g,WH.v3.gb,l)?'v3':fits(g,WH.turbo.gb,l)?'turbo':fits(g,WH.distil.gb,l)?'distil':null;
+    var sel=used>g.total*0.9?'bad':used>g.total*0.8?'':'good';
+    var selMsg=used>g.total*0.9?'Will not fit comfortably. Turn the polish LLM down or pick a smaller model.':used>g.total*0.8?'Fits, but leaves little room for other apps.':'Fits with headroom.';
+    document.getElementById('verdict').innerHTML=
+      '<div class="'+sel+'"><span class="k">Selected: '+w.name+'</span><span class="v">'+fmt(used)+' of '+g.total+' GB · '+pct+'%</span><span class="s">'+selMsg+'</span></div>'+
+      '<div><span class="k">Recommended</span><span class="v">'+(rec?WH[rec].name:'Lower the LLM first')+'</span><span class="s">Fastest that fits with 20% spare'+(rec==='distil'?', English only':'')+'</span></div>'+
+      '<div><span class="k">Best accuracy that fits</span><span class="v">'+(best?WH[best].name:'Nothing fits')+'</span><span class="s">'+(best==='v3'?'Full large-v3, 100 languages':best?'large-v3 would exceed 80%':'Reduce the polish LLM')+'</span></div>';
+  }
+  gp.addEventListener('change',gauge);lp.addEventListener('change',gauge);
+  gauge();
+
+  // Idea bank picks, remembered per browser
+  var KEY='whisper-harness-picks';
+  var boxes=document.querySelectorAll('#ideas input');
+  try{var saved=JSON.parse(localStorage.getItem(KEY)||'null');if(saved){boxes.forEach(function(b){b.checked=saved.indexOf(b.dataset.id)>=0;});}}catch(e){}
+  function picks(){return Array.prototype.filter.call(boxes,function(b){return b.checked;});}
+  function count(){document.getElementById('pickCount').textContent=picks().length+' of '+boxes.length+' selected';}
+  document.getElementById('ideas').addEventListener('change',function(){try{localStorage.setItem(KEY,JSON.stringify(picks().map(function(b){return b.dataset.id;})));}catch(e){}count();});
+  document.getElementById('copyPicks').addEventListener('click',function(){
+    var lines=picks().map(function(b){return '- '+b.closest('.idea').querySelector('b').textContent;});
+    var text='My picks from the Whisper Harness idea bank:\n'+(lines.join('\n')||'(none)');
+    var out=document.getElementById('pickCount');
+    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(function(){out.textContent='Copied '+lines.length+' picks, paste them in chat';},function(){out.textContent=text;});}
+    else{out.textContent=text;}
+  });
+  count();
+})();
+</script>
