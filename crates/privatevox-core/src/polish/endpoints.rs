@@ -176,6 +176,14 @@ impl Registry {
         h.last_error = Some(error);
     }
 
+    /// Forget resident models after an unload, without touching the health verdict.
+    pub fn clear_loaded(&mut self, id: &str) {
+        if let Some(h) = self.health.get_mut(id) {
+            h.loaded_models.clear();
+            h.loaded_bytes = 0;
+        }
+    }
+
     /// Never checked, or past its next check time.
     pub fn due_for_check(&self, now: Instant) -> Vec<Endpoint> {
         self.endpoints
