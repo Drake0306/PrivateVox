@@ -78,6 +78,14 @@ impl Vad {
     }
 }
 
+impl Vad {
+    /// Per-frame speech probabilities (one per 512-sample frame) for `pcm`, which must be whole frames.
+    pub fn score(&mut self, pcm: &[f32]) -> Result<Vec<f32>> {
+        self.ctx.detect_speech(pcm).map_err(|e| anyhow!("vad score: {e:?}"))?;
+        Ok(self.ctx.probabilities().to_vec())
+    }
+}
+
 /// Zero-pads to at least `min_seconds` (Whisper is unreliable below one second; design §18.5).
 pub fn pad_min(mut pcm: Vec<f32>, min_seconds: f32) -> Vec<f32> {
     let want = (min_seconds * SAMPLE_RATE as f32) as usize;
@@ -142,6 +150,20 @@ mod tests {
             }
             other => panic!("expected speech, got {:?}", std::mem::discriminant(&other)),
         }
+    }
+
+    #[test]
+    fn score_returns_one_probability_per_frame() {
+        let mut v = Vad::new(&model()).unwrap();
+        let mut pcm = vec![0.0f32; 8_000];
+        pcm.extend(fixture());
+        pcm.extend(vec![0.0f32; 8_000]);
+        let frames = pcm.len() / 512;
+        let p = v.score(&pcm[..frames * 512]).unwrap();
+        assert_eq!(p.len(), frames);
+        assert!(p.iter().all(|x| (0.0..=1.0).contains(x)));
+        assert!(p[..10].iter().all(|x| *x < 0.5), "leading silence scores low");
+        assert!(p.iter().any(|x| *x > 0.5), "speech scores high somewhere");
     }
 
     #[test]

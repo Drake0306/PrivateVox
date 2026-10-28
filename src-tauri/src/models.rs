@@ -1,7 +1,7 @@
 //! First-run model download with progress events (design §4.6, §13 step 5).
 
 use crate::pipeline::{Cmd, PillState};
-use lvw_core::download::{download_blocking, is_present, ModelSpec, TURBO_Q5_0};
+use lvw_core::download::{download_blocking, is_present, ModelSpec};
 use serde::Serialize;
 use std::path::Path;
 use std::sync::mpsc::Sender;

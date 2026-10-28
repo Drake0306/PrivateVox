@@ -104,6 +104,11 @@ impl ClipBuffer {
     pub fn take(&mut self) -> Vec<f32> {
         std::mem::take(&mut self.samples)
     }
+
+    /// The audio recorded so far, without taking it.
+    pub fn peek(&self) -> &[f32] {
+        &self.samples
+    }
 }
 
 /// RMS level in dBFS, floored at -100 for digital silence.

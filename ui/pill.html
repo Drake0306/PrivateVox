@@ -23,7 +23,7 @@
       dot.hidden = !(s.state === 'idle' || s.state === 'listening' || s.state === 'error' || s.state === 'pasted');
       switch (s.state) {
         case 'idle': label.textContent = s.hotkey_hint; break;
-        case 'listening': label.textContent = s.seconds.toFixed(0) + 's'; document.documentElement.style.setProperty('--lvl', Math.max(0, Math.min(1, (s.level_db + 60) / 60))); break;
+        case 'listening': label.textContent = s.countdown != null ? s.seconds.toFixed(0) + 's · stops in ' + s.countdown + 's' : s.seconds.toFixed(0) + 's'; document.documentElement.style.setProperty('--lvl', Math.max(0, Math.min(1, (s.level_db + 60) / 60))); break;
         case 'transcribing': label.textContent = 'Transcribing…'; break;
         case 'loading_model': label.textContent = s.progress == null ? 'Loading model…' : 'Downloading ' + Math.round(s.progress * 100) + '%'; break;
         case 'pasted': label.textContent = s.preview; break;
