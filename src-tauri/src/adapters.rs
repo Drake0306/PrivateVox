@@ -2,8 +2,8 @@
 
 use crate::paste::{EnigoSender, KeySender, PasteOutcome, Paster};
 use crate::pipeline::{CaptureSource, PasteSink};
-use lvw_core::audio::Capture;
-use lvw_core::settings::Settings;
+use privatevox_core::audio::Capture;
+use privatevox_core::settings::Settings;
 use std::sync::{Arc, Mutex};
 
 /// Opens the microphone from the current settings on each start.
@@ -47,7 +47,7 @@ impl SystemPaste {
 impl PasteSink for SystemPaste {
     fn paste(&mut self, text: &str) -> anyhow::Result<PasteOutcome> {
         // Re-check on every paste: a revoked Accessibility grant must not turn into a silent "pasted".
-        if matches!(self.paster.method, lvw_core::settings::PasteMethod::Clipboard) && !crate::paste::accessibility_trusted(false) {
+        if matches!(self.paster.method, privatevox_core::settings::PasteMethod::Clipboard) && !crate::paste::accessibility_trusted(false) {
             let mut cb = arboard::Clipboard::new()?;
             cb.set_text(text.to_string())?;
             return Ok(PasteOutcome::CopiedOnly("Accessibility not granted".into()));

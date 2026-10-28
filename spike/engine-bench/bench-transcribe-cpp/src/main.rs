@@ -14,7 +14,7 @@ fn options(id: &str) -> RunOptions {
         "prompt_en" => RunOptions {
             language: Some("en".into()),
             family: Some(RunExtension::Whisper(WhisperRunOptions {
-                initial_prompt: Some("Tauri, LVW.".into()),
+                initial_prompt: Some("Tauri, PrivateVox.".into()),
                 ..Default::default()
             })),
             ..Default::default()

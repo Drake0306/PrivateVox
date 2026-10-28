@@ -2855,69 +2855,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
 
 [[package]]
-name = "lvw"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arboard",
- "ctrlc",
- "enigo",
- "hound",
- "log",
- "lvw-core",
- "lvw-engine",
- "objc2",
- "objc2-app-kit",
- "objc2-foundation",
- "rdev",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-nspanel",
- "tauri-plugin-global-shortcut",
- "tauri-plugin-log",
- "tauri-plugin-single-instance",
- "tempfile",
-]
-
-[[package]]
-name = "lvw-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cpal",
- "futures-util",
- "hound",
- "log",
- "reqwest",
- "rubato",
- "rusqlite",
- "serde",
- "serde_json",
- "sysinfo",
- "tempfile",
- "tiny_http",
- "tokio",
- "whisper-rs",
-]
-
-[[package]]
-name = "lvw-engine"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "env_logger",
- "hound",
- "libc",
- "log",
- "lvw-core",
- "postcard",
- "serde",
- "whisper-rs",
-]
-
-[[package]]
 name = "mach2"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3780,6 +3717,69 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc0d895b311e3af9902528fbb8f928688abbd95872819320517cc24ca6b2bd08"
 dependencies = [
  "num-integer",
+]
+
+[[package]]
+name = "privatevox"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "ctrlc",
+ "enigo",
+ "hound",
+ "log",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "privatevox-core",
+ "privatevox-engine",
+ "rdev",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-nspanel",
+ "tauri-plugin-global-shortcut",
+ "tauri-plugin-log",
+ "tauri-plugin-single-instance",
+ "tempfile",
+]
+
+[[package]]
+name = "privatevox-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cpal",
+ "futures-util",
+ "hound",
+ "log",
+ "reqwest",
+ "rubato",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "tempfile",
+ "tiny_http",
+ "tokio",
+ "whisper-rs",
+]
+
+[[package]]
+name = "privatevox-engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "hound",
+ "libc",
+ "log",
+ "postcard",
+ "privatevox-core",
+ "serde",
+ "whisper-rs",
 ]
 
 [[package]]

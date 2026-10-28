@@ -1,4 +1,4 @@
-/* LVW shared styles. Dark pill on a transparent window; panel follows the system theme. */
+/* PrivateVox shared styles. Dark pill on a transparent window; panel follows the system theme. */
 :root { --pill: #1b2423; --pill-fg: #f3f6f5; --rec: #e5484d; --ok: #5fc48a; --warn: #e0a84a;
   --bg: #f6f8f8; --surface: #fff; --fg: #15201f; --muted: #5b6b69; --line: #d6dedd; --accent: #0f766e; }
 @media (prefers-color-scheme: dark) { :root { --bg: #0f1514; --surface: #161e1d; --fg: #e8eeed; --muted: #9aaba8; --line: #2b3736; --accent: #3fbfb2; } }

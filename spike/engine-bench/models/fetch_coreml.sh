@@ -2,7 +2,7 @@
 # Downloads the Core ML encoder for large-v3-turbo next to the model files.
 # whisper.cpp strips the quantization suffix and looks for "ggml-large-v3-turbo-encoder.mlmodelc" beside the model.
 set -euo pipefail
-DIR="${LVW_SPIKE_MODELS:-$HOME/.cache/lvw-spike/models}"
+DIR="${PRIVATEVOX_SPIKE_MODELS:-$HOME/.cache/lvw-spike/models}"
 cd "$DIR"
 ZIP=ggml-large-v3-turbo-encoder.mlmodelc.zip
 [ -d ggml-large-v3-turbo-encoder.mlmodelc ] && { echo "ok   coreml encoder present"; exit 0; }

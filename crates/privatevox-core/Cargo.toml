@@ -1,6 +1,6 @@
 [package]
-name = "lvw-core"
-description = "LVW core logic: settings, audio, VAD, hotkey machine, text clean-up, history store, lifecycle"
+name = "privatevox-core"
+description = "PrivateVox core logic: settings, audio, VAD, hotkey machine, text clean-up, history store, lifecycle"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

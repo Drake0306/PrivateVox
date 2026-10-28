@@ -2,8 +2,8 @@
 //! low-level key hook (rdev). Both feed the activation machine on the pipeline thread.
 
 use crate::pipeline::Cmd;
-use lvw_core::hotkeys::{Binding, Input};
-use lvw_core::settings::{HotkeyBinding, ModifierKey, Settings};
+use privatevox_core::hotkeys::{Binding, Input};
+use privatevox_core::settings::{HotkeyBinding, ModifierKey, Settings};
 use std::sync::mpsc::Sender;
 use tauri::AppHandle;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
@@ -125,7 +125,7 @@ fn start_modifier_listener(tx: Sender<Cmd>) {
     }
     std::env::set_var("KEYBOARD_ONLY", "1");
     std::thread::Builder::new()
-        .name("lvw-keyhook".into())
+        .name("privatevox-keyhook".into())
         .spawn(move || {
             let mut down: Vec<rdev::Key> = Vec::new();
             let result = rdev::listen(move |ev| {
@@ -158,7 +158,7 @@ fn start_modifier_listener(tx: Sender<Cmd>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lvw_core::settings::{HotkeyBinding, ModifierKey, Settings};
+    use privatevox_core::settings::{HotkeyBinding, ModifierKey, Settings};
 
     #[test]
     fn modifier_mapping_is_empty_when_hold_key_is_a_combo() {

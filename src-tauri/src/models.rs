@@ -1,7 +1,7 @@
 //! First-run model download with progress events (design §4.6, §13 step 5).
 
 use crate::pipeline::{Cmd, PillState};
-use lvw_core::download::{download_blocking, is_present, ModelSpec};
+use privatevox_core::download::{download_blocking, is_present, ModelSpec};
 use serde::Serialize;
 use std::path::Path;
 use std::sync::mpsc::Sender;
@@ -17,7 +17,7 @@ pub struct DownloadProgress {
 }
 
 pub fn spec_for(model_id: &str) -> Option<ModelSpec> {
-    lvw_core::models::info(model_id).map(|m| m.spec)
+    privatevox_core::models::info(model_id).map(|m| m.spec)
 }
 
 /// Downloads the model for `model_id` into `models_dir` on a background thread, emitting `model-download`
@@ -48,7 +48,7 @@ pub fn ensure_model(app: AppHandle, model_id: &str, models_dir: &Path, tx: Sende
     }
     let dir = models_dir.to_path_buf();
     std::thread::Builder::new()
-        .name("lvw-download".into())
+        .name("privatevox-download".into())
         .spawn(move || {
             log::info!("downloading {} ({} MB)", spec.file, spec.bytes / 1_000_000);
             let mut last_pct = -1i64;

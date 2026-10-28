@@ -1,4 +1,4 @@
-//! LVW desktop app: pill and panel windows, tray, hotkeys, pipeline, lifecycle.
+//! PrivateVox desktop app: pill and panel windows, tray, hotkeys, pipeline, lifecycle.
 
 pub mod adapters;
 pub mod benchmark;
@@ -18,11 +18,11 @@ use crate::lifecycle::SharedEngine;
 use crate::paste::Paster;
 use crate::pipeline::{Cmd, Coordinator, Deps, PillState};
 use crate::state::{AppPaths, AppState};
-use lvw_core::lifecycle::{IdleTimer, LockFile};
-use lvw_core::settings::Settings;
-use lvw_core::store::Store;
-use lvw_core::vad::Vad;
-use lvw_engine::supervisor::{Engine, PidHandle, WorkerEngine};
+use privatevox_core::lifecycle::{IdleTimer, LockFile};
+use privatevox_core::settings::Settings;
+use privatevox_core::store::Store;
+use privatevox_core::vad::Vad;
+use privatevox_engine::supervisor::{Engine, PidHandle, WorkerEngine};
 use std::process::Command;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
@@ -58,7 +58,7 @@ pub fn run() {
         }))
         .plugin(
             tauri_plugin_log::Builder::new()
-                .targets([Target::new(TargetKind::LogDir { file_name: Some("lvw".into()) }), Target::new(TargetKind::Stdout)])
+                .targets([Target::new(TargetKind::LogDir { file_name: Some("privatevox".into()) }), Target::new(TargetKind::Stdout)])
                 .level(log::LevelFilter::Info)
                 .build(),
         )
@@ -98,11 +98,12 @@ pub fn run() {
             commands::debug_cancel,
         ])
         .setup(move |app| {
-            log::info!("LVW {} starting", lvw_core::version());
+            log::info!("PrivateVox {} starting", privatevox_core::version());
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             let data_dir = app.path().app_data_dir()?;
+            migrate_old_data_dir(&data_dir);
             std::fs::create_dir_all(&data_dir)?;
             let paths = AppPaths::new(data_dir);
 
@@ -171,7 +172,7 @@ pub fn run() {
                         }
                     }
                     if let Ok(mut st) = switched_store.lock() {
-                        let stats = lvw_core::store::ModelStats { load_ms: Some(info.duration.as_millis() as u64), speed_x: None, mem_bytes: Some(info.resident_bytes) };
+                        let stats = privatevox_core::store::ModelStats { load_ms: Some(info.duration.as_millis() as u64), speed_x: None, mem_bytes: Some(info.resident_bytes) };
                         let _ = st.set_model_stats(id, &stats);
                     }
                     let _ = switched_app.emit("models-changed", ());
@@ -180,7 +181,7 @@ pub fn run() {
                     let dir = paths.data_dir.clone();
                     Box::new(move || {
                         let p = benchmark::ensure_benchmark_clip(&dir)?;
-                        lvw_core::audio::load_wav_16k(&p)
+                        privatevox_core::audio::load_wav_16k(&p)
                     })
                 },
                 on_benchmark: {
@@ -188,7 +189,7 @@ pub fn run() {
                     let app = app.handle().clone();
                     Box::new(move |id, speed, load_ms| {
                         if let Ok(mut st) = store.lock() {
-                            let stats = lvw_core::store::ModelStats { load_ms: if load_ms > 0 { Some(load_ms) } else { None }, speed_x: Some(speed), mem_bytes: None };
+                            let stats = privatevox_core::store::ModelStats { load_ms: if load_ms > 0 { Some(load_ms) } else { None }, speed_x: Some(speed), mem_bytes: None };
                             let _ = st.set_model_stats(id, &stats);
                         }
                         let _ = app.emit("models-changed", ());
@@ -211,7 +212,7 @@ pub fn run() {
             let coord = Coordinator::new(deps, settings.clone(), store.clone(), vad, emit);
             let (tx, rx) = channel::<Cmd>();
             let tx2 = tx.clone();
-            std::thread::Builder::new().name("lvw-pipeline".into()).spawn(move || coord.run(rx, tx2))?;
+            std::thread::Builder::new().name("privatevox-pipeline".into()).spawn(move || coord.run(rx, tx2))?;
 
             // Pill placement: where it was last dragged if still on screen, else bottom-centre above the Dock.
             if let Some(pill) = app.get_webview_window("pill") {
@@ -219,9 +220,9 @@ pub fn run() {
                 let monitor = pill.current_monitor().ok().flatten().or_else(|| pill.primary_monitor().ok().flatten());
                 if let Some(m) = monitor {
                     let wa = m.work_area();
-                    let area = lvw_core::placement::Rect { x: wa.position.x, y: wa.position.y, w: wa.size.width, h: wa.size.height };
-                    let saved = current.pill_position.and_then(|p| lvw_core::placement::clamp_to_area(p, &area, pill_size));
-                    let (x, y) = saved.unwrap_or_else(|| lvw_core::placement::default_pill_position(&area, pill_size, 12));
+                    let area = privatevox_core::placement::Rect { x: wa.position.x, y: wa.position.y, w: wa.size.width, h: wa.size.height };
+                    let saved = current.pill_position.and_then(|p| privatevox_core::placement::clamp_to_area(p, &area, pill_size));
+                    let (x, y) = saved.unwrap_or_else(|| privatevox_core::placement::default_pill_position(&area, pill_size, 12));
                     if let Err(e) = pill.set_position(tauri::PhysicalPosition::new(x, y)) {
                         log::warn!("pill position: {e}");
                     }
@@ -249,8 +250,8 @@ pub fn run() {
             let tray_for_idle = tray.clone();
             lifecycle::spawn_idle_watch(engine.clone(), idle.clone(), tx.clone(), Box::new(move |remaining| {
                 let text = match remaining {
-                    Some(d) => format!("LVW · unloads in {} min", (d.as_secs() + 59) / 60),
-                    None => "LVW".to_string(),
+                    Some(d) => format!("PrivateVox · unloads in {} min", (d.as_secs() + 59) / 60),
+                    None => "PrivateVox".to_string(),
                 };
                 tray::set_status(&tray_for_idle, &text);
             }));
@@ -262,7 +263,7 @@ pub fn run() {
             let exit_handle = app.handle().clone();
             let _ = ctrlc::set_handler(move || exit_handle.exit(0));
 
-            if let Ok(script) = std::env::var("LVW_DEBUG_SCRIPT") {
+            if let Ok(script) = std::env::var("PRIVATEVOX_DEBUG_SCRIPT") {
                 let tx = tx.clone();
                 std::thread::spawn(move || {
                     let t0 = std::time::Instant::now();
@@ -293,7 +294,7 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // The panel hides instead of closing; LVW lives in the tray.
+            // The panel hides instead of closing; PrivateVox lives in the tray.
             if window.label() == "panel" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
@@ -321,12 +322,12 @@ pub fn run() {
             }
         })
         .build(tauri::generate_context!())
-        .expect("error while building LVW");
+        .expect("error while building PrivateVox");
 
     app.run(move |app, event| match event {
         RunEvent::ExitRequested { code, api, .. } => {
             if code.is_none() {
-                // The last window closed; LVW lives in the tray.
+                // The last window closed; PrivateVox lives in the tray.
                 api.prevent_exit();
             }
         }
@@ -349,4 +350,24 @@ pub fn run() {
         }
         _ => {}
     });
+}
+
+/// First launch after the rename from LVW: move `com.drake0306.lvw` to the new folder and rename its files.
+fn migrate_old_data_dir(new_dir: &std::path::Path) {
+    if new_dir.join("settings.json").exists() || new_dir.join("privatevox.sqlite").exists() {
+        return;
+    }
+    let Some(parent) = new_dir.parent() else { return };
+    let old = parent.join("com.drake0306.lvw");
+    if !old.is_dir() {
+        return;
+    }
+    let _ = std::fs::remove_dir(new_dir);
+    if std::fs::rename(&old, new_dir).is_ok() {
+        for (from, to) in [("lvw.sqlite", "privatevox.sqlite"), ("lvw.sqlite-wal", "privatevox.sqlite-wal"), ("lvw.sqlite-shm", "privatevox.sqlite-shm")] {
+            let _ = std::fs::rename(new_dir.join(from), new_dir.join(to));
+        }
+        let _ = std::fs::remove_file(new_dir.join("lvw.lock"));
+        log::info!("migrated data folder from com.drake0306.lvw");
+    }
 }

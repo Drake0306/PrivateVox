@@ -1,14 +1,14 @@
-# LVW Panel Workbench, Models, Memory and Chunked Decode Implementation Plan
+# PrivateVox Panel Workbench, Models, Memory and Chunked Decode Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Turn the v1 core into the app the design describes on the panel side: three switchable Whisper models with download, delete and benchmark; a live GPU memory strip with Recommended and Best; a history that can be edited, pinned, pasted again and exported; a hotkey picker; undo last paste; and chunked decoding while the user is still speaking.
 
-**Architecture:** Pure logic stays in `lvw-core` (memory budget, model catalog, chunk planning, undo policy, export formatting) with unit tests. The engine protocol gains resident-memory reporting. The app gains a `models` manager, a `memory` reporter, a chunked decode path in the coordinator, and commands the panel calls. The UI stays plain HTML/JS.
+**Architecture:** Pure logic stays in `privatevox-core` (memory budget, model catalog, chunk planning, undo policy, export formatting) with unit tests. The engine protocol gains resident-memory reporting. The app gains a `models` manager, a `memory` reporter, a chunked decode path in the coordinator, and commands the panel calls. The UI stays plain HTML/JS.
 
 **Tech Stack:** as in the core plan, plus `sysinfo = "0.39.6"`.
 
-**Spec:** `docs/superpowers/specs/2026-10-28-whisper-harness-design.md` §4.4, §4.5, §4.6, §4.2 (undo), §6, §9, §18.6, §18.9; spike results for numbers. API facts: `docs/superpowers/reference/2026-10-28-crate-api-reference.md`. Built on the core plan `docs/superpowers/plans/2026-10-28-lvw-core-dictation.md` (its Interfaces blocks still hold).
+**Spec:** `docs/superpowers/specs/2026-10-28-whisper-harness-design.md` §4.4, §4.5, §4.6, §4.2 (undo), §6, §9, §18.6, §18.9; spike results for numbers. API facts: `docs/superpowers/reference/2026-10-28-crate-api-reference.md`. Built on the core plan `docs/superpowers/plans/2026-10-28-privatevox-core-dictation.md` (its Interfaces blocks still hold).
 
 **Out of scope (next plans):** LLM polish, modes, re-polish, LAN endpoints, keep-audio, dictionary, receipt-sequenced paste, secure input, Windows.
 
@@ -35,7 +35,7 @@
 
 ### Task 1: Engine reports resident memory
 
-**Files:** Modify `crates/lvw-engine/src/protocol.rs`, `worker.rs`, `backend.rs`, `supervisor.rs`; `tests/supervisor.rs`.
+**Files:** Modify `crates/privatevox-engine/src/protocol.rs`, `worker.rs`, `backend.rs`, `supervisor.rs`; `tests/supervisor.rs`.
 
 **Interfaces:** `Response::Loaded { load_ms: u64, resident_bytes: u64 }` (worker RSS delta across the load, via `libc::proc_pidinfo`/`ps -o rss` on macOS); `Engine::load` returns `LoadInfo { duration: Duration, resident_bytes: u64 }`; `WorkerEngine::last_load() -> Option<LoadInfo>`. The fake worker reports `resident_bytes: 123_456_789`.
 
@@ -45,7 +45,7 @@
 
 ### Task 2: Memory budget logic
 
-**Files:** Create `crates/lvw-core/src/memory.rs`.
+**Files:** Create `crates/privatevox-core/src/memory.rs`.
 
 **Interfaces:** `pub struct Tier { pub id: &'static str, pub label: &'static str, pub accuracy_rank: u8, pub speed_rank: u8 }` with `pub const TIERS: [Tier; 3]`; `pub struct MemoryInput { pub total: u64, pub used_by_others: u64, pub footprints: HashMap<String, u64> /* measured or estimated bytes per model id */, pub llm_bytes: u64, pub selected: String }`; `pub enum Verdict { Good, Tight, WontFit }`; `pub struct MemoryReport { pub total: u64, pub used_by_others: u64, pub selected_bytes: u64, pub llm_bytes: u64, pub projected: u64, pub percent: u8, pub verdict: Verdict, pub recommended: Option<String>, pub best: Option<String>, pub free_after: u64 }`; `pub fn budget(input: &MemoryInput) -> MemoryReport`; `pub fn estimate_footprint(model_id: &str) -> u64` (turbo 550 MB, large-v3 1.0 GB, distil 1.6 GB until measured); `pub fn system_memory() -> (u64, u64)` via `sysinfo` (total, used).
 
@@ -54,7 +54,7 @@
 
 ### Task 3: Model catalog and store rows
 
-**Files:** Create `crates/lvw-core/src/models.rs`; modify `store.rs` (table `models(id TEXT PRIMARY KEY, downloaded INTEGER, load_ms INTEGER, speed_x REAL, mem_bytes INTEGER, measured_at_ms INTEGER)`), `download.rs` (add `DISTIL_LARGE_V3_F16`).
+**Files:** Create `crates/privatevox-core/src/models.rs`; modify `store.rs` (table `models(id TEXT PRIMARY KEY, downloaded INTEGER, load_ms INTEGER, speed_x REAL, mem_bytes INTEGER, measured_at_ms INTEGER)`), `download.rs` (add `DISTIL_LARGE_V3_F16`).
 
 **Interfaces:** `pub struct ModelInfo { pub id, pub label, pub file, pub bytes, pub quant: &'static str, pub english_only: bool, pub spec: ModelSpec }`; `pub fn catalog() -> Vec<ModelInfo>`; `pub fn model_file(models_dir, id) -> PathBuf`; store: `pub fn model_stats(&self, id) -> Option<ModelStats>`, `pub fn set_model_stats(&mut self, id, stats)`, `pub struct ModelStats { load_ms: Option<u64>, speed_x: Option<f32>, mem_bytes: Option<u64> }`.
 
@@ -79,14 +79,14 @@
 
 ### Task 6: Memory strip and model cards in the panel
 
-**Files:** Modify `src-tauri/src/commands.rs` (`memory_report() -> MemoryReport`), `ui/panel.html`, `ui/lvw.css`.
+**Files:** Modify `src-tauri/src/commands.rs` (`memory_report() -> MemoryReport`), `ui/panel.html`, `ui/privatevox.css`.
 
 - [ ] Rust test: `memory_report_uses_measured_footprint_when_present`. Then the UI: a "Models" tab with the strip (bar with other/whisper/llm segments, legend, three tiles), one card per tier (state, size, Download/Delete/Benchmark/Use buttons, measured numbers), and the header model dropdown bound to `switch_model`. Refresh every 5 s while visible. Manual check.
 - [ ] Commit: `feat(ui): memory strip and model cards`.
 
 ### Task 7: Chunked decode while speaking and the cap countdown
 
-**Files:** Create `crates/lvw-core/src/chunking.rs`; modify `vad.rs` (`Vad::score(&mut self, pcm) -> Vec<f32>` per-frame probabilities, 512-sample frames), `src-tauri/src/pipeline.rs`.
+**Files:** Create `crates/privatevox-core/src/chunking.rs`; modify `vad.rs` (`Vad::score(&mut self, pcm) -> Vec<f32>` per-frame probabilities, 512-sample frames), `src-tauri/src/pipeline.rs`.
 
 **Interfaces:** `pub struct Chunker` with `pub fn new() -> Self`, `pub fn push(&mut self, probs: &[f32], frame_samples: usize, samples_so_far: usize) -> Vec<Range<usize>>` (returns the sample ranges whose cuts became certain), `pub fn finish(&mut self, total: usize) -> Option<Range<usize>>`; `pub fn plan_cuts(segments: &[Range<usize>], total: usize) -> Vec<usize>` (Handy's greedy plan: cut at the best pause 5–40 s after the previous cut, prefer long pauses near 30 s, never leave under 5 s, hard cut at 40 s). Pipeline: while recording, every 500 ms score new audio and feed the chunker; each certain range is decoded on a helper thread (engine lock) and its text appended to an ordered list; at stop, the remainder is decoded and all texts joined with a space; `PillState::Listening` gains `countdown: Option<u32>` shown from 4:30.
 
@@ -102,7 +102,7 @@
 
 ### Task 9: Undo last paste
 
-**Files:** Create `crates/lvw-core/src/undo.rs`; modify `src-tauri/src/pipeline.rs` (`Cmd::Undo`), `paste.rs` (`KeySender::undo_chord`), `hotkeys.rs` (binding `Undo`, default `Ctrl+Shift+Z`), `settings.rs` (`undo: HotkeyBinding`).
+**Files:** Create `crates/privatevox-core/src/undo.rs`; modify `src-tauri/src/pipeline.rs` (`Cmd::Undo`), `paste.rs` (`KeySender::undo_chord`), `hotkeys.rs` (binding `Undo`, default `Ctrl+Shift+Z`), `settings.rs` (`undo: HotkeyBinding`).
 
 **Interfaces:** `pub struct LastPaste { pub text: String, pub app: Option<String>, pub at: Instant }`; `pub enum UndoDecision { SendUndo, CopyAgain, Nothing }`; `pub fn decide(last: Option<&LastPaste>, frontmost: Option<&str>, now: Instant, window: Duration) -> UndoDecision`.
 
@@ -111,7 +111,7 @@
 
 ### Task 10: History workbench: edit, pin, paste again, export
 
-**Files:** Create `crates/lvw-core/src/export.rs`; modify `commands.rs` (`update_history_text(id, text)`, `pin_history(id, pinned)`, `paste_text(text)` → `Cmd::PasteText`, `export_history(format) -> PathBuf` to `~/Downloads/lvw-history-YYYYMMDD-HHMM.{md,json}`), `pipeline.rs`, `ui/panel.html`.
+**Files:** Create `crates/privatevox-core/src/export.rs`; modify `commands.rs` (`update_history_text(id, text)`, `pin_history(id, pinned)`, `paste_text(text)` → `Cmd::PasteText`, `export_history(format) -> PathBuf` to `~/Downloads/privatevox-history-YYYYMMDD-HHMM.{md,json}`), `pipeline.rs`, `ui/panel.html`.
 
 **Interfaces:** `pub fn to_markdown(rows: &[Dictation]) -> String` (one `## <time> · <app>` heading per row, metadata line, text), `pub fn to_json(rows) -> String`.
 

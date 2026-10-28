@@ -1,4 +1,4 @@
-//! The three Whisper tiers LVW ships: what to download, where it lives, what it costs (design §4.6).
+//! The three Whisper tiers PrivateVox ships: what to download, where it lives, what it costs (design §4.6).
 
 use crate::download::{ModelSpec, DISTIL_LARGE_V3_F16, LARGE_V3_Q5_0, TURBO_Q5_0};
 use std::path::{Path, PathBuf};

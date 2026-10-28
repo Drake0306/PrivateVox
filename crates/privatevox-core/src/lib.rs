@@ -1,4 +1,4 @@
-//! LVW core: pure logic shared by the app and the engine worker. No Tauri dependency.
+//! PrivateVox core: pure logic shared by the app and the engine worker. No Tauri dependency.
 
 pub mod audio;
 pub mod chunking;

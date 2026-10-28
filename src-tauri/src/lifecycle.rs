@@ -1,8 +1,8 @@
 //! Exit path, idle unload and crash detection for the app (design §10, §18.1).
 
 use crate::pipeline::Cmd;
-use lvw_core::lifecycle::IdleTimer;
-use lvw_engine::supervisor::Engine;
+use privatevox_core::lifecycle::IdleTimer;
+use privatevox_engine::supervisor::Engine;
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -39,7 +39,7 @@ pub fn shutdown(engine: SharedEngine, deadline: Duration) -> ShutdownOutcome {
 /// Background tick: unloads the model when the idle timer is due and tells the pipeline.
 pub fn spawn_idle_watch(engine: SharedEngine, timer: Arc<Mutex<IdleTimer>>, tx: Sender<Cmd>, on_status: Box<dyn Fn(Option<Duration>) + Send>) {
     std::thread::Builder::new()
-        .name("lvw-idle".into())
+        .name("privatevox-idle".into())
         .spawn(move || loop {
             std::thread::sleep(Duration::from_secs(15));
             let now = Instant::now();
@@ -65,8 +65,8 @@ pub fn spawn_idle_watch(engine: SharedEngine, timer: Arc<Mutex<IdleTimer>>, tx: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lvw_engine::protocol::DecodeOptions;
-    use lvw_engine::supervisor::{Engine, LoadInfo, Transcript};
+    use privatevox_engine::protocol::DecodeOptions;
+    use privatevox_engine::supervisor::{Engine, LoadInfo, Transcript};
     use std::path::Path;
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};

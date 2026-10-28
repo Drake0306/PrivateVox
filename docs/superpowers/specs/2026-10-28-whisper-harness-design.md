@@ -1,7 +1,7 @@
-# LVW (Local Voice Wisper), design
+# PrivateVox, design
 
 Date: 2026-10-28
-Status: approved by the owner on 2026-10-28 ("go ahead and build"). Working title in earlier sections is "Whisper Harness"; the product name is **LVW**, bundle identifier `com.drake0306.lvw`, licence MIT. **[user]**
+Status: approved by the owner on 2026-10-28 ("go ahead and build"). Working title in earlier sections is "Whisper Harness"; the product name is **PrivateVox**, bundle identifier `com.drake0306.privatevox`, licence MIT. **[user]**
 Companion page (mockups, VRAM gauge, idea bank): `docs/whisper-harness-brainstorm.html`
 
 Tags used below: **[user]** decided by the product owner during brainstorming, **[call]** a default chosen by the author that can be overridden, **[builder]** deliberately left to whoever implements it.
@@ -250,7 +250,7 @@ Both: respect reduced motion, dark/light theme following the OS, high-DPI pill r
 
 ## 14. Decisions log
 
-**[user]** Name LVW (Local Voice Wisper), bundle id `com.drake0306.lvw`, MIT; own codebase borrowing from Handy (option A) approved with the design on 2026-10-28; Mac first, Windows when the owner is at the PC; personal use first, open source after; Three switchable Whisper models; switcher and GPU strip inside the history panel; configurable idle unload; full exit/crash cleanup; local-first LLM with LAN machines as the second tier reached by IP and port, seamless failover; Windows PC is an RX 9070 16 GB; Mac is Apple Silicon M1 family; the 12 idea-bank picks listed in §13.
+**[user]** Name PrivateVox, bundle id `com.drake0306.privatevox`, MIT; own codebase borrowing from Handy (option A) approved with the design on 2026-10-28; Mac first, Windows when the owner is at the PC; personal use first, open source after; Three switchable Whisper models; switcher and GPU strip inside the history panel; configurable idle unload; full exit/crash cleanup; local-first LLM with LAN machines as the second tier reached by IP and port, seamless failover; Windows PC is an RX 9070 16 GB; Mac is Apple Silicon M1 family; the 12 idea-bank picks listed in §13.
 
 **[call]** 5-minute clip cap in v1 with auto-stop; watchdog deadline scaled to clip length with cooperative cancel first; LLM kept warm alongside Whisper and unloaded by the same idle timer; remote Whisper client deferred to v1.x; §11 numbers are targets, not acceptance criteria; Tauri 2 shell and Rust core; whisper.cpp via whisper-rs, Vulkan on Windows and Metal on macOS; large-v3-turbo as the first-launch default; Q5_0 quantization by default; one resident model at a time; default hotkeys; 300 ms minimum clip; 8 s LLM timeout then raw fallback; LAN endpoints ordered before local once added; discovered peers need an explicit Add; share mode after v1; no internet cloud provider in v1; recommended/best thresholds at 80%/90%; SQLite schema in §6.
 

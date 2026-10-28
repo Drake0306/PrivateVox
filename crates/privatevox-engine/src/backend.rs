@@ -39,7 +39,7 @@ impl WhisperBackend {
         let seconds = pcm.len() as f32 / 16_000.0;
         let ctx_len = audio_ctx_for(seconds);
         let (text, language) = self.run(pcm, opts, ctx_len)?;
-        if ctx_len < 1500 && lvw_core::textnorm::has_repetition_loop(&text, 4) {
+        if ctx_len < 1500 && privatevox_core::textnorm::has_repetition_loop(&text, 4) {
             log::warn!("repetition loop at audio_ctx {ctx_len}; re-running at 1500");
             let (text, language) = self.run(pcm, opts, 1500)?;
             return Ok(Decoded { text, language, audio_ctx: 1500, reran: true });

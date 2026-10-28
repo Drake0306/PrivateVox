@@ -1,13 +1,13 @@
 //! Shared app state handed to Tauri commands.
 
 use crate::pipeline::Cmd;
-use lvw_core::settings::Settings;
-use lvw_core::store::Store;
+use privatevox_core::settings::Settings;
+use privatevox_core::store::Store;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
-/// Where LVW keeps its files (Tauri `app_data_dir`, e.g. `~/Library/Application Support/com.drake0306.lvw`).
+/// Where PrivateVox keeps its files (Tauri `app_data_dir`, e.g. `~/Library/Application Support/com.drake0306.privatevox`).
 #[derive(Debug, Clone)]
 pub struct AppPaths {
     pub data_dir: PathBuf,
@@ -21,10 +21,10 @@ impl AppPaths {
         self.data_dir.join("settings.json")
     }
     pub fn db(&self) -> PathBuf {
-        self.data_dir.join("lvw.sqlite")
+        self.data_dir.join("privatevox.sqlite")
     }
     pub fn lock(&self) -> PathBuf {
-        self.data_dir.join("lvw.lock")
+        self.data_dir.join("privatevox.lock")
     }
     pub fn clipboard_backup(&self) -> PathBuf {
         self.data_dir.join("clipboard.bak")

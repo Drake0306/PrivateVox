@@ -2,16 +2,16 @@
 //! Generic over the engine, capture source and paste sink so it runs under test without hardware.
 
 use crate::paste::PasteOutcome;
-use lvw_core::audio::{level_db, ClipBuffer, SAMPLE_RATE};
-use lvw_core::chunking::{Chunker, MAX_CHUNK};
-use lvw_core::hotkeys::{Effect, Input, Machine};
-use lvw_core::lifecycle::IdleTimer;
-use lvw_core::settings::Settings;
-use lvw_core::store::{NewDictation, Store};
-use lvw_core::textnorm::normalize;
-use lvw_core::vad::{is_too_short, pad_min, ClipClass, Vad, VadConfig};
-use lvw_engine::protocol::DecodeOptions;
-use lvw_engine::supervisor::{Engine, LoadInfo};
+use privatevox_core::audio::{level_db, ClipBuffer, SAMPLE_RATE};
+use privatevox_core::chunking::{Chunker, MAX_CHUNK};
+use privatevox_core::hotkeys::{Effect, Input, Machine};
+use privatevox_core::lifecycle::IdleTimer;
+use privatevox_core::settings::Settings;
+use privatevox_core::store::{NewDictation, Store};
+use privatevox_core::textnorm::normalize;
+use privatevox_core::vad::{is_too_short, pad_min, ClipClass, Vad, VadConfig};
+use privatevox_engine::protocol::DecodeOptions;
+use privatevox_engine::supervisor::{Engine, LoadInfo};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -143,7 +143,7 @@ fn trim_with_probs(pcm: &[f32], probs: &[f32], chunk_start: usize) -> Vec<f32> {
     if first >= last {
         return pad_min(pcm.to_vec(), 1.25); // unscored tail: decode as is
     }
-    let segs = lvw_core::chunking::speech_segments(&probs[first..last], FRAME, pcm.len());
+    let segs = privatevox_core::chunking::speech_segments(&probs[first..last], FRAME, pcm.len());
     if segs.is_empty() {
         return Vec::new();
     }
@@ -189,18 +189,18 @@ pub struct Coordinator {
     machine: Machine,
     /// A switch requested while recording; applied once the pipeline drains.
     pending_switch: Option<String>,
-    last_paste: Option<lvw_core::undo::LastPaste>,
+    last_paste: Option<privatevox_core::undo::LastPaste>,
     idle_tx: Option<Sender<Cmd>>,
 }
 
 fn hotkey_hint(s: &Settings) -> String {
     match (&s.ptt.modifier, &s.ptt.combo) {
-        (Some(lvw_core::settings::ModifierKey::RightOption), _) => "Hold right ⌥ to talk".into(),
-        (Some(lvw_core::settings::ModifierKey::LeftOption), _) => "Hold left ⌥ to talk".into(),
-        (Some(lvw_core::settings::ModifierKey::RightCommand), _) => "Hold right ⌘ to talk".into(),
-        (Some(lvw_core::settings::ModifierKey::RightControl), _) => "Hold right ⌃ to talk".into(),
+        (Some(privatevox_core::settings::ModifierKey::RightOption), _) => "Hold right ⌥ to talk".into(),
+        (Some(privatevox_core::settings::ModifierKey::LeftOption), _) => "Hold left ⌥ to talk".into(),
+        (Some(privatevox_core::settings::ModifierKey::RightCommand), _) => "Hold right ⌘ to talk".into(),
+        (Some(privatevox_core::settings::ModifierKey::RightControl), _) => "Hold right ⌃ to talk".into(),
         (None, Some(c)) => format!("Hold {c} to talk"),
-        (None, None) => "LVW".into(),
+        (None, None) => "PrivateVox".into(),
     }
 }
 
@@ -215,7 +215,7 @@ impl Coordinator {
 
     /// Unloads the current model and loads `id` from the models directory. Refused if the file is missing.
     fn switch_model(&mut self, id: &str) {
-        let Some(path) = lvw_core::models::model_file(&self.deps.model_dir, id) else {
+        let Some(path) = privatevox_core::models::model_file(&self.deps.model_dir, id) else {
             self.error(&format!("Unknown model {id}"));
             return;
         };
@@ -328,7 +328,7 @@ impl Coordinator {
                     }
                 }
                 Cmd::SwitchModel(id) => {
-                    if self.recording.is_some() || matches!(self.machine.stage(), lvw_core::hotkeys::Stage::Processing) {
+                    if self.recording.is_some() || matches!(self.machine.stage(), privatevox_core::hotkeys::Stage::Processing) {
                         log::info!("model switch to {id} deferred until the pipeline is idle");
                         self.pending_switch = Some(id);
                     } else {
@@ -347,7 +347,7 @@ impl Coordinator {
                     let app_name = (self.deps.frontmost)();
                     match self.deps.paste.paste(&text) {
                         Ok(PasteOutcome::Pasted) => {
-                            self.last_paste = Some(lvw_core::undo::LastPaste { text: text.clone(), app: app_name, at: Instant::now() });
+                            self.last_paste = Some(privatevox_core::undo::LastPaste { text: text.clone(), app: app_name, at: Instant::now() });
                             (self.emit)(PillState::Pasted { preview: format!("Pasted again: {}", first_chars(&text, 50)) });
                         }
                         Ok(PasteOutcome::CopiedOnly(_)) => (self.emit)(PillState::Pasted { preview: format!("Copied (paste blocked): {}", first_chars(&text, 40)) }),
@@ -426,7 +426,7 @@ impl Coordinator {
         let flash = self.settings().flash_attention;
         let idle = self.deps.idle.clone();
         std::thread::Builder::new()
-            .name("lvw-preload".into())
+            .name("privatevox-preload".into())
             .spawn(move || {
                 if let Ok(mut e) = engine.lock() {
                     if !e.is_loaded() {
@@ -501,7 +501,7 @@ impl Coordinator {
     /// Undo last paste: the app's undo keystroke if the same app is still in front within 30 s, otherwise
     /// the text goes back on the clipboard so nothing is typed into the wrong window (design §4.2).
     fn undo(&mut self) {
-        use lvw_core::undo::{decide, UndoDecision};
+        use privatevox_core::undo::{decide, UndoDecision};
         let front = (self.deps.frontmost)();
         match decide(self.last_paste.as_ref(), front.as_deref(), Instant::now(), Duration::from_secs(30)) {
             UndoDecision::SendUndo => match self.deps.paste.undo() {
@@ -607,7 +607,7 @@ impl Coordinator {
             let flash = settings.flash_attention;
             let model_path = self.deps.model_path.clone();
             let handle = std::thread::Builder::new()
-                .name("lvw-chunks".into())
+                .name("privatevox-chunks".into())
                 .spawn(move || {
                     for job in jrx {
                         if cancelled.load(Ordering::SeqCst) {
@@ -663,7 +663,7 @@ impl Coordinator {
 
     /// Tells the activation machine the pipeline drained; a remembered press starts the next recording.
     fn pipeline_done(&mut self, tx: &Sender<Cmd>) {
-        if matches!(self.machine.stage(), lvw_core::hotkeys::Stage::Processing) {
+        if matches!(self.machine.stage(), privatevox_core::hotkeys::Stage::Processing) {
             let effect = self.machine.on(Input::PipelineDone, Instant::now());
             self.apply(effect, tx);
         }
@@ -771,7 +771,7 @@ impl Coordinator {
         let app_name = (self.deps.frontmost)();
         let (status, preview) = match self.deps.paste.paste(&text) {
             Ok(PasteOutcome::Pasted) => {
-                self.last_paste = Some(lvw_core::undo::LastPaste { text: text.clone(), app: app_name.clone(), at: Instant::now() });
+                self.last_paste = Some(privatevox_core::undo::LastPaste { text: text.clone(), app: app_name.clone(), at: Instant::now() });
                 ("ok", format!("Pasted: {}", first_chars(&text, 60)))
             }
             Ok(PasteOutcome::CopiedOnly(reason)) => {
@@ -907,11 +907,11 @@ fn schedule(tx: &Sender<Cmd>, cmd: Cmd, after: Duration) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lvw_core::settings::Settings;
-    use lvw_core::store::Store;
-    use lvw_core::vad::Vad;
-    use lvw_engine::protocol::DecodeOptions;
-    use lvw_engine::supervisor::{Engine, LoadInfo, Transcript};
+    use privatevox_core::settings::Settings;
+    use privatevox_core::store::Store;
+    use privatevox_core::vad::Vad;
+    use privatevox_engine::protocol::DecodeOptions;
+    use privatevox_engine::supervisor::{Engine, LoadInfo, Transcript};
     use std::path::{Path, PathBuf};
     use std::sync::mpsc::channel;
     use std::sync::{Arc, Mutex};
@@ -987,7 +987,7 @@ mod tests {
     }
 
     fn fixture() -> Vec<f32> {
-        let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../crates/lvw-core/tests/fixtures/hello.wav");
+        let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../crates/privatevox-core/tests/fixtures/hello.wav");
         let mut r = hound::WavReader::open(p).unwrap();
         let mut pcm: Vec<f32> = vec![0.0; 8000];
         pcm.extend(r.samples::<i16>().map(|s| s.unwrap() as f32 / 32768.0));
@@ -1011,7 +1011,7 @@ mod tests {
 
     fn harness(engine: FakeEngine, capture: FakeCapture) -> Harness {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(Mutex::new(Store::open(&dir.path().join("lvw.sqlite")).unwrap()));
+        let store = Arc::new(Mutex::new(Store::open(&dir.path().join("privatevox.sqlite")).unwrap()));
         let mut settings = Settings::default();
         settings.post_release_ms = 0;
         let settings = Arc::new(Mutex::new(settings));
@@ -1020,7 +1020,7 @@ mod tests {
         let pasted = Arc::new(Mutex::new(Vec::new()));
         let models_dir = dir.path().join("models");
         std::fs::create_dir_all(&models_dir).unwrap();
-        for m in lvw_core::models::catalog() {
+        for m in privatevox_core::models::catalog() {
             std::fs::write(models_dir.join(m.file), b"stub").unwrap();
         }
         let switched = Arc::new(Mutex::new(Vec::new()));
@@ -1037,7 +1037,7 @@ mod tests {
             model_path: Some(models_dir.join("ggml-large-v3-turbo-q5_0.bin")),
             model_dir: models_dir,
             frontmost: Box::new(move || fm.lock().unwrap().clone()),
-            idle: Arc::new(Mutex::new(lvw_core::lifecycle::IdleTimer::new(None))),
+            idle: Arc::new(Mutex::new(privatevox_core::lifecycle::IdleTimer::new(None))),
             on_model_switched: Box::new(move |id, _info| sw.lock().unwrap().push(id.to_string())),
             benchmark_clip: Box::new(|| Ok(vec![0.1f32; 16_000 * 30])),
             on_benchmark: Box::new(move |id, speed, _load_ms| bm.lock().unwrap().push((id.to_string(), speed))),
@@ -1110,7 +1110,7 @@ mod tests {
 
     #[test]
     fn direct_stop_after_hotkey_start_keeps_hotkeys_working() {
-        use lvw_core::hotkeys::{Binding, Input};
+        use privatevox_core::hotkeys::{Binding, Input};
         let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::Key(Input::Down(Binding::Ptt))).unwrap();
         h.tx.send(Cmd::Stop).unwrap(); // what the clip cap, the tray or the debug button sends

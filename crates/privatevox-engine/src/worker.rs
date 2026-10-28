@@ -1,8 +1,8 @@
 //! The engine worker process: the only place native Whisper code runs. Reads requests on stdin, writes
 //! responses on stdout, logs on stderr, and exits as soon as stdin closes (the app quit or died).
 //!
-//! `LVW_WORKER_FAKE=1` turns it into a fake that answers without a model (used by the supervisor tests);
-//! `LVW_WORKER_SLEEP_MS` makes the fake slow.
+//! `PRIVATEVOX_WORKER_FAKE=1` turns it into a fake that answers without a model (used by the supervisor tests);
+//! `PRIVATEVOX_WORKER_SLEEP_MS` makes the fake slow.
 
 use crate::backend::WhisperBackend;
 use crate::policy::audio_ctx_for;
@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 pub fn run_worker() -> i32 {
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).try_init();
     spawn_parent_watch();
-    let fake = std::env::var("LVW_WORKER_FAKE").is_ok();
-    let sleep_ms: u64 = std::env::var("LVW_WORKER_SLEEP_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+    let fake = std::env::var("PRIVATEVOX_WORKER_FAKE").is_ok();
+    let sleep_ms: u64 = std::env::var("PRIVATEVOX_WORKER_SLEEP_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
     let stdin = std::io::stdin();
     let mut input = stdin.lock();
     let stdout = std::io::stdout();
@@ -106,7 +106,7 @@ fn spawn_parent_watch() {
     {
         let parent = unsafe { libc::getppid() };
         std::thread::Builder::new()
-            .name("lvw-parent-watch".into())
+            .name("privatevox-parent-watch".into())
             .spawn(move || loop {
                 std::thread::sleep(Duration::from_millis(250));
                 let now = unsafe { libc::getppid() };

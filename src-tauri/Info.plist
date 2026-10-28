@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
   <key>NSMicrophoneUsageDescription</key>
-  <string>LVW records your voice while you hold the dictation key and transcribes it on this Mac.</string>
+  <string>PrivateVox records your voice while you hold the dictation key and transcribes it on this Mac.</string>
   <key>LSUIElement</key>
   <true/>
 </dict>

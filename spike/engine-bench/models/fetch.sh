@@ -2,7 +2,7 @@
 # Downloads the four spike models into ~/.cache/lvw-spike/models (about 3.4 GB).
 # Each file is verified against the server's Content-Length.
 set -euo pipefail
-DIR="${LVW_SPIKE_MODELS:-$HOME/.cache/lvw-spike/models}"
+DIR="${PRIVATEVOX_SPIKE_MODELS:-$HOME/.cache/lvw-spike/models}"
 mkdir -p "$DIR"
 fetch() { # url, file
   local url="$1" file="$DIR/$2"

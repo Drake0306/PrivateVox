@@ -61,7 +61,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let p = ensure_benchmark_clip(d.path()).unwrap();
         let first = std::fs::metadata(&p).unwrap().modified().unwrap();
-        let pcm = lvw_core::audio::load_wav_16k(&p).unwrap();
+        let pcm = privatevox_core::audio::load_wav_16k(&p).unwrap();
         assert!((pcm.len() as f32 / 16_000.0) > 20.0, "clip should be around 30 s, got {} s", pcm.len() as f32 / 16_000.0);
         let p2 = ensure_benchmark_clip(d.path()).unwrap();
         assert_eq!(p, p2);

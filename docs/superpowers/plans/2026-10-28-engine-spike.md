@@ -1,4 +1,4 @@
-# LVW Engine Spike Implementation Plan
+# PrivateVox Engine Spike Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -131,7 +131,7 @@ git commit -m "spike: whisper-rs benchmark and results"
   |---|---|
   | `default_en` | `language: Some("en")`, rest `Default` |
   | `default_auto` | `language: None`, rest `Default` |
-  | `prompt_en` | `language: Some("en")`, `family: Some(RunExtension::Whisper(WhisperRunOptions { initial_prompt: Some("Tauri, LVW."), ..Default::default() }))` |
+  | `prompt_en` | `language: Some("en")`, `family: Some(RunExtension::Whisper(WhisperRunOptions { initial_prompt: Some("Tauri, PrivateVox."), ..Default::default() }))` |
 
   `decode_ms` is wall time around `session.run(&pcm, &opts)`; also print `transcript.timings` in a `notes` column. Text is `transcript.text`. Short clip padded to 1.25 s plus one unpadded run, as in Task 3.
 

@@ -2,7 +2,7 @@
 //! The receipt-sequenced restore from §18.11 replaces the fixed delay in a later plan.
 
 use anyhow::{Context, Result};
-use lvw_core::settings::PasteMethod;
+use privatevox_core::settings::PasteMethod;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -200,7 +200,7 @@ pub fn accessibility_trusted(_prompt: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lvw_core::settings::PasteMethod;
+    use privatevox_core::settings::PasteMethod;
     use std::time::Duration;
 
     struct FakeSender {

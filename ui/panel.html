@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>LVW</title>
-<link rel="stylesheet" href="lvw.css">
+<title>PrivateVox</title>
+<link rel="stylesheet" href="privatevox.css">
 <style>
   h2 { font-size: 15px; margin: 18px 0 8px; }
   .row { padding: 10px 0; border-bottom: 1px solid var(--line); }
@@ -84,16 +84,16 @@
       <div class="check"><span>Microphone</span><span><button data-priv="microphone">Open setting</button></span></div>
       <div class="check"><span>Accessibility (needed to paste)</span><span><span id="pAcc"></span> <button data-priv="accessibility">Open setting</button></span></div>
       <div class="check"><span>Input Monitoring (needed for the hold key)</span><span><span id="pIm"></span> <button data-priv="input_monitoring">Open setting</button></span></div>
-      <p class="muted">After granting Accessibility or Input Monitoring, quit LVW from the menu bar and start it again.</p>
+      <p class="muted">After granting Accessibility or Input Monitoring, quit PrivateVox from the menu bar and start it again.</p>
       <p id="stale" class="err" hidden>The last session ended unexpectedly. Nothing was lost; history is saved after every dictation.</p>
     </div>
   </section>
 
   <p id="status" class="muted"></p>
-  <script src="lvw.js"></script>
+  <script src="privatevox.js"></script>
   <script>
     const $ = (id) => document.getElementById(id);
-    const inv = (c, a) => window.lvw.invoke(c, a);
+    const inv = (c, a) => window.pvx.invoke(c, a);
     function esc(s) { return String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
     document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
       document.querySelectorAll('nav button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
@@ -139,7 +139,7 @@
       if (!$('tab-models').hidden) modelsTimer = setTimeout(loadModels, 5000);
     }
     $('modelPick').onchange = async (e) => { try { await inv('switch_model', { id: e.target.value }); } catch (err) { flash(String(err)); } };
-    window.lvw.listen('models-changed', () => { if (!$('tab-models').hidden) loadModels(); else inv('list_models').then(ms => { $('modelPick').innerHTML = ms.map(m => `<option value="${m.id}" ${m.active ? 'selected' : ''} ${m.downloaded ? '' : 'disabled'}>${esc(m.label)}</option>`).join(''); }); });
+    window.pvx.listen('models-changed', () => { if (!$('tab-models').hidden) loadModels(); else inv('list_models').then(ms => { $('modelPick').innerHTML = ms.map(m => `<option value="${m.id}" ${m.active ? 'selected' : ''} ${m.downloaded ? '' : 'disabled'}>${esc(m.label)}</option>`).join(''); }); });
 
     async function loadHistory() {
       const list = $('q').value ? await inv('search_history', { query: $('q').value }) : await inv('list_history', { limit: 100, offset: 0 });
@@ -215,8 +215,8 @@
       $('stale').hidden = !p.stale_lock;
       document.querySelectorAll('[data-priv]').forEach(b => b.onclick = () => inv('open_privacy', { pane: b.dataset.priv }));
     }
-    window.lvw.listen('model-download', (d) => { $('dl').hidden = d.done; $('dlBar').style.width = Math.round(100 * d.received / Math.max(1, d.total)) + '%'; if (d.done) { loadSetup(); if (!$('tab-models').hidden) loadModels(); } if (d.error) flash('Download failed: ' + d.error); $('status').textContent = d.done ? '' : `Downloading ${d.model}: ${Math.round(100 * d.received / Math.max(1, d.total))}%`; });
-    window.lvw.listen('pill-state', (s) => { $('status').textContent = s.state + (s.message ? ': ' + s.message : ''); if (s.state === 'pasted') loadHistory(); });
+    window.pvx.listen('model-download', (d) => { $('dl').hidden = d.done; $('dlBar').style.width = Math.round(100 * d.received / Math.max(1, d.total)) + '%'; if (d.done) { loadSetup(); if (!$('tab-models').hidden) loadModels(); } if (d.error) flash('Download failed: ' + d.error); $('status').textContent = d.done ? '' : `Downloading ${d.model}: ${Math.round(100 * d.received / Math.max(1, d.total))}%`; });
+    window.pvx.listen('pill-state', (s) => { $('status').textContent = s.state + (s.message ? ': ' + s.message : ''); if (s.state === 'pasted') loadHistory(); });
     loadHistory();
     inv('list_models').then(ms => { $('modelPick').innerHTML = ms.map(m => `<option value="${m.id}" ${m.active ? 'selected' : ''} ${m.downloaded ? '' : 'disabled'}>${esc(m.label)}</option>`).join(''); }).catch(() => {});
     inv('permissions').then(p => { if (!p.model_present || !p.accessibility) document.querySelector('[data-tab=setup]').click(); });

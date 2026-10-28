@@ -1,4 +1,4 @@
-//! Shared helpers for the LVW engine spike: clip loading, word error rate, RSS, CSV rows.
+//! Shared helpers for the PrivateVox engine spike: clip loading, word error rate, RSS, CSV rows.
 
 use anyhow::{bail, Context, Result};
 use std::path::Path;

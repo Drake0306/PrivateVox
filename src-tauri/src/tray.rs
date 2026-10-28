@@ -10,13 +10,13 @@ pub fn build(app: &AppHandle) -> anyhow::Result<TrayIcon> {
     let pause = MenuItemBuilder::with_id("pause", "Pause and unload model").build(app)?;
     let history = MenuItemBuilder::with_id("history", "Open history").build(app)?;
     let settings = MenuItemBuilder::with_id("settings", "Settings…").build(app)?;
-    let quit = MenuItemBuilder::with_id("quit", "Quit LVW").accelerator("CmdOrCtrl+Q").build(app)?;
+    let quit = MenuItemBuilder::with_id("quit", "Quit PrivateVox").accelerator("CmdOrCtrl+Q").build(app)?;
     let menu = MenuBuilder::new(app).item(&pause).separator().item(&history).item(&settings).separator().item(&quit).build()?;
     let icon = app.default_window_icon().cloned().ok_or_else(|| anyhow::anyhow!("no default icon"))?;
-    let tray = TrayIconBuilder::with_id("lvw")
+    let tray = TrayIconBuilder::with_id("privatevox")
         .icon(icon)
         .icon_as_template(true)
-        .tooltip("LVW")
+        .tooltip("PrivateVox")
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| {

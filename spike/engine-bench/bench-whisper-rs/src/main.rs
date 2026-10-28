@@ -55,7 +55,7 @@ fn transcribe(ctx: &WhisperContext, state: &mut whisper_rs::WhisperState, cfg: &
     p.set_print_special(false);
     p.set_print_realtime(false);
     p.set_print_timestamps(false);
-    p.set_no_timestamps(std::env::var("LVW_TIMESTAMPS").is_err());
+    p.set_no_timestamps(std::env::var("PRIVATEVOX_TIMESTAMPS").is_err());
     if let Some(ctx_len) = cfg.audio_ctx {
         p.set_audio_ctx(ctx_len);
     }
@@ -77,7 +77,7 @@ fn main() -> Result<()> {
     println!("{}", csv_header());
 
     // Two contexts: flash attention is a load-time parameter.
-    let reuse = std::env::var("LVW_REUSE_STATE").is_ok();
+    let reuse = std::env::var("PRIVATEVOX_REUSE_STATE").is_ok();
     let mut loaded: Vec<(bool, WhisperContext, u128)> = Vec::new();
     for flash in [false, true] {
         let (ctx, ms) = load_ctx(&model_path, flash)?;
@@ -86,8 +86,8 @@ fn main() -> Result<()> {
     }
     let mut states: Vec<Option<whisper_rs::WhisperState>> = vec![None, None];
 
-    let only_ctx = std::env::var("LVW_ONLY_CTX").is_ok();
-    let only: Vec<String> = std::env::var("LVW_ONLY").map(|v| v.split(',').map(|x| x.to_string()).collect()).unwrap_or_default();
+    let only_ctx = std::env::var("PRIVATEVOX_ONLY_CTX").is_ok();
+    let only: Vec<String> = std::env::var("PRIVATEVOX_ONLY").map(|v| v.split(',').map(|x| x.to_string()).collect()).unwrap_or_default();
     for cfg in CONFIGS.iter().filter(|c| (!only_ctx || c.id.contains("ctx")) && (only.is_empty() || only.iter().any(|o| o == c.id))) {
         let (_, ctx, load_ms) = loaded.iter().find(|(f, _, _)| *f == cfg.flash).unwrap();
         for (name, pcm, reference) in &clips {

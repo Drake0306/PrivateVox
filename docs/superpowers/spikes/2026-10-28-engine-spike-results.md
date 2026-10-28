@@ -34,7 +34,7 @@ Load: 633 ms. First Metal library compile for this binary: 10.3 s (observed in a
 |---|---|---|---|---|---|---|---|---|
 | default, en | 6622 | 5676 | 2768 | 2728 | 2624 | 2639 | 0.058 | 0.042 |
 | default, language auto | 6348 | 6321 | 3032 | 3049 | 2878 | 2875 | 0.058 | 0.042 |
-| initial prompt "Tauri, LVW.", en | 6781 | 6095 | 2803 | 2810 | 2656 | 2651 | 0.049 | 0.042 |
+| initial prompt "Tauri, PrivateVox.", en | 6781 | 6095 | 2803 | 2810 | 2656 | 2651 | 0.049 | 0.042 |
 
 Engine-reported stage timings for the 30 s clip: mel 9 ms, encode 2855 ms, decode 3758 ms.
 
@@ -60,7 +60,7 @@ Load: 514 ms. RSS ~350–400 MB (weights memory-mapped, so not a footprint measu
 |---|---|---|---|---|---|---|---|---|
 | default, en | 9195 | 8826 | 3516 | 3405 | 2700 | 2706 | 0.058 | 0.000 |
 | default, language auto | 9009 | 8610 | 4013 | 4002 | 3334 | 3311 | 0.058 | 0.000 |
-| initial prompt "Tauri, LVW.", en | 9141 | 9361 | 10919 (outlier) | 4265 | 3223 | 3200 | 0.058 | 0.000 |
+| initial prompt "Tauri, PrivateVox.", en | 9141 | 9361 | 10919 (outlier) | 4265 | 3223 | 3200 | 0.058 | 0.000 |
 
 On large-v3 transcribe-cpp is about 15% faster than whisper-rs without flash attention (8.8 vs 10.6 s on 30 s, 3.4 vs 4.4 s on 10 s) and level with whisper-rs plus flash attention (8.7 / 3.6 s). It again kept the phrase at the 30 s boundary that whisper-rs dropped.
 
@@ -86,7 +86,7 @@ Core ML is not faster than Metal on this M1 for the turbo encoder (3.2 vs 2.8 s 
 5. **Language auto-detect costs 2.6 s per clip on whisper-rs** (a second encoder pass) and is nearly free on transcribe-cpp. Fixing the language (§18.7) removes the cost on either.
 6. **Beam 5 is 15% slower on turbo and 30–70% slower on large-v3** for no accuracy gain on these clips. Greedy is the right default.
 7. **The 30 s window boundary loses words only with timestamps disabled.** On the 31.6 s clip whisper-rs with `no_timestamps(true)` dropped a whole phrase at the boundary; the retest with timestamps on kept it (WER 0.136 → 0.058, same as transcribe-cpp) at no time cost (6.2 vs 6.1 s). whisper.cpp advances by a full window when it has no segment timestamps. **Decode default changed: timestamps stay on.** Chunking at pauses (§18.6) remains the latency fix for long clips.
-8. **Both wrote "Tori" for "Tauri" without a prompt.** With the initial prompt "Tauri, LVW." transcribe-cpp wrote "Tauri" correctly on turbo (WER 0.058 → 0.049, exactly that word) but not on large-v3. The dictionary / initial prompt path (§18.8) works and is needed.
+8. **Both wrote "Tori" for "Tauri" without a prompt.** With the initial prompt "Tauri, PrivateVox." transcribe-cpp wrote "Tauri" correctly on turbo (WER 0.058 → 0.049, exactly that word) but not on large-v3. The dictionary / initial prompt path (§18.8) works and is needed.
 
 9. **Core ML is not worth its cost here.** Measured fairly (state reused) it is 10–15% faster than Metal without flash attention and level with it, uses ~1 GB more memory, and is incompatible with the reduced audio context that gives 2×. Not used in v1; revisit as an opt-in on machines with a stronger Neural Engine.
 10. **large-v3 is 1.7× slower than turbo** on the same engine (10.6 vs 6.1 s on 30 s; 4.4 vs 2.8 s on 10 s) and was more accurate on one proper noun. It stays the "Accuracy" option, never the default.

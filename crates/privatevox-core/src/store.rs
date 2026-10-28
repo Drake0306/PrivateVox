@@ -210,7 +210,7 @@ mod tests {
 
     fn fresh() -> (tempfile::TempDir, Store) {
         let d = tempfile::tempdir().unwrap();
-        let s = Store::open(&d.path().join("lvw.sqlite")).unwrap();
+        let s = Store::open(&d.path().join("privatevox.sqlite")).unwrap();
         (d, s)
     }
 
@@ -316,7 +316,7 @@ mod tests {
     #[test]
     fn reopen_keeps_rows() {
         let d = tempfile::tempdir().unwrap();
-        let p = d.path().join("lvw.sqlite");
+        let p = d.path().join("privatevox.sqlite");
         {
             let mut s = Store::open(&p).unwrap();
             s.insert(&row("persist")).unwrap();

@@ -2,8 +2,8 @@
 
 use crate::pipeline::Cmd;
 use crate::state::AppState;
-use lvw_core::settings::Settings;
-use lvw_core::store::Dictation;
+use privatevox_core::settings::Settings;
+use privatevox_core::store::Dictation;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 #[tauri::command]
@@ -111,13 +111,13 @@ pub fn paste_text(state: State<'_, AppState>, text: String) {
 pub fn export_history(state: State<'_, AppState>, format: String) -> Result<String, String> {
     let rows = state.store.lock().map_err(|e| e.to_string())?.list(100_000, 0).map_err(|e| e.to_string())?;
     let (ext, body) = match format.as_str() {
-        "md" | "markdown" => ("md", lvw_core::export::to_markdown(&rows)),
-        "json" => ("json", lvw_core::export::to_json(&rows)),
+        "md" | "markdown" => ("md", privatevox_core::export::to_markdown(&rows)),
+        "json" => ("json", privatevox_core::export::to_json(&rows)),
         _ => return Err("format must be md or json".into()),
     };
     let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
     let dir = dirs_download().ok_or("no Downloads folder")?;
-    let path = dir.join(lvw_core::export::export_filename(ext, now_ms));
+    let path = dir.join(privatevox_core::export::export_filename(ext, now_ms));
     std::fs::write(&path, body).map_err(|e| e.to_string())?;
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("open").arg("-R").arg(&path).spawn();
@@ -135,7 +135,7 @@ pub fn history_count(state: State<'_, AppState>) -> Result<u32, String> {
 
 #[tauri::command]
 pub fn list_input_devices() -> Vec<String> {
-    lvw_core::audio::input_devices()
+    privatevox_core::audio::input_devices()
 }
 
 /// The pill asks for this when its page loads, since the first `pill-state` event may precede the page.
@@ -172,7 +172,7 @@ pub fn delete_model_file(models_dir: &std::path::Path, id: &str, active_id: &str
     if id == active_id {
         return Err("That model is in use; switch to another one first".into());
     }
-    let path = lvw_core::models::model_file(models_dir, id).ok_or_else(|| format!("unknown model {id}"))?;
+    let path = privatevox_core::models::model_file(models_dir, id).ok_or_else(|| format!("unknown model {id}"))?;
     let part = models_dir.join(format!("{}.part", path.file_name().and_then(|f| f.to_str()).unwrap_or("")));
     let _ = std::fs::remove_file(&part);
     match std::fs::remove_file(&path) {
@@ -193,7 +193,7 @@ pub struct ModelRow {
     pub downloaded: bool,
     pub downloading: bool,
     pub active: bool,
-    pub stats: Option<lvw_core::store::ModelStats>,
+    pub stats: Option<privatevox_core::store::ModelStats>,
 }
 
 #[tauri::command]
@@ -202,7 +202,7 @@ pub fn list_models(state: State<'_, AppState>) -> Result<Vec<ModelRow>, String> 
     let store = state.store.lock().map_err(|e| e.to_string())?;
     let dir = state.paths.models_dir();
     let downloading = state.downloading.lock().map(|d| d.clone()).unwrap_or_default();
-    Ok(lvw_core::models::catalog()
+    Ok(privatevox_core::models::catalog()
         .into_iter()
         .map(|m| ModelRow {
             id: m.id.into(),
@@ -211,7 +211,7 @@ pub fn list_models(state: State<'_, AppState>) -> Result<Vec<ModelRow>, String> 
             bytes: m.bytes,
             quant: m.quant.into(),
             english_only: m.english_only,
-            downloaded: lvw_core::download::is_present(&m.spec, &dir),
+            downloaded: privatevox_core::download::is_present(&m.spec, &dir),
             downloading: downloading.contains(m.id),
             active: m.id == active,
             stats: store.model_stats(m.id).ok().flatten(),
@@ -221,14 +221,14 @@ pub fn list_models(state: State<'_, AppState>) -> Result<Vec<ModelRow>, String> 
 
 #[tauri::command]
 pub fn switch_model(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    lvw_core::models::info(&id).ok_or_else(|| format!("unknown model {id}"))?;
+    privatevox_core::models::info(&id).ok_or_else(|| format!("unknown model {id}"))?;
     state.send(Cmd::SwitchModel(id));
     Ok(())
 }
 
 #[tauri::command]
 pub fn download_model_by_id(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
-    lvw_core::models::info(&id).ok_or_else(|| format!("unknown model {id}"))?;
+    privatevox_core::models::info(&id).ok_or_else(|| format!("unknown model {id}"))?;
     if let Ok(mut d) = state.downloading.lock() {
         if !d.insert(id.clone()) {
             return Ok(()); // already running
@@ -253,9 +253,9 @@ pub fn delete_model(app: AppHandle, state: State<'_, AppState>, id: String) -> R
 
 #[tauri::command]
 pub fn benchmark_model(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    lvw_core::models::info(&id).ok_or_else(|| format!("unknown model {id}"))?;
+    privatevox_core::models::info(&id).ok_or_else(|| format!("unknown model {id}"))?;
     let dir = state.paths.models_dir();
-    if lvw_core::models::model_file(&dir, &id).map(|p| p.exists()) != Some(true) {
+    if privatevox_core::models::model_file(&dir, &id).map(|p| p.exists()) != Some(true) {
         return Err("Download the model first".into());
     }
     state.send(Cmd::Benchmark(id));
@@ -263,16 +263,16 @@ pub fn benchmark_model(state: State<'_, AppState>, id: String) -> Result<(), Str
 }
 
 /// Builds the strip's input: measured footprints from the store, "others" = system used minus what we hold.
-pub fn build_memory_input(store: &lvw_core::store::Store, selected: &str, ours_resident: u64, system: (u64, u64), llm_bytes: u64) -> lvw_core::memory::MemoryInput {
+pub fn build_memory_input(store: &privatevox_core::store::Store, selected: &str, ours_resident: u64, system: (u64, u64), llm_bytes: u64) -> privatevox_core::memory::MemoryInput {
     let mut footprints = std::collections::HashMap::new();
-    for m in lvw_core::models::catalog() {
+    for m in privatevox_core::models::catalog() {
         if let Ok(Some(st)) = store.model_stats(m.id) {
             if let Some(b) = st.mem_bytes {
                 footprints.insert(m.id.to_string(), b);
             }
         }
     }
-    lvw_core::memory::MemoryInput {
+    privatevox_core::memory::MemoryInput {
         total: system.0,
         used_by_others: system.1.saturating_sub(ours_resident),
         footprints,
@@ -282,7 +282,7 @@ pub fn build_memory_input(store: &lvw_core::store::Store, selected: &str, ours_r
 }
 
 #[tauri::command]
-pub fn memory_report(state: State<'_, AppState>) -> Result<lvw_core::memory::MemoryReport, String> {
+pub fn memory_report(state: State<'_, AppState>) -> Result<privatevox_core::memory::MemoryReport, String> {
     let selected = state.settings.lock().map(|s| s.model_id.clone()).map_err(|e| e.to_string())?;
     let ours = match state.engine.try_lock() {
         Ok(e) => e.resident_bytes(),
@@ -292,8 +292,8 @@ pub fn memory_report(state: State<'_, AppState>) -> Result<lvw_core::memory::Mem
         }
     };
     let store = state.store.lock().map_err(|e| e.to_string())?;
-    let input = build_memory_input(&store, &selected, ours, lvw_core::memory::system_memory(), 0);
-    Ok(lvw_core::memory::budget(&input))
+    let input = build_memory_input(&store, &selected, ours, privatevox_core::memory::system_memory(), 0);
+    Ok(privatevox_core::memory::budget(&input))
 }
 
 /// Normalises a key combination ("ctrl+shift+space" → "Ctrl+Shift+Space") and checks the shortcut plugin
@@ -399,17 +399,17 @@ mod tests {
 #[cfg(test)]
 mod memory_tests {
     use super::*;
-    use lvw_core::store::{ModelStats, Store};
+    use privatevox_core::store::{ModelStats, Store};
 
     #[test]
     fn memory_report_uses_measured_footprint_when_present() {
         let dir = tempfile::tempdir().unwrap();
-        let mut store = Store::open(&dir.path().join("lvw.sqlite")).unwrap();
+        let mut store = Store::open(&dir.path().join("privatevox.sqlite")).unwrap();
         store.set_model_stats("large-v3-turbo", &ModelStats { load_ms: None, speed_x: None, mem_bytes: Some(703_000_000) }).unwrap();
         let input = build_memory_input(&store, "large-v3-turbo", 0, (16_000_000_000, 4_000_000_000), 0);
         assert_eq!(input.footprints.get("large-v3-turbo"), Some(&703_000_000));
         assert_eq!(input.used_by_others, 4_000_000_000, "nothing of ours resident: others = used");
-        let report = lvw_core::memory::budget(&input);
+        let report = privatevox_core::memory::budget(&input);
         assert_eq!(report.selected_bytes, 703_000_000);
         // With turbo resident (703 MB counted in `used`), others must exclude it.
         let input2 = build_memory_input(&store, "large-v3-turbo", 703_000_000, (16_000_000_000, 4_000_000_000), 0);

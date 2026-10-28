@@ -1,13 +1,13 @@
 //! Supervisor tests against the fake worker. Run with `--test-threads=1`: they count live worker processes
 //! by exact process name (`pgrep -x`), so other tests must not have workers alive at the same time.
-use lvw_engine::protocol::DecodeOptions;
-use lvw_engine::supervisor::{Engine, WorkerEngine};
+use privatevox_engine::protocol::DecodeOptions;
+use privatevox_engine::supervisor::{Engine, WorkerEngine};
 use std::process::Command;
 use std::time::Duration;
 
 fn fake_worker(sleep_ms: u64) -> Command {
-    let mut c = Command::new(env!("CARGO_BIN_EXE_lvw-worker"));
-    c.env("LVW_WORKER_FAKE", "1").env("LVW_WORKER_SLEEP_MS", sleep_ms.to_string());
+    let mut c = Command::new(env!("CARGO_BIN_EXE_privatevox-worker"));
+    c.env("PRIVATEVOX_WORKER_FAKE", "1").env("PRIVATEVOX_WORKER_SLEEP_MS", sleep_ms.to_string());
     c
 }
 
@@ -16,7 +16,7 @@ fn alive(pid: u32) -> bool {
 }
 
 fn workers() -> Vec<String> {
-    let out = Command::new("pgrep").args(["-xl", "lvw-worker"]).output().unwrap();
+    let out = Command::new("pgrep").args(["-xl", "privatevox-worker"]).output().unwrap();
     String::from_utf8_lossy(&out.stdout).lines().filter(|l| !l.trim().is_empty()).map(|l| l.to_string()).collect()
 }
 
@@ -110,9 +110,9 @@ fn pid_handle_kills_a_busy_worker_without_the_lock() {
 fn worker_exits_when_its_parent_dies_mid_decode() {
     // A throwaway parent shell starts the fake worker with a slow decode queued through a pipe, then the
     // shell is killed; the worker must notice the reparenting and exit on its own.
-    let worker = env!("CARGO_BIN_EXE_lvw-worker");
+    let worker = env!("CARGO_BIN_EXE_privatevox-worker");
     let script = format!(
-        "exec 3< <(sleep 60); LVW_WORKER_FAKE=1 LVW_WORKER_SLEEP_MS=20000 {worker} <&3 >/dev/null 2>&1 & echo $!; wait"
+        "exec 3< <(sleep 60); PRIVATEVOX_WORKER_FAKE=1 PRIVATEVOX_WORKER_SLEEP_MS=20000 {worker} <&3 >/dev/null 2>&1 & echo $!; wait"
     );
     let mut parent = Command::new("bash").arg("-c").arg(&script).stdout(std::process::Stdio::piped()).spawn().unwrap();
     let mut line = String::new();

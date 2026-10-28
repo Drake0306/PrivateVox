@@ -27,7 +27,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 
 /// One `##` heading per dictation with a metadata line and the text.
 pub fn to_markdown(rows: &[Dictation]) -> String {
-    let mut out = String::from("# LVW history\n\n");
+    let mut out = String::from("# PrivateVox history\n\n");
     for r in rows {
         let text = r.polished_text.as_deref().unwrap_or(&r.raw_text);
         out.push_str(&format!("## {} · {}\n", stamp(r.created_at_ms), r.app_name.as_deref().unwrap_or("unknown app")));
@@ -49,12 +49,12 @@ pub fn to_json(rows: &[Dictation]) -> String {
     serde_json::to_string_pretty(rows).unwrap_or_else(|_| "[]".into())
 }
 
-/// `lvw-history-YYYYMMDD-HHMM.<ext>` for the given UTC time.
+/// `privatevox-history-YYYYMMDD-HHMM.<ext>` for the given UTC time.
 pub fn export_filename(ext: &str, now_ms: i64) -> String {
     let secs = now_ms / 1000;
     let (y, m, d) = civil_from_days(secs.div_euclid(86_400));
     let rem = secs.rem_euclid(86_400);
-    format!("lvw-history-{y:04}{m:02}{d:02}-{:02}{:02}.{ext}", rem / 3600, (rem % 3600) / 60)
+    format!("privatevox-history-{y:04}{m:02}{d:02}-{:02}{:02}.{ext}", rem / 3600, (rem % 3600) / 60)
 }
 
 #[cfg(test)]
@@ -103,7 +103,7 @@ mod tests {
     #[test]
     fn export_filename_has_date_and_extension() {
         let n = export_filename("md", 1_761_600_000_000);
-        assert!(n.starts_with("lvw-history-2025"), "{n}");
+        assert!(n.starts_with("privatevox-history-2025"), "{n}");
         assert!(n.ends_with(".md"));
     }
 }

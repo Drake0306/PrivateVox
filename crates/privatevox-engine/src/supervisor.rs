@@ -151,7 +151,7 @@ impl WorkerEngine {
         let stdout = child.stdout.take().ok_or_else(|| anyhow!("worker stdout missing"))?;
         let stderr = child.stderr.take().ok_or_else(|| anyhow!("worker stderr missing"))?;
         let (tx, rx) = channel::<Response>();
-        std::thread::Builder::new().name("lvw-worker-reader".into()).spawn(move || {
+        std::thread::Builder::new().name("privatevox-worker-reader".into()).spawn(move || {
             let mut reader = BufReader::new(stdout);
             loop {
                 match read_frame::<_, Response>(&mut reader) {
@@ -165,7 +165,7 @@ impl WorkerEngine {
             }
         })?;
         let tail = self.stderr_tail.clone();
-        std::thread::Builder::new().name("lvw-worker-stderr".into()).spawn(move || {
+        std::thread::Builder::new().name("privatevox-worker-stderr".into()).spawn(move || {
             for line in BufReader::new(stderr).lines().map_while(Result::ok) {
                 log::debug!("worker: {line}");
                 if let Ok(mut t) = tail.lock() {

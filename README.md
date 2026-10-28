@@ -1,4 +1,4 @@
-# LVW — Local Voice Wisper
+# PrivateVox — PrivateVox
 
 Hold a key, talk, let go: the words land in whatever app is in front. Whisper runs on your own GPU, nothing leaves the machine, and every dictation is kept in a local history you can search, copy and delete.
 
@@ -23,8 +23,8 @@ Hold a key, talk, let go: the words land in whatever app is in front. Whisper ru
 Requirements: Rust 1.90+, Xcode Command Line Tools, `cmake`, and the Tauri CLI (`cargo install tauri-cli --version "^2" --locked`).
 
 ```bash
-git clone https://github.com/Drake0306/localVoiceWisper.git
-cd localVoiceWisper
+git clone https://github.com/Drake0306/PrivateVox.git
+cd PrivateVox
 cargo tauri dev            # from the repo root, or `cd src-tauri && cargo tauri dev`
 ```
 
@@ -32,7 +32,7 @@ The first build compiles whisper.cpp and the Tauri stack (several minutes). The 
 
 ### Permissions (one time)
 
-macOS asks for three things. LVW's **Setup** tab (click the pill, then Setup) has buttons that open each pane.
+macOS asks for three things. PrivateVox's **Setup** tab (click the pill, then Setup) has buttons that open each pane.
 
 | Permission | Why | Where |
 |---|---|---|
@@ -40,26 +40,26 @@ macOS asks for three things. LVW's **Setup** tab (click the pill, then Setup) ha
 | Accessibility | to send ⌘V into the front app | System Settings → Privacy & Security → Accessibility |
 | Input Monitoring | to see the Right Option key | System Settings → Privacy & Security → Input Monitoring |
 
-After granting Accessibility or Input Monitoring, quit LVW from the menu bar and start it again. See `docs/dev/permissions.md` to reset grants while developing.
+After granting Accessibility or Input Monitoring, quit PrivateVox from the menu bar and start it again. See `docs/dev/permissions.md` to reset grants while developing.
 
 ### Tests
 
 ```bash
-cargo test -p lvw-core                          # settings, audio, VAD, hotkey machine, store, lifecycle, download
-cargo test -p lvw-engine -- --test-threads=1    # protocol, policy, worker supervisor (counts worker processes)
-cargo test -p lvw                               # pipeline coordinator, paste, exit path
-cargo test -p lvw-core -- --ignored             # microphone capture (asks for the mic)
-LVW_TEST_MODEL=~/path/to/ggml-large-v3-turbo-q5_0.bin cargo test -p lvw-engine --test worker_integration -- --ignored
+cargo test -p privatevox-core                          # settings, audio, VAD, hotkey machine, store, lifecycle, download
+cargo test -p privatevox-engine -- --test-threads=1    # protocol, policy, worker supervisor (counts worker processes)
+cargo test -p privatevox                               # pipeline coordinator, paste, exit path
+cargo test -p privatevox-core -- --ignored             # microphone capture (asks for the mic)
+PRIVATEVOX_TEST_MODEL=~/path/to/ggml-large-v3-turbo-q5_0.bin cargo test -p privatevox-engine --test worker_integration -- --ignored
 ```
 
 ## Where things live
 
-`~/Library/Application Support/com.drake0306.lvw/`: `settings.json`, `lvw.sqlite` (history), `models/`, `lvw.lock`, `clipboard.bak`. Logs: `~/Library/Logs/com.drake0306.lvw/lvw.log`.
+`~/Library/Application Support/com.drake0306.privatevox/`: `settings.json`, `privatevox.sqlite` (history), `models/`, `privatevox.lock`, `clipboard.bak`. Logs: `~/Library/Logs/com.drake0306.privatevox/privatevox.log`.
 
 ## Layout
 
-- `crates/lvw-core` — pure logic, no Tauri: settings, audio conversion, VAD, activation state machine, text clean-up, SQLite store, lock file and idle timer, downloads.
-- `crates/lvw-engine` — the `Engine` trait, the whisper-rs backend, the pipe protocol, the worker loop and the `WorkerEngine` supervisor.
+- `crates/privatevox-core` — pure logic, no Tauri: settings, audio conversion, VAD, activation state machine, text clean-up, SQLite store, lock file and idle timer, downloads.
+- `crates/privatevox-engine` — the `Engine` trait, the whisper-rs backend, the pipe protocol, the worker loop and the `WorkerEngine` supervisor.
 - `src-tauri` — the app: pill and panel windows, tray, hotkeys, paste, pipeline coordinator, lifecycle.
 - `ui/` — plain HTML/CSS/JS, no bundler.
 - `spike/` — the throwaway engine benchmark; results in `docs/superpowers/spikes/`.

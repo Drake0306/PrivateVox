@@ -4,7 +4,7 @@
 fn main() {
     // The same binary is the engine worker when started with `--engine-worker` (design §18.1).
     if std::env::args().nth(1).as_deref() == Some("--engine-worker") {
-        std::process::exit(lvw_engine::worker::run_worker());
+        std::process::exit(privatevox_engine::worker::run_worker());
     }
-    lvw_lib::run();
+    privatevox_lib::run();
 }

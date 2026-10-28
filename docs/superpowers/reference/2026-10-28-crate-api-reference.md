@@ -1,4 +1,4 @@
-# LVW — verified API reference (Rust + Tauri 2)
+# PrivateVox — verified API reference (Rust + Tauri 2)
 
 Compiled 2026-10-28 by a research pass over docs.rs, crates.io and v2.tauri.app. "Pin" versions are the newest stable released on or before 2026-10-14. Items the researcher could not verify are listed at the end.
 
@@ -94,7 +94,7 @@ Compiled 2026-10-28 by a research pass over docs.rs, crates.io and v2.tauri.app.
 
 - **`tauri-plugin-autostart = "2.7.0"`**: `tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--minimized"]))` or `Builder::new().macos_launcher(MacosLauncher::LaunchAgent).args(["--minimized"]).build()`. `use tauri_plugin_autostart::ManagerExt;` `app.autolaunch().enable()? / disable()? / is_enabled()?`. Permissions `autostart:allow-enable`, `allow-disable`, `allow-is-enabled`.
 - **`tauri-plugin-single-instance = "2.5.4"`**: `.plugin(tauri_plugin_single_instance::init(|app, args, cwd| { .. }))`. **Must be the first plugin registered.**
-- **`tauri-plugin-log = "2.10.1"`**: `tauri_plugin_log::Builder::new().targets([Target::new(TargetKind::LogDir { file_name: Some("lvw".into()) }), Target::new(TargetKind::Stdout), Target::new(TargetKind::Webview)]).level(log::LevelFilter::Info).level_for("hyper", LevelFilter::Warn).rotation_strategy(RotationStrategy::KeepAll).max_file_size(u128).timezone_strategy(TimezoneStrategy::UseLocal).build()`. macOS log dir `~/Library/Logs/<bundleIdentifier>`. Permission `log:default`. The worker process has no Tauri runtime: `env_logger = "0.11.11"` to stderr, both via `log = "0.4.34"`.
+- **`tauri-plugin-log = "2.10.1"`**: `tauri_plugin_log::Builder::new().targets([Target::new(TargetKind::LogDir { file_name: Some("privatevox".into()) }), Target::new(TargetKind::Stdout), Target::new(TargetKind::Webview)]).level(log::LevelFilter::Info).level_for("hyper", LevelFilter::Warn).rotation_strategy(RotationStrategy::KeepAll).max_file_size(u128).timezone_strategy(TimezoneStrategy::UseLocal).build()`. macOS log dir `~/Library/Logs/<bundleIdentifier>`. Permission `log:default`. The worker process has no Tauri runtime: `env_logger = "0.11.11"` to stderr, both via `log = "0.4.34"`.
 
 ## Unverified
 - Numeric value of `NSWindowStyleMask::NonactivatingPanel` (use the typed constant).

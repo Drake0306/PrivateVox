@@ -2,17 +2,17 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>LVW</title>
-<link rel="stylesheet" href="lvw.css">
+<title>PrivateVox</title>
+<link rel="stylesheet" href="privatevox.css">
 </head>
 <body class="pill-body">
   <div class="pill idle" id="pill" data-tauri-drag-region title="Click for history">
     <span class="dot" id="dot" data-tauri-drag-region></span>
     <span class="bars" id="bars" hidden><i></i><i></i><i></i><i></i><i></i></span>
     <span class="spin" id="spin" hidden></span>
-    <span class="label" id="label" data-tauri-drag-region>LVW</span>
+    <span class="label" id="label" data-tauri-drag-region>PrivateVox</span>
   </div>
-  <script src="lvw.js"></script>
+  <script src="privatevox.js"></script>
   <script>
     const pill = document.getElementById('pill'), label = document.getElementById('label');
     const bars = document.getElementById('bars'), spin = document.getElementById('spin'), dot = document.getElementById('dot');
@@ -30,12 +30,12 @@
         case 'error': label.textContent = s.message; break;
       }
     }
-    window.lvw.listen('pill-state', render);
-    window.lvw.invoke('current_pill_state').then((s) => { if (s) render(s); }).catch(() => {});
+    window.pvx.listen('pill-state', render);
+    window.pvx.invoke('current_pill_state').then((s) => { if (s) render(s); }).catch(() => {});
     let dragged = false, downAt = 0;
     pill.addEventListener('mousedown', () => { downAt = Date.now(); dragged = false; });
     pill.addEventListener('mousemove', (e) => { if (e.buttons) dragged = true; });
-    pill.addEventListener('mouseup', () => { if (!dragged && Date.now() - downAt < 400) window.lvw.invoke('open_panel'); });
+    pill.addEventListener('mouseup', () => { if (!dragged && Date.now() - downAt < 400) window.pvx.invoke('open_panel'); });
   </script>
 </body>
 </html>

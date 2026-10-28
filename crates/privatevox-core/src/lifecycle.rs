@@ -88,7 +88,7 @@ mod tests {
     #[test]
     fn lock_file_reports_stale_on_second_acquire_without_release() {
         let d = tempfile::tempdir().unwrap();
-        let p = d.path().join("lvw.lock");
+        let p = d.path().join("privatevox.lock");
         let (lock, stale) = LockFile::acquire(&p).unwrap();
         assert!(!stale);
         assert!(p.exists());
@@ -100,7 +100,7 @@ mod tests {
     #[test]
     fn lock_file_removed_on_drop() {
         let d = tempfile::tempdir().unwrap();
-        let p = d.path().join("lvw.lock");
+        let p = d.path().join("privatevox.lock");
         let (lock, _) = LockFile::acquire(&p).unwrap();
         drop(lock);
         assert!(!p.exists());
