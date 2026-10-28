@@ -108,6 +108,8 @@
             <button class="btn sm" id="remoteApply">Apply</button>
           </div>
           <p class="muted" id="remoteLine" style="margin:0"></p>
+          <div class="inline" style="margin-top:8px"><button class="btn sm" id="scanHosts">Find hosts on this network</button><span class="muted" id="scanMsg"></span></div>
+          <div id="foundHosts"></div>
           <p class="muted">While the host is reachable, what you dictate here is transcribed and polished there, and the memory strip shows the host's figures. When it is not, this machine does the work and the pill says so. Both machines keep a history; the toggle in the History header shows the host's.</p>
         </div>
       </div>
@@ -449,6 +451,20 @@
     try { const st = await inv('test_host', { url: $('remoteUrl').value, token: $('remoteToken').value || null }); $('remoteLine').textContent = `${st.name} answered · ${st.gpu.name} · ${fmtGB(st.gpu.total_bytes)} total, ${fmtGB(st.gpu.used_bytes)} used · Whisper ${st.whisper.model} · polish ${st.polish.enabled ? (st.polish.endpoint_label || 'on') : 'off'} · ${st.clients} client(s)`; }
     catch (e) { $('remoteLine').textContent = String(e); }
     finally { b.disabled = false; b.textContent = 'Test'; }
+  };
+  $('scanHosts').onclick = async () => {
+    const b = $('scanHosts'); b.disabled = true; $('scanMsg').textContent = 'Listening for two seconds…'; $('foundHosts').innerHTML = '';
+    try {
+      const found = await inv('found_hosts');
+      $('scanMsg').textContent = found.length ? '' : 'Nothing advertising. On the other machine, switch on "Act as host" (it needs the same Wi-Fi), or type its ip:port above.';
+      for (const h of found) {
+        const el = document.createElement('div'); el.className = 'eprow';
+        el.innerHTML = `<div><strong>${esc(h.name)}</strong> <span class="muted">PrivateVox ${esc(h.version)}</span><div class="url">${esc(h.address)}:${h.port}</div></div><div class="acts"><button class="btn sm" data-add>Add</button></div>`;
+        el.querySelector('[data-add]').onclick = () => { $('remoteUrl').value = `${h.address}:${h.port}`; $('remoteLabel').value = h.name; $('remoteOn').checked = true; $('remoteApply').click(); };
+        $('foundHosts').appendChild(el);
+      }
+    } catch (e) { $('scanMsg').textContent = String(e); }
+    finally { b.disabled = false; }
   };
   window.pvx.listen('remote-changed', (ev) => { flash(ev && ev.payload ? remoteLabel + ' reachable, dictation goes there' : remoteLabel + ' unreachable, dictating locally'); loadMemory(); if (!$('tab-settings').hidden) loadNetwork(); });
 

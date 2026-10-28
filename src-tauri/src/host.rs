@@ -61,6 +61,8 @@ pub struct HostServer {
     inner: Arc<Inner>,
     port: u16,
     token: Option<String>,
+    /// mDNS registration, kept alive with the server.
+    pub advertiser: Option<crate::discovery::Advertiser>,
     stop: Arc<AtomicBool>,
     workers: Vec<std::thread::JoinHandle<()>>,
 }
@@ -90,7 +92,7 @@ impl HostServer {
         }
         log::info!("host mode: serving on {bind} (port {port})");
         let token = inner.token.clone();
-        Ok(HostServer { server, inner, port, token, stop, workers })
+        Ok(HostServer { server, inner, port, token, advertiser: None, stop, workers })
     }
 
     pub fn token_matches(&self, token: Option<&str>) -> bool {
@@ -161,7 +163,14 @@ pub fn apply_settings(app: &tauri::AppHandle, state: &crate::state::AppState, s:
     if let Some(port) = wanted {
         let deps = deps_from_state(app, state);
         match HostServer::start(&format!("0.0.0.0:{port}"), s.host.token.clone(), deps) {
-            Ok(server) => *slot = Some(server),
+            Ok(mut server) => {
+                let name = crate::remote::machine_name(s);
+                match crate::discovery::advertise(&name, port, privatevox_core::version(), &lan_addresses()) {
+                    Ok(a) => server.advertiser = Some(a),
+                    Err(e) => log::warn!("mdns advertising failed (manual ip:port still works): {e}"),
+                }
+                *slot = Some(server);
+            }
             Err(e) => log::error!("host mode could not start: {e}"),
         }
     }

@@ -143,6 +143,16 @@ pub fn set_machine_name(state: State<'_, AppState>, name: String) -> Result<(), 
     Ok(())
 }
 
+/// Hosts advertising on this network right now (this machine excluded). Takes about two seconds.
+#[tauri::command]
+pub async fn found_hosts() -> Result<Vec<crate::discovery::FoundHost>, String> {
+    let own = crate::host::lan_addresses();
+    tauri::async_runtime::spawn_blocking(move || crate::discovery::browse(Duration::from_secs(2)).map(|f| crate::discovery::without_self(f, &own)))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
 /// The host's history, live. Read-only on this side.
 #[tauri::command]
 pub async fn remote_history(state: State<'_, AppState>, limit: u32, offset: u32, search: Option<String>) -> Result<HistoryReply, String> {

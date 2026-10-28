@@ -3,7 +3,8 @@
 pub mod adapters;
 pub mod benchmark;
 pub mod commands;
-pub mod frontmost;
+pub mod discovery;
+mod frontmost;
 pub mod host;
 mod hotkeys;
 pub mod laststate;
@@ -131,6 +132,7 @@ pub fn run() {
             net_commands::remote_history,
             net_commands::remote_models,
             net_commands::select_remote_model,
+            net_commands::found_hosts,
         ])
         .setup(move |app| {
             log::info!("PrivateVox {} starting", privatevox_core::version());
