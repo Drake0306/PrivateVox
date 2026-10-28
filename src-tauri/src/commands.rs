@@ -329,7 +329,9 @@ pub fn memory_report(state: State<'_, AppState>) -> Result<privatevox_core::memo
         }
     };
     let store = state.store.lock().map_err(|e| e.to_string())?;
-    let input = build_memory_input(&store, &selected, ours, privatevox_core::memory::system_memory(), 0);
+    // The polish LLM counts only when its endpoint is on this machine and reports a loaded model (§9).
+    let llm_bytes = state.polisher.resident_local_bytes(std::time::Instant::now());
+    let input = build_memory_input(&store, &selected, ours, privatevox_core::memory::system_memory(), llm_bytes);
     Ok(privatevox_core::memory::budget(&input))
 }
 

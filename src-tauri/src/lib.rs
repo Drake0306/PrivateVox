@@ -8,6 +8,7 @@ pub mod hotkeys;
 pub mod laststate;
 pub mod lifecycle;
 mod llm;
+mod llm_commands;
 pub mod models;
 pub mod paste;
 pub mod pipeline;
@@ -99,6 +100,20 @@ pub fn run() {
             commands::debug_start,
             commands::debug_stop,
             commands::debug_cancel,
+            llm_commands::list_modes,
+            llm_commands::set_mode,
+            llm_commands::set_mode_prompt,
+            llm_commands::list_llm_endpoints,
+            llm_commands::llm_status,
+            llm_commands::add_llm_endpoint,
+            llm_commands::remove_llm_endpoint,
+            llm_commands::set_llm_endpoint,
+            llm_commands::move_llm_endpoint,
+            llm_commands::set_llm_endpoint_preferred,
+            llm_commands::set_polish_enabled,
+            llm_commands::set_llm_timeout,
+            llm_commands::set_remove_fillers,
+            llm_commands::repolish_history,
         ])
         .setup(move |app| {
             log::info!("PrivateVox {} starting", privatevox_core::version());
