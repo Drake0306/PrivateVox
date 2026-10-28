@@ -5,6 +5,7 @@ pub mod commands;
 pub mod frontmost;
 pub mod hotkeys;
 pub mod lifecycle;
+pub mod models;
 pub mod paste;
 pub mod pipeline;
 pub mod state;
@@ -74,6 +75,9 @@ pub fn run() {
             commands::history_count,
             commands::list_input_devices,
             commands::open_panel,
+            commands::open_privacy,
+            commands::permissions,
+            commands::download_model,
             commands::debug_start,
             commands::debug_stop,
             commands::debug_cancel,
@@ -110,11 +114,12 @@ pub fn run() {
 
             let current = settings.lock().map(|s| s.clone()).unwrap_or_default();
             let model_path = paths.model_file(&current.model_id);
-            let model_path = if model_path.exists() {
-                Some(model_path)
-            } else {
-                log::warn!("model {} not present yet", model_path.display());
+            let deps_model_missing = !model_path.exists();
+            let model_path = if deps_model_missing {
+                log::warn!("model {} not present yet; downloading", model_path.display());
                 None
+            } else {
+                Some(model_path)
             };
 
             let mut worker_cmd = Command::new(std::env::current_exe()?);
@@ -198,7 +203,14 @@ pub fn run() {
                     }
                 });
             }
-            app.manage(AppState { paths, settings, store, tx: Mutex::new(tx) });
+            if deps_model_missing {
+                let h = app.handle().clone();
+                let h2 = h.clone();
+                models::ensure_model(h, &current.model_id, &paths.models_dir(), tx.clone(), move |s| {
+                    let _ = h2.emit("pill-state", &s);
+                });
+            }
+            app.manage(AppState { paths, settings, store, tx: Mutex::new(tx), stale_lock: stale });
             Ok(())
         })
         .build(tauri::generate_context!())

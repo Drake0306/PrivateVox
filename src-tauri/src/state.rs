@@ -43,6 +43,8 @@ pub struct AppState {
     pub settings: Arc<Mutex<Settings>>,
     pub store: Arc<Mutex<Store>>,
     pub tx: Mutex<Sender<Cmd>>,
+    /// The previous run ended without removing its lock file.
+    pub stale_lock: bool,
 }
 
 impl AppState {
