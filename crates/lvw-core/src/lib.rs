@@ -2,6 +2,7 @@
 
 pub mod audio;
 pub mod settings;
+pub mod vad;
 
 /// Crate version, used by the panel's About line.
 pub fn version() -> &'static str {

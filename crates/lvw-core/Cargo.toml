@@ -12,6 +12,8 @@ serde.workspace = true
 serde_json.workspace = true
 cpal = "0.18.2"
 rubato = "5.0.1"
+whisper-rs = { version = "0.16.0", features = ["metal"] }
 
 [dev-dependencies]
 tempfile = "3"
+hound = "3.5"
