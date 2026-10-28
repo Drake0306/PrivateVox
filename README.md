@@ -18,6 +18,10 @@ Hold a key, talk, let go: the words land in whatever app is in front. Whisper ru
 - Idle unload of the model after any number of minutes you choose; menu bar item to pause and unload now.
 - First-run download of the model with resume and progress; Setup tab for the three macOS permissions.
 
+## Download
+
+Alpha builds for macOS (Apple Silicon), Windows and Linux are on the [Releases page](https://github.com/Drake0306/PrivateVox/releases). Read the release notes there for the one-time macOS permission steps; builds are unsigned for now.
+
 ## Build and run
 
 Requirements: Rust 1.90+, Xcode Command Line Tools, `cmake`, and the Tauri CLI (`cargo install tauri-cli --version "^2" --locked`).
