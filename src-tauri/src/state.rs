@@ -49,6 +49,7 @@ pub struct AppState {
     /// Model ids with a download in progress.
     pub downloading: Mutex<std::collections::HashSet<String>>,
     pub engine: crate::lifecycle::SharedEngine,
+    pub polisher: crate::llm::SharedPolisher,
 }
 
 impl AppState {

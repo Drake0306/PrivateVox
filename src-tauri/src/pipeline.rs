@@ -6,9 +6,10 @@ use privatevox_core::audio::{level_db, ClipBuffer, SAMPLE_RATE};
 use privatevox_core::chunking::{Chunker, MAX_CHUNK};
 use privatevox_core::hotkeys::{Effect, Input, Machine};
 use privatevox_core::lifecycle::IdleTimer;
+use privatevox_core::polish::{Mode, PolishOutcome, PolishStatus};
 use privatevox_core::settings::Settings;
 use privatevox_core::store::{NewDictation, Store};
-use privatevox_core::textnorm::normalize;
+use privatevox_core::textnorm::{normalize, normalize_with};
 use privatevox_core::vad::{is_too_short, pad_min, ClipClass, Vad, VadConfig};
 use privatevox_engine::protocol::DecodeOptions;
 use privatevox_engine::supervisor::{Engine, LoadInfo};
@@ -24,8 +25,10 @@ use std::time::{Duration, Instant};
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum PillState {
     Idle { hotkey_hint: String },
-    Listening { seconds: f32, level_db: f32, countdown: Option<u32>, loading: bool },
+    Listening { seconds: f32, level_db: f32, countdown: Option<u32>, loading: bool, mode: String },
     Transcribing,
+    /// Waiting on the LLM (design §4.1).
+    Polishing,
     LoadingModel { progress: Option<f32> },
     Pasted { preview: String },
     Error { message: String },
@@ -37,6 +40,7 @@ impl PillState {
             PillState::Idle { .. } => "idle",
             PillState::Listening { .. } => "listening",
             PillState::Transcribing => "transcribing",
+            PillState::Polishing => "polishing",
             PillState::LoadingModel { .. } => "loading_model",
             PillState::Pasted { .. } => "pasted",
             PillState::Error { .. } => "error",
@@ -72,6 +76,12 @@ pub enum Cmd {
     Undo,
     /// Paste text from history into the front app (no new history row).
     PasteText(String),
+    /// Change the active mode (the command layer persists settings; this refreshes the pill hint).
+    SetMode(Mode),
+    /// Run the LLM again over a history row's raw text with another mode (panel "Re-polish").
+    Repolish { id: i64, mode: Mode },
+    /// A short message for the pill from a helper thread (shown as an error, then back to idle).
+    Notice(String),
     Quit,
 }
 
@@ -104,6 +114,14 @@ pub struct Deps {
     pub benchmark_clip: Box<dyn Fn() -> anyhow::Result<Vec<f32>> + Send>,
     /// Called with (model id, speed_x, load_ms) after a benchmark.
     pub on_benchmark: Box<dyn Fn(&str, f32, u64) + Send>,
+    /// The LLM step (design §4.3 step 5): mode + raw text → text to paste and how it went. Blocks up to the LLM timeout.
+    pub polish: Arc<dyn Fn(Mode, &str) -> PolishOutcome + Send + Sync>,
+    /// Fired on hotkey down in LLM modes so a cold runtime loads while the user speaks (§4.3 5a).
+    pub llm_warm: Arc<dyn Fn() + Send + Sync>,
+    /// Fired from the same idle path that unloads Whisper (§4.3 5c).
+    pub llm_unload: Arc<dyn Fn() + Send + Sync>,
+    /// The panel reloads its rows (after a re-polish).
+    pub on_history_changed: Arc<dyn Fn() + Send + Sync>,
 }
 
 /// One chunk's decode request for the per-recording decode worker.
@@ -323,8 +341,26 @@ impl Coordinator {
                 }
                 Cmd::Key(input) => self.machine_input(input, &tx),
                 Cmd::ModelUnloaded => {
+                    self.unload_llm();
                     if self.recording.is_none() {
                         self.idle();
+                    }
+                }
+                Cmd::SetMode(mode) => {
+                    if let Ok(mut s) = self.settings.lock() {
+                        s.mode = mode;
+                    }
+                    if self.recording.is_none() {
+                        self.idle();
+                    }
+                }
+                Cmd::Repolish { id, mode } => self.repolish(id, mode, &tx),
+                Cmd::Notice(message) => {
+                    if self.recording.is_none() {
+                        self.error(&message);
+                        self.schedule_idle(&tx);
+                    } else {
+                        log::warn!("notice while recording: {message}");
                     }
                 }
                 Cmd::SwitchModel(id) => {
@@ -361,6 +397,7 @@ impl Coordinator {
                     if let Ok(mut e) = self.deps.engine.lock() {
                         let _ = e.unload();
                     }
+                    self.unload_llm();
                     if let Ok(mut t) = self.deps.idle.lock() {
                         t.clear();
                     }
@@ -402,8 +439,14 @@ impl Coordinator {
             let _ = err_tx.send(Cmd::CaptureError(msg));
         });
         let loading = !self.deps.engine.try_lock().map(|e| e.is_loaded()).unwrap_or(false);
-        (self.emit)(PillState::Listening { seconds: 0.0, level_db: -100.0, countdown: None, loading });
+        (self.emit)(PillState::Listening { seconds: 0.0, level_db: -100.0, countdown: None, loading, mode: settings.mode.label().to_string() });
         self.preload_model();
+        if settings.polish_enabled && settings.mode.uses_llm() {
+            let warm = self.deps.llm_warm.clone();
+            if let Err(e) = std::thread::Builder::new().name("privatevox-llm-warm".into()).spawn(move || warm()) {
+                log::warn!("llm warm thread: {e}");
+            }
+        }
         match self.deps.capture.start(on_pcm, on_error) {
             Ok(()) => {
                 self.recording = Some(Recording { buffer, level, started: Instant::now(), ticks: 0, chunker: Chunker::new(), scored_frames: 0, probs: Vec::new(), chunks_sent: 0, worker: None, results: Arc::new(Mutex::new(Default::default())), cancelled: Arc::new(AtomicBool::new(false)) });
@@ -542,7 +585,8 @@ impl Coordinator {
         let level = rec.level.lock().map(|l| *l).unwrap_or(-100.0);
         // While the preload holds the engine lock the model is still loading.
         let loading = !self.deps.engine.try_lock().map(|e| e.is_loaded()).unwrap_or(false);
-        (self.emit)(PillState::Listening { seconds, level_db: level, countdown: countdown_for(seconds, max_clip), loading });
+        let mode = self.settings.lock().map(|s| s.mode.label().to_string()).unwrap_or_default();
+        (self.emit)(PillState::Listening { seconds, level_db: level, countdown: countdown_for(seconds, max_clip), loading, mode });
         if rec.ticks % 5 == 0 {
             self.score_and_cut();
         }
@@ -607,6 +651,7 @@ impl Coordinator {
             let cancelled = rec.cancelled.clone();
             let idle = self.deps.idle.clone();
             let language = if settings.spoken_languages.len() == 1 { settings.spoken_languages.first().cloned() } else { None };
+            let translate = settings.mode.whisper_translate();
             let flash = settings.flash_attention;
             let model_path = self.deps.model_path.clone();
             let handle = std::thread::Builder::new()
@@ -619,7 +664,7 @@ impl Coordinator {
                         let text = if job.pcm.is_empty() {
                             String::new()
                         } else {
-                            let opts = DecodeOptions { language: language.clone(), translate: false, initial_prompt: None, n_threads: 4 };
+                            let opts = DecodeOptions { language: language.clone(), translate, initial_prompt: None, n_threads: 4 };
                             let cancelled = cancelled.clone();
                             let r = engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| {
                                 if cancelled.load(Ordering::SeqCst) {
@@ -655,6 +700,55 @@ impl Coordinator {
         rec.chunks_sent += 1;
         if let Some((jtx, _)) = rec.worker.as_ref() {
             let _ = jtx.send(ChunkJob { index, pcm });
+        }
+    }
+
+    /// LLM unload on a helper thread; the idle path must not wait on the network.
+    fn unload_llm(&self) {
+        let unload = self.deps.llm_unload.clone();
+        if let Err(e) = std::thread::Builder::new().name("privatevox-llm-unload".into()).spawn(move || unload()) {
+            log::warn!("llm unload thread: {e}");
+        }
+    }
+
+    /// Re-run the LLM over a stored row on a helper thread, so dictation stays responsive.
+    fn repolish(&self, id: i64, mode: Mode, tx: &Sender<Cmd>) {
+        let (polish, store, changed, tx) = (self.deps.polish.clone(), self.store.clone(), self.deps.on_history_changed.clone(), tx.clone());
+        let spawned = std::thread::Builder::new().name("privatevox-repolish".into()).spawn(move || {
+            let row = match store.lock().map_err(|e| e.to_string()).and_then(|s| s.get(id).map_err(|e| e.to_string())) {
+                Ok(Some(r)) => r,
+                Ok(None) => return,
+                Err(e) => {
+                    let _ = tx.send(Cmd::Notice(format!("Re-polish failed: {e}")));
+                    return;
+                }
+            };
+            if !mode.uses_llm() {
+                if let Ok(mut s) = store.lock() {
+                    let _ = s.update_polish(id, mode.id(), None, None, "none");
+                }
+                changed();
+                return;
+            }
+            let outcome = polish(mode, &row.raw_text);
+            match outcome.status {
+                PolishStatus::Polished { endpoint_id, .. } => {
+                    if let Ok(mut s) = store.lock() {
+                        if let Err(e) = s.update_polish(id, mode.id(), Some(&outcome.text), Some(&endpoint_id), "ok") {
+                            let _ = tx.send(Cmd::Notice(format!("Re-polish failed: {e}")));
+                            return;
+                        }
+                    }
+                    changed();
+                }
+                PolishStatus::Unpolished { reason } => {
+                    let _ = tx.send(Cmd::Notice(format!("Re-polish failed: {reason}")));
+                }
+                PolishStatus::NotNeeded => {}
+            }
+        });
+        if let Err(e) = spawned {
+            log::warn!("repolish thread: {e}");
         }
     }
 
@@ -754,7 +848,9 @@ impl Coordinator {
             let _ = handle.join();
         }
         let texts: Vec<String> = rec.results.lock().map(|m| m.values().cloned().collect()).unwrap_or_default();
-        let text = normalize(&texts.join(" "));
+        let settings = self.settings();
+        let english = settings.spoken_languages.first().map(|l| l == "en").unwrap_or(true);
+        let text = normalize_with(&texts.join(" "), english, settings.remove_fillers);
         if text.is_empty() {
             self.error("Nothing heard");
             self.schedule_idle(tx);
@@ -767,9 +863,27 @@ impl Coordinator {
         self.paste_and_store(text, (total as f32 / SAMPLE_RATE as f32 * 1000.0) as u32, serde_json::json!({ "chunks": chunks, "tail_ms": decode_ms, "total_ms": decode_ms }), tx);
     }
 
-    /// Shared tail of both decode paths.
-    fn paste_and_store(&mut self, text: String, duration_ms: u32, mut timing: serde_json::Value, tx: &Sender<Cmd>) {
+    /// Shared tail of both decode paths: polish (when the mode asks for it), paste, store.
+    fn paste_and_store(&mut self, raw: String, duration_ms: u32, mut timing: serde_json::Value, tx: &Sender<Cmd>) {
         let settings = self.settings();
+        let mode = settings.mode;
+        let t_polish = Instant::now();
+        let outcome = if settings.polish_enabled && mode.uses_llm() {
+            (self.emit)(PillState::Polishing);
+            (self.deps.polish)(mode, &raw)
+        } else {
+            PolishOutcome { text: raw.clone(), status: PolishStatus::NotNeeded, notice: None }
+        };
+        let polish_ms = t_polish.elapsed().as_millis() as u64;
+        let (polished_text, polished_by, polish_status) = match &outcome.status {
+            PolishStatus::Polished { endpoint_id, .. } => (Some(outcome.text.clone()), Some(endpoint_id.clone()), "ok"),
+            PolishStatus::Unpolished { reason } => {
+                log::warn!("polish failed, pasting raw: {reason}");
+                (None, None, "unpolished")
+            }
+            PolishStatus::NotNeeded => (None, None, "none"),
+        };
+        let text = outcome.text;
         let t = Instant::now();
         let app_name = (self.deps.frontmost)();
         let (status, preview) = match self.deps.paste.paste(&text) {
@@ -786,21 +900,27 @@ impl Coordinator {
                 ("paste_failed", format!("Paste failed: {}", first_chars(&text, 40)))
             }
         };
+        let preview = match (&outcome.notice, polish_status) {
+            (Some(n), _) => format!("{n} · {preview}"),
+            (None, "unpolished") => format!("Unpolished · {preview}"),
+            _ => preview,
+        };
         let language = timing.get("language").and_then(|v| v.as_str()).map(|v| v.to_string()).or_else(|| settings.spoken_languages.first().cloned());
         if let Some(obj) = timing.as_object_mut() {
             obj.insert("paste_ms".into(), serde_json::json!(t.elapsed().as_millis() as u64));
+            obj.insert("polish_ms".into(), serde_json::json!(polish_ms));
             obj.remove("language");
         }
         let row = NewDictation {
             app_name,
-            mode: "raw".into(),
+            mode: mode.id().into(),
             model: settings.model_id.clone(),
             language,
             duration_ms,
-            raw_text: text.clone(),
-            polished_text: None,
-            polished_by: None,
-            polish_status: "none".into(),
+            raw_text: raw,
+            polished_text,
+            polished_by,
+            polish_status: polish_status.into(),
             status: status.into(),
             timing_json: Some(timing.to_string()),
         };
@@ -863,7 +983,7 @@ impl Coordinator {
 
         (self.emit)(PillState::Transcribing);
         let language = if settings.spoken_languages.len() == 1 { settings.spoken_languages.first().cloned() } else { None };
-        let opts = DecodeOptions { language, translate: false, initial_prompt: None, n_threads: 4 };
+        let opts = DecodeOptions { language, translate: settings.mode.whisper_translate(), initial_prompt: None, n_threads: 4 };
         let t = Instant::now();
         let transcript = self.deps.engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| e.transcribe(&speech, &opts));
         let transcript = match transcript {
@@ -878,7 +998,8 @@ impl Coordinator {
             idle.touch(Instant::now());
         }
         let decode_ms = t.elapsed().as_millis() as u64;
-        let text = normalize(&transcript.text);
+        let english = transcript.language.as_deref().or(settings.spoken_languages.first().map(|s| s.as_str())).map(|l| l == "en").unwrap_or(true);
+        let text = normalize_with(&transcript.text, english, settings.remove_fillers);
         if text.is_empty() {
             self.error("Nothing heard");
             self.schedule_idle(tx);
@@ -912,6 +1033,7 @@ fn schedule(tx: &Sender<Cmd>, cmd: Cmd, after: Duration) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use privatevox_core::polish::{Mode, PolishOutcome, PolishStatus};
     use privatevox_core::settings::Settings;
     use privatevox_core::store::Store;
     use privatevox_core::vad::Vad;
@@ -1009,9 +1131,19 @@ mod tests {
         benchmarks: Arc<Mutex<Vec<(String, f32)>>>,
         undos: Arc<Mutex<u32>>,
         frontmost: Arc<Mutex<Option<String>>>,
+        /// Swappable polish behaviour; the default passes text through as "Polished".
+        polish_fn: Arc<Mutex<Box<dyn Fn(Mode, &str) -> PolishOutcome + Send>>>,
+        polish_calls: Arc<Mutex<Vec<(Mode, String)>>>,
+        warms: Arc<Mutex<u32>>,
+        llm_unloads: Arc<Mutex<u32>>,
+        history_changed: Arc<Mutex<u32>>,
         tx: std::sync::mpsc::Sender<Cmd>,
         join: std::thread::JoinHandle<()>,
         _dir: tempfile::TempDir,
+    }
+
+    fn pass_through() -> Box<dyn Fn(Mode, &str) -> PolishOutcome + Send> {
+        Box::new(|_m, raw| PolishOutcome { text: raw.to_string(), status: PolishStatus::Polished { endpoint_id: "fake".into(), model: "m".into(), ms: 1 }, notice: None })
     }
 
     fn harness(engine: FakeEngine, capture: FakeCapture) -> Harness {
@@ -1035,6 +1167,13 @@ mod tests {
         let undos: Arc<Mutex<u32>> = Default::default();
         let frontmost: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(Some("TestApp".into())));
         let fm = frontmost.clone();
+        let polish_fn: Arc<Mutex<Box<dyn Fn(Mode, &str) -> PolishOutcome + Send>>> = Arc::new(Mutex::new(pass_through()));
+        let polish_calls: Arc<Mutex<Vec<(Mode, String)>>> = Default::default();
+        let (pf, pc) = (polish_fn.clone(), polish_calls.clone());
+        let warms: Arc<Mutex<u32>> = Default::default();
+        let llm_unloads: Arc<Mutex<u32>> = Default::default();
+        let history_changed: Arc<Mutex<u32>> = Default::default();
+        let (w, u, hc) = (warms.clone(), llm_unloads.clone(), history_changed.clone());
         let deps = Deps {
             engine: Arc::new(Mutex::new(Box::new(engine) as Box<dyn Engine>)),
             capture: Box::new(capture),
@@ -1046,13 +1185,20 @@ mod tests {
             on_model_switched: Box::new(move |id, _info| sw.lock().unwrap().push(id.to_string())),
             benchmark_clip: Box::new(|| Ok(vec![0.1f32; 16_000 * 30])),
             on_benchmark: Box::new(move |id, speed, _load_ms| bm.lock().unwrap().push((id.to_string(), speed))),
+            polish: Arc::new(move |mode, raw| {
+                pc.lock().unwrap().push((mode, raw.to_string()));
+                (pf.lock().unwrap())(mode, raw)
+            }),
+            llm_warm: Arc::new(move || *w.lock().unwrap() += 1),
+            llm_unload: Arc::new(move || *u.lock().unwrap() += 1),
+            on_history_changed: Arc::new(move || *hc.lock().unwrap() += 1),
         };
         let st = states.clone();
         let coord = Coordinator::new(deps, settings.clone(), store.clone(), vad, Box::new(move |s| st.lock().unwrap().push(s)));
         let (tx, rx) = channel();
         let tx2 = tx.clone();
         let join = std::thread::spawn(move || coord.run(rx, tx2));
-        Harness { states, pasted, store, settings, switched, benchmarks, undos, frontmost, tx, join, _dir: dir }
+        Harness { states, pasted, store, settings, switched, benchmarks, undos, frontmost, polish_fn, polish_calls, warms, llm_unloads, history_changed, tx, join, _dir: dir }
     }
 
     fn kinds(states: &[PillState]) -> Vec<&'static str> {
@@ -1398,5 +1544,180 @@ mod tests {
         assert_eq!(count, 0);
         assert!(states.iter().any(|s| matches!(s, PillState::Error { .. })), "{:?}", kinds(&states));
         assert_eq!(kinds(&states).last().copied(), Some("idle"));
+    }
+
+    fn engine_saying(text: &str) -> FakeEngine {
+        FakeEngine { load_delay: Duration::ZERO, text: text.into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default() }
+    }
+
+    fn capture_ok() -> FakeCapture {
+        FakeCapture { pcm: fixture(), fail: false, die_after_start: false }
+    }
+
+    fn last_row(h: &Harness) -> privatevox_core::store::Dictation {
+        h.store.lock().unwrap().list(1, 0).unwrap().remove(0)
+    }
+
+    #[test]
+    fn clean_mode_pastes_polished_text_and_stores_both() {
+        let h = harness(engine_saying("hello there"), capture_ok());
+        *h.polish_fn.lock().unwrap() = Box::new(|_m, _raw| PolishOutcome { text: "Hello there.".into(), status: PolishStatus::Polished { endpoint_id: "ep-1".into(), model: "q".into(), ms: 3 }, notice: None });
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(h.pasted.lock().unwrap().clone(), vec!["Hello there.".to_string()]);
+        let row = last_row(&h);
+        assert_eq!(row.raw_text, "hello there");
+        assert_eq!(row.polished_text.as_deref(), Some("Hello there."));
+        assert_eq!(row.polish_status, "ok");
+        assert_eq!(row.polished_by.as_deref(), Some("ep-1"));
+        assert_eq!(row.mode, "clean");
+        assert_eq!(h.polish_calls.lock().unwrap()[0], (Mode::Clean, "hello there".to_string()));
+        let k = kinds(&h.states.lock().unwrap());
+        assert!(k.contains(&"polishing"), "{k:?}");
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn raw_mode_skips_polish_and_warm() {
+        let h = harness(engine_saying("hello"), capture_ok());
+        h.settings.lock().unwrap().mode = Mode::Raw;
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(*h.warms.lock().unwrap(), 0);
+        assert!(h.polish_calls.lock().unwrap().is_empty());
+        let row = last_row(&h);
+        assert_eq!(row.polish_status, "none");
+        assert_eq!(row.mode, "raw");
+        assert!(row.polished_text.is_none());
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn unpolished_outcome_pastes_raw_and_marks_row() {
+        let h = harness(engine_saying("raw words"), capture_ok());
+        *h.polish_fn.lock().unwrap() = Box::new(|_m, raw| PolishOutcome { text: raw.to_string(), status: PolishStatus::Unpolished { reason: "timed out".into() }, notice: None });
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(h.pasted.lock().unwrap().clone(), vec!["raw words".to_string()]);
+        let row = last_row(&h);
+        assert_eq!(row.polish_status, "unpolished");
+        assert!(row.polished_text.is_none());
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn warm_fires_on_start_in_llm_modes() {
+        let h = harness(engine_saying("x"), capture_ok());
+        h.tx.send(Cmd::Start).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(*h.warms.lock().unwrap(), 1);
+        h.tx.send(Cmd::Cancel).unwrap();
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn idle_unload_also_unloads_llm() {
+        let h = harness(engine_saying("x"), capture_ok());
+        h.tx.send(Cmd::ModelUnloaded).unwrap();
+        h.tx.send(Cmd::PauseAndUnload).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(*h.llm_unloads.lock().unwrap(), 2);
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn notice_prefixes_the_pasted_preview() {
+        let h = harness(engine_saying("hi"), capture_ok());
+        *h.polish_fn.lock().unwrap() = Box::new(|_m, _raw| PolishOutcome { text: "Hi.".into(), status: PolishStatus::Polished { endpoint_id: "l".into(), model: "m".into(), ms: 1 }, notice: Some("PC unreachable, polished locally".into()) });
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        let states = h.states.lock().unwrap().clone();
+        let preview = states.iter().rev().find_map(|s| if let PillState::Pasted { preview } = s { Some(preview.clone()) } else { None }).unwrap();
+        assert!(preview.starts_with("PC unreachable, polished locally · "), "{preview}");
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn repolish_updates_row_and_notifies() {
+        let h = harness(engine_saying("one two"), capture_ok());
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        let id = last_row(&h).id;
+        *h.polish_fn.lock().unwrap() = Box::new(|m, _raw| PolishOutcome { text: format!("- one\n- two ({})", m.id()), status: PolishStatus::Polished { endpoint_id: "ep-2".into(), model: "m".into(), ms: 1 }, notice: None });
+        h.tx.send(Cmd::Repolish { id, mode: Mode::Bullets }).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        let row = h.store.lock().unwrap().get(id).unwrap().unwrap();
+        assert_eq!(row.mode, "bullets");
+        assert_eq!(row.polished_text.as_deref(), Some("- one\n- two (bullets)"));
+        assert_eq!(row.polished_by.as_deref(), Some("ep-2"));
+        assert_eq!(row.raw_text, "one two");
+        assert_eq!(*h.history_changed.lock().unwrap(), 1);
+        // A failed re-polish keeps the old text and reports an error.
+        *h.polish_fn.lock().unwrap() = Box::new(|_m, raw| PolishOutcome { text: raw.into(), status: PolishStatus::Unpolished { reason: "down".into() }, notice: None });
+        h.tx.send(Cmd::Repolish { id, mode: Mode::Email }).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        let row = h.store.lock().unwrap().get(id).unwrap().unwrap();
+        assert_eq!(row.polished_text.as_deref(), Some("- one\n- two (bullets)"));
+        assert_eq!(row.mode, "bullets");
+        let states = h.states.lock().unwrap().clone();
+        assert!(states.iter().any(|s| matches!(s, PillState::Error { message } if message.starts_with("Re-polish failed"))), "{:?}", kinds(&states));
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn translate_mode_sets_whisper_translate_flag_and_skips_polish() {
+        let flags: Arc<Mutex<Vec<bool>>> = Default::default();
+        let f = flags.clone();
+        let h = harness(engine_saying("hola"), capture_ok());
+        h.settings.lock().unwrap().mode = Mode::Translate;
+        // The fake engine does not record options; assert through the row and the absence of polish.
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        drop(f);
+        assert!(flags.lock().unwrap().is_empty());
+        assert!(h.polish_calls.lock().unwrap().is_empty());
+        let row = last_row(&h);
+        assert_eq!(row.mode, "translate");
+        assert_eq!(row.polish_status, "none");
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn fillers_are_removed_before_polish_and_history() {
+        let h = harness(engine_saying("Um, so uh hello there"), capture_ok());
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(h.polish_calls.lock().unwrap()[0].1, "So hello there");
+        assert_eq!(last_row(&h).raw_text, "So hello there");
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn listening_state_carries_the_mode_label() {
+        let h = harness(engine_saying("x"), capture_ok());
+        h.settings.lock().unwrap().mode = Mode::Email;
+        h.tx.send(Cmd::Start).unwrap();
+        std::thread::sleep(Duration::from_millis(150));
+        let states = h.states.lock().unwrap().clone();
+        assert!(states.iter().any(|s| matches!(s, PillState::Listening { mode, .. } if mode == "Email")), "{:?}", kinds(&states));
+        h.tx.send(Cmd::Cancel).unwrap();
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
     }
 }

@@ -24,6 +24,7 @@ pub fn set_settings(app: AppHandle, state: State<'_, AppState>, mut settings: Se
         settings.undo.combo = Some(validate_combo(&c)?);
     }
     apply_settings(&state.settings, &state.paths.settings(), settings.clone())?;
+    crate::llm::apply_settings(&state.polisher, &settings);
     let tx = state.tx.lock().map(|t| t.clone()).map_err(|e| e.to_string())?;
     if let Err(e) = crate::hotkeys::install(&app, &settings, tx) {
         log::error!("rebind hotkeys: {e}");

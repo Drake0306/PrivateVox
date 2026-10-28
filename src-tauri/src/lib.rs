@@ -7,6 +7,7 @@ pub mod frontmost;
 pub mod hotkeys;
 pub mod laststate;
 pub mod lifecycle;
+mod llm;
 pub mod models;
 pub mod paste;
 pub mod pipeline;
@@ -26,7 +27,7 @@ use privatevox_engine::supervisor::{Engine, PidHandle, WorkerEngine};
 use std::process::Command;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager, RunEvent};
 use tauri_plugin_log::{Target, TargetKind};
 
@@ -119,6 +120,7 @@ pub fn run() {
                 log::warn!("settings unreadable, using defaults: {e}");
                 Settings::default()
             });
+            let polisher = llm::build(&settings);
             let settings = Arc::new(Mutex::new(settings));
             let store = Arc::new(Mutex::new(Store::open(&paths.db())?));
 
@@ -195,6 +197,24 @@ pub fn run() {
                             let _ = st.set_model_stats(id, &stats);
                         }
                         let _ = app.emit("models-changed", ());
+                    })
+                },
+                polish: {
+                    let p = polisher.clone();
+                    Arc::new(move |mode, raw| p.polish(mode, raw, Instant::now()))
+                },
+                llm_warm: {
+                    let p = polisher.clone();
+                    Arc::new(move || p.warm(Instant::now()))
+                },
+                llm_unload: {
+                    let p = polisher.clone();
+                    Arc::new(move || p.unload_all())
+                },
+                on_history_changed: {
+                    let app = app.handle().clone();
+                    Arc::new(move || {
+                        let _ = app.emit("history-changed", ());
                     })
                 },
             };
@@ -292,7 +312,8 @@ pub fn run() {
                     let _ = h2.emit("pill-state", &s);
                 });
             }
-            app.manage(AppState { paths, settings, store, tx: Mutex::new(tx), stale_lock: stale, last_state, downloading: Mutex::new(Default::default()), engine: engine.clone() });
+            llm::spawn_health_loop(polisher.clone(), app.handle().clone());
+            app.manage(AppState { paths, settings, store, tx: Mutex::new(tx), stale_lock: stale, last_state, downloading: Mutex::new(Default::default()), engine: engine.clone(), polisher });
             Ok(())
         })
         .on_window_event(|window, event| {
