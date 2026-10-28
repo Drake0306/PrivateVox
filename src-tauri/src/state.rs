@@ -45,6 +45,7 @@ pub struct AppState {
     pub tx: Mutex<Sender<Cmd>>,
     /// The previous run ended without removing its lock file.
     pub stale_lock: bool,
+    pub last_state: Arc<crate::laststate::LastState>,
 }
 
 impl AppState {

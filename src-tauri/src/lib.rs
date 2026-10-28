@@ -4,6 +4,7 @@ pub mod adapters;
 pub mod commands;
 pub mod frontmost;
 pub mod hotkeys;
+pub mod laststate;
 pub mod lifecycle;
 pub mod models;
 pub mod paste;
@@ -76,6 +77,7 @@ pub fn run() {
             commands::history_count,
             commands::list_input_devices,
             commands::open_panel,
+            commands::current_pill_state,
             commands::open_privacy,
             commands::permissions,
             commands::download_model,
@@ -147,9 +149,14 @@ pub fn run() {
                 idle: idle.clone(),
             };
 
+            let last_state = Arc::new(laststate::LastState::default());
             let handle = app.handle().clone();
+            let recorder = last_state.clone();
             let emit = Box::new(move |s: PillState| {
-                log::info!("pill: {}", serde_json::to_string(&s).unwrap_or_default());
+                if !matches!(s, PillState::Listening { .. }) {
+                    log::info!("pill: {}", serde_json::to_string(&s).unwrap_or_default());
+                }
+                recorder.record(s.clone());
                 if let Err(e) = handle.emit("pill-state", &s) {
                     log::warn!("emit pill-state: {e}");
                 }
@@ -158,6 +165,22 @@ pub fn run() {
             let (tx, rx) = channel::<Cmd>();
             let tx2 = tx.clone();
             std::thread::Builder::new().name("lvw-pipeline".into()).spawn(move || coord.run(rx, tx2))?;
+
+            // Pill placement: where it was last dragged if still on screen, else bottom-centre above the Dock.
+            if let Some(pill) = app.get_webview_window("pill") {
+                let pill_size = pill.outer_size().map(|s| (s.width, s.height)).unwrap_or((280, 48));
+                let monitor = pill.current_monitor().ok().flatten().or_else(|| pill.primary_monitor().ok().flatten());
+                if let Some(m) = monitor {
+                    let wa = m.work_area();
+                    let area = lvw_core::placement::Rect { x: wa.position.x, y: wa.position.y, w: wa.size.width, h: wa.size.height };
+                    let saved = current.pill_position.and_then(|p| lvw_core::placement::clamp_to_area(p, &area, pill_size));
+                    let (x, y) = saved.unwrap_or_else(|| lvw_core::placement::default_pill_position(&area, pill_size, 12));
+                    if let Err(e) = pill.set_position(tauri::PhysicalPosition::new(x, y)) {
+                        log::warn!("pill position: {e}");
+                    }
+                    log::info!("pill placed at ({x}, {y}) in work area {area:?}");
+                }
+            }
 
             // Pill window: non-activating floating panel on every space.
             #[cfg(target_os = "macos")]
@@ -219,7 +242,7 @@ pub fn run() {
                     let _ = h2.emit("pill-state", &s);
                 });
             }
-            app.manage(AppState { paths, settings, store, tx: Mutex::new(tx), stale_lock: stale });
+            app.manage(AppState { paths, settings, store, tx: Mutex::new(tx), stale_lock: stale, last_state });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -228,6 +251,25 @@ pub fn run() {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     let _ = window.hide();
+                }
+            }
+            // Remember where the pill was dragged.
+            if window.label() == "pill" {
+                if let tauri::WindowEvent::Moved(pos) = event {
+                    let state = window.state::<AppState>();
+                    let settings_path = state.paths.settings();
+                    let changed = match state.settings.lock() {
+                        Ok(mut s) if s.pill_position != Some((pos.x, pos.y)) => {
+                            s.pill_position = Some((pos.x, pos.y));
+                            Some(s.clone())
+                        }
+                        _ => None,
+                    };
+                    if let Some(snapshot) = changed {
+                        if let Err(e) = snapshot.save(&settings_path) {
+                            log::warn!("save pill position: {e}");
+                        }
+                    }
                 }
             }
         })

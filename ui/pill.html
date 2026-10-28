@@ -31,6 +31,7 @@
       }
     }
     window.lvw.listen('pill-state', render);
+    window.lvw.invoke('current_pill_state').then((s) => { if (s) render(s); }).catch(() => {});
     let dragged = false, downAt = 0;
     pill.addEventListener('mousedown', () => { downAt = Date.now(); dragged = false; });
     pill.addEventListener('mousemove', (e) => { if (e.buttons) dragged = true; });

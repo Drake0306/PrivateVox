@@ -93,6 +93,12 @@ pub fn list_input_devices() -> Vec<String> {
     lvw_core::audio::input_devices()
 }
 
+/// The pill asks for this when its page loads, since the first `pill-state` event may precede the page.
+#[tauri::command]
+pub fn current_pill_state(state: State<'_, AppState>) -> Option<crate::pipeline::PillState> {
+    state.last_state.current()
+}
+
 #[tauri::command]
 pub fn open_panel(app: AppHandle) -> Result<(), String> {
     let w = app.get_webview_window("panel").ok_or("panel window missing")?;

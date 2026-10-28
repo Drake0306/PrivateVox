@@ -57,6 +57,8 @@ pub struct Settings {
     pub max_clip_seconds: u32,
     pub paste_method: PasteMethod,
     pub flash_attention: bool,
+    /// Last dragged pill position in physical pixels; `None` means bottom-centre above the Dock.
+    pub pill_position: Option<(i32, i32)>,
 }
 
 impl Default for Settings {
@@ -75,6 +77,7 @@ impl Default for Settings {
             max_clip_seconds: 300,
             paste_method: PasteMethod::Clipboard,
             flash_attention: true,
+            pill_position: None,
         }
     }
 }
@@ -149,6 +152,7 @@ mod tests {
         assert_eq!(s.max_clip_seconds, 300);
         assert!(matches!(s.paste_method, PasteMethod::Clipboard));
         assert!(s.flash_attention);
+        assert_eq!(s.pill_position, None);
     }
 
     #[test]
