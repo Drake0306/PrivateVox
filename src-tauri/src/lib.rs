@@ -186,6 +186,7 @@ pub fn run() {
             let switched_app = app.handle().clone();
             let deps = Deps {
                 engine: engine.clone(),
+                remote: remote.clone(),
                 capture: Box::new(MicCapture::new(settings.clone())),
                 paste: Box::new(SystemPaste::new(paster)),
                 model_path,
