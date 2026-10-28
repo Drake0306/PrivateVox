@@ -36,9 +36,23 @@ Load: 633 ms. First-ever Metal library compile: 10.3 s, once per install. RSS st
 
 Engine-reported stage timings for the 30 s clip: mel 9 ms, encode 2855 ms, decode 3758 ms.
 
-## large-v3 (both engines)
+## large-v3 (ggml-large-v3-q5_0.bin, 1081 MB), whisper-rs
 
-_pending: models still downloading_
+Load: 1305 ms (no flash) / 1178 ms (flash). RSS per resident large-v3 context: ~1.0 GB (two contexts: 2.08 GB).
+
+| Config | 30s cold | 30s warm | 10s cold | 10s warm | short cold | short warm | WER 30s | WER 10s |
+|---|---|---|---|---|---|---|---|---|
+| greedy, en | 10870 | 10576 | 4354 | 4404 | 3331 | 3496 | 0.136 | 0.000 |
+| greedy, en, flash attention | 8793 | 8670 | 3913 | 3565 | 2916 | 2853 | 0.136 | 0.000 |
+| beam 5, en | 18823 | 17011 | 5758 | 5835 | 3438 | 3545 | 0.136 | 0.000 |
+| greedy, language auto | 13296 | 19101 | 8259 | 7620 | 6814 | 6181 | 0.136 | 0.000 |
+| greedy, en, audio_ctx 768 | n/a | n/a | 2119 | 2116 | 1348 | 1374 | n/a | 0.000 |
+
+large-v3 got "Vulkan" right where turbo wrote "Vulcan" (the only difference on the 10 s clip). On the 30 s clip both lose the same phrase at the window boundary.
+
+## large-v3, transcribe-cpp (whisper-large-v3-Q5_K_M.gguf, 1161 MB)
+
+_pending_
 
 ## large-v3-turbo with the Core ML encoder (whisper-rs, feature `coreml`)
 
