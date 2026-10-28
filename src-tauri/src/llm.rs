@@ -19,7 +19,7 @@ pub fn endpoints_from_settings(s: &Settings) -> Vec<Endpoint> {
 pub fn build(settings: &Settings) -> SharedPolisher {
     let p = Arc::new(Polisher::new(Arc::new(HttpLlmClient::new()), endpoints_from_settings(settings), Duration::from_secs(settings.llm_timeout_secs)));
     let _ = SHARED.set(p.clone());
-    apply_settings(&p, settings);
+    apply_settings_inner(&p, settings, false);
     p
 }
 
@@ -27,6 +27,12 @@ pub fn build(settings: &Settings) -> SharedPolisher {
 /// Turning polish off unloads every local model we keep alive; any other change unloads models no longer in use.
 /// Network work happens on a helper thread so a settings save never waits on a runtime.
 pub fn apply_settings(p: &Polisher, s: &Settings) {
+    apply_settings_inner(p, s, true)
+}
+
+/// `user_change` is false at startup: settings are pushed in, but no model is loaded until the user asks for
+/// something (a key press warms it; toggling or switching in the panel loads it).
+fn apply_settings_inner(p: &Polisher, s: &Settings, user_change: bool) {
     let was_enabled = p.enabled();
     p.set_endpoints(endpoints_from_settings(s));
     p.set_timeout(Duration::from_secs(s.llm_timeout_secs.clamp(1, 60)));
@@ -44,6 +50,10 @@ pub fn apply_settings(p: &Polisher, s: &Settings) {
                 p.unload_all();
             } else {
                 p.unload_unused(Instant::now());
+                // Polish is on after a user change: load the model now so the strip shows it and the first dictation is quick.
+                if user_change && s.polish_enabled {
+                    p.warm(Instant::now());
+                }
             }
             p.recheck_soon();
             p.check_due(Instant::now());

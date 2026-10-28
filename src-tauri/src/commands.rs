@@ -103,8 +103,18 @@ pub fn pin_history(state: State<'_, AppState>, id: i64, pinned: bool) -> Result<
 }
 
 #[tauri::command]
-pub fn paste_text(state: State<'_, AppState>, text: String) {
-    state.send(Cmd::PasteText(text));
+pub fn paste_text(app: AppHandle, state: State<'_, AppState>, text: String) {
+    // The panel is the app in front while its button is clicked; hide it so the paste lands in the previous app.
+    if let Some(w) = app.get_webview_window("panel") {
+        let _ = w.hide();
+    }
+    let tx = state.tx.lock().map(|t| t.clone()).ok();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(350));
+        if let Some(tx) = tx {
+            let _ = tx.send(Cmd::PasteText(text));
+        }
+    });
 }
 
 /// Writes the whole history to ~/Downloads as Markdown or JSON and reveals it in Finder. Returns the path.

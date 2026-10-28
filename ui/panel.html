@@ -277,7 +277,7 @@
     if (!$('tab-settings').hidden) loadPolish();
     loadMemory();
   });
-  window.pvx.listen('history-changed', () => loadHistory());
+  window.pvx.listen('history-changed', () => { loadHistory(); flash('History updated'); });
 
   // ---------- setup ----------
   async function loadSetup() {

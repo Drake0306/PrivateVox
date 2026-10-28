@@ -712,8 +712,14 @@ impl Coordinator {
     }
 
     /// Re-run the LLM over a stored row on a helper thread, so dictation stays responsive.
-    fn repolish(&self, id: i64, mode: Mode, tx: &Sender<Cmd>) {
+    fn repolish(&mut self, id: i64, mode: Mode, tx: &Sender<Cmd>) {
+        if mode.uses_llm() && !self.settings().polish_enabled {
+            self.error("Polish is off. Turn it on in Settings → Polish, then re-polish.");
+            self.schedule_idle(tx);
+            return;
+        }
         let (polish, store, changed, tx) = (self.deps.polish.clone(), self.store.clone(), self.deps.on_history_changed.clone(), tx.clone());
+        let warm = self.deps.llm_warm.clone();
         let spawned = std::thread::Builder::new().name("privatevox-repolish".into()).spawn(move || {
             let row = match store.lock().map_err(|e| e.to_string()).and_then(|s| s.get(id).map_err(|e| e.to_string())) {
                 Ok(Some(r)) => r,
@@ -730,6 +736,8 @@ impl Coordinator {
                 changed();
                 return;
             }
+            // Load the model first so a cold runtime gets the cold-start grace instead of a timeout.
+            warm();
             let outcome = polish(mode, &row.raw_text);
             match outcome.status {
                 PolishStatus::Polished { endpoint_id, .. } => {
@@ -1717,6 +1725,40 @@ mod tests {
         let states = h.states.lock().unwrap().clone();
         assert!(states.iter().any(|s| matches!(s, PillState::Listening { mode, .. } if mode == "Email")), "{:?}", kinds(&states));
         h.tx.send(Cmd::Cancel).unwrap();
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn repolish_warms_the_llm_first() {
+        let h = harness(engine_saying("one two"), capture_ok());
+        h.settings.lock().unwrap().mode = Mode::Raw;
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(*h.warms.lock().unwrap(), 0, "raw mode never warms");
+        let id = last_row(&h).id;
+        h.tx.send(Cmd::Repolish { id, mode: Mode::Clean }).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(*h.warms.lock().unwrap(), 1, "a re-polish loads the model before asking it");
+        assert_eq!(h.store.lock().unwrap().get(id).unwrap().unwrap().mode, "clean");
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn repolish_with_polish_off_explains_itself() {
+        let h = harness(engine_saying("one two"), capture_ok());
+        h.settings.lock().unwrap().polish_enabled = false;
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        let id = last_row(&h).id;
+        h.tx.send(Cmd::Repolish { id, mode: Mode::Email }).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(h.polish_calls.lock().unwrap().is_empty());
+        let states = h.states.lock().unwrap().clone();
+        assert!(states.iter().any(|s| matches!(s, PillState::Error { message } if message.contains("Polish is off"))), "{:?}", kinds(&states));
         h.tx.send(Cmd::Quit).unwrap();
         h.join.join().unwrap();
     }

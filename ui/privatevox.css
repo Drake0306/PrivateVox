@@ -13,6 +13,7 @@
   --accent: #3fbfb2; --accent-soft: #143732; --accent-fg: #a8e8df; --rec: #ff6b70; --ok: #5fc48a; --warn: #e0a84a; --warn-soft: #3a2d16;
   --m-other: #8f7fd0; --m-whisper: #0f9b8e; --m-llm: #b8821c; --pill: #0b100f; } }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; font: 15px/1.5 var(--body); }
 
 /* ---------- pill ---------- */
