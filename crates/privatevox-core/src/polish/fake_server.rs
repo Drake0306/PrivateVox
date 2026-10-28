@@ -95,6 +95,8 @@ fn respond(stream: &mut TcpStream, status: &str, body: &str) {
 }
 
 fn serve(mut stream: TcpStream, behaviour: Behaviour, hits: Arc<Mutex<Vec<String>>>, bodies: Arc<Mutex<Vec<String>>>, auth: Arc<Mutex<Option<String>>>, stop: Arc<AtomicBool>) {
+    // On macOS an accepted socket inherits the listener's non-blocking flag; reads must block here.
+    let _ = stream.set_nonblocking(false);
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     let mut buf = Vec::new();
     let mut chunk = [0u8; 4096];
