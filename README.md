@@ -35,7 +35,7 @@ On an 8 GB Mac, `ollama pull qwen2.5:3b` is the recommended local model (about 2
 
 - **Live preview** (Settings → Dictation): the words appear on a second line of the pill as Whisper decodes, so you can see it heard you and stop early. Auto means on when a host does the work or the machine has 16 GB or more; set it On or Off yourself.
 - **Auto-stop** in toggle mode: tap, talk, pause, and after two seconds of silence (your choice, or never) the dictation ends itself. The pill says "stopping…" in the last second.
-- **Spoken commands** at the very end of a dictation: "new line", "new paragraph", "delete that" or "undo" (undoes the last paste), "cancel" or "never mind" (drops the dictation). Only the trailing phrase is checked, so normal text is never eaten. Off-able.
+- **Spoken commands** at the very end of a dictation: "new line", "new paragraph", "delete that" or "undo" (undoes the last paste), "cancel" or "never mind" (drops the dictation). Only the trailing phrase is checked, and the three that drop text are taken only on their own or after a sentence break ("Send the report. Cancel."), so "tell him I will cancel" is just text. Whatever came before a cancel stays in History as a cancelled row. Off-able.
 - **Modes per app** (Settings → Modes per app): "Mail" → Email, "Code" → Code, from a small table; the pill shows the mode it picked.
 - **Sound cues** on start, stop and "nothing heard", plus a short flash of the pill. Off-able.
 

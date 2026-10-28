@@ -9,7 +9,8 @@ Fourth alpha: the things that make dictating feel immediate. macOS on Apple Sili
 ### Phase 5
 - Live preview while speaking: partial text on a second line of the pill (Auto / On / Off).
 - Auto-stop on silence in toggle mode (default 2 s, Never possible), with "stopping…" in the pill.
-- Spoken end-of-dictation commands: new line, new paragraph, delete that / undo, cancel / never mind. Off-able.
+- Spoken end-of-dictation commands: new line, new paragraph, delete that / undo, cancel / never mind. The destructive three need a sentence break before them or stand alone; the text before a cancel is kept in History. Off-able.
+- Auto-stop ignores clicks and coughs shorter than 128 ms; the preview skips windows with no speech in them instead of inventing sentences.
 - Modes per app: a table of app name → mode, applied when the dictation starts.
 - Sound cues (macOS system sounds) and a pill flash on start, stop and "nothing heard". Off-able.
 - Cleanup of the small items the last three reviews left: the host now receives the dictionary prompt, mDNS follows network changes, a kept clip is never orphaned by a delete, long dictations record how their language was chosen, re-run uses the host when in use, the secure-input poller runs on macOS only, and the panel fetches less.
