@@ -204,7 +204,9 @@ pub async fn add_llm_endpoint(state: State<'_, AppState>, input: String, label: 
         s.polish_enabled = true;
     })?;
     // Mark it healthy right away so the next dictation can use it without waiting for the 10 s loop.
-    state.polisher.check_due(Instant::now());
+    // The blocking client must not run on this tokio worker.
+    let p = state.polisher.clone();
+    tauri::async_runtime::spawn_blocking(move || p.check_due(Instant::now())).await.map_err(|e| e.to_string())?;
     let now = Instant::now();
     let selected = state.polisher.selected(now).map(|e| e.id);
     Ok(view(&state, &ep, selected.as_deref(), now))
@@ -264,7 +266,8 @@ pub fn set_llm_endpoint_preferred(state: State<'_, AppState>, id: String) -> Res
         }
     })?;
     if ok {
-        state.polisher.check_due(Instant::now());
+        let p = state.polisher.clone();
+        std::thread::spawn(move || p.check_due(Instant::now()));
         Ok(())
     } else {
         Err(format!("Unknown endpoint {id:?}"))

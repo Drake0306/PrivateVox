@@ -1,5 +1,6 @@
 //! Chat request and reply shapes for OpenAI-compatible servers and Ollama's native API (design §7, §4.3 step 5).
 
+use super::modes::Mode;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -22,6 +23,16 @@ pub fn max_tokens_for(input: &str) -> u32 {
     2 * estimate_tokens(input) + 64
 }
 
+/// Polish modes rewrite the input, so §7's formula fits; Ask answers and Code expands, so they get a floor.
+pub fn max_tokens_for_mode(mode: Mode, input: &str) -> u32 {
+    let base = max_tokens_for(input);
+    match mode {
+        Mode::Ask => base.max(512),
+        Mode::Code => base.max(256),
+        _ => base,
+    }
+}
+
 pub fn chat_path(flavor: Flavor) -> &'static str {
     match flavor {
         Flavor::Ollama => "/api/chat",
@@ -29,8 +40,7 @@ pub fn chat_path(flavor: Flavor) -> &'static str {
     }
 }
 
-pub fn chat_body(flavor: Flavor, model: &str, system: &str, user: &str) -> Value {
-    let max_tokens = max_tokens_for(user);
+pub fn chat_body(flavor: Flavor, model: &str, system: &str, user: &str, max_tokens: u32) -> Value {
     let messages = json!([{ "role": "system", "content": system }, { "role": "user", "content": user }]);
     match flavor {
         Flavor::OpenAi => json!({ "model": model, "messages": messages, "temperature": 0.2, "max_tokens": max_tokens, "stream": false }),
@@ -65,10 +75,10 @@ fn strip_wrapping_quotes(s: &str) -> &str {
 }
 
 fn strip_wrapping_fence(s: &str) -> &str {
-    if !s.starts_with("```") || !s.ends_with("```") {
-        return s;
+    if s.len() >= 3 && s.bytes().all(|b| b == b'`') {
+        return ""; // nothing but fences: an empty reply, which the polisher treats as unpolished
     }
-    let body = &s[3..s.len() - 3];
+    let Some(body) = s.strip_prefix("```").and_then(|b| b.strip_suffix("```")) else { return s };
     // Optional language tag on the opening line.
     let body = match body.find('\n') {
         Some(i) if body[..i].chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') => &body[i + 1..],
@@ -77,10 +87,21 @@ fn strip_wrapping_fence(s: &str) -> &str {
     body.trim()
 }
 
+/// A first line like "Here is the cleaned text:" is chatter, not content. Only lines made of such words qualify:
+/// code (`def f():`), YAML keys and headings keep their first line.
+fn is_preamble(line: &str) -> bool {
+    let line = line.trim_end();
+    if !line.ends_with(':') || line.split_whitespace().count() > 8 {
+        return false;
+    }
+    let words: Vec<String> = line.trim_end_matches(':').split_whitespace().map(|w| w.trim_matches(|c: char| !c.is_alphanumeric() && c != '\'').to_lowercase()).collect();
+    const CHATTER: &[&str] = &["here", "here's", "is", "are", "the", "your", "a", "an", "sure", "okay", "ok", "certainly", "of", "course", "cleaned", "clean", "polished", "corrected", "edited", "revised", "rewritten", "fixed", "final", "updated", "text", "version", "result", "output", "transcript", "answer", "email", "bullets", "list", "code", "translation"];
+    !words.is_empty() && words.iter().all(|w| CHATTER.contains(&w.as_str()))
+}
+
 fn strip_preamble_line(s: &str) -> &str {
     if let Some((first, rest)) = s.split_once('\n') {
-        let first_t = first.trim_end();
-        if first_t.ends_with(':') && first_t.split_whitespace().count() <= 8 && !rest.trim().is_empty() {
+        if is_preamble(first) && !rest.trim().is_empty() {
             return rest.trim_start();
         }
     }
@@ -122,7 +143,7 @@ mod tests {
 
     #[test]
     fn openai_body_shape() {
-        let b = chat_body(Flavor::OpenAi, "m", "sys", "hi");
+        let b = chat_body(Flavor::OpenAi, "m", "sys", "hi", 84);
         assert_eq!(b["model"], "m");
         assert_eq!(b["temperature"], 0.2);
         assert_eq!(b["stream"], false);
@@ -136,7 +157,7 @@ mod tests {
 
     #[test]
     fn ollama_body_keeps_alive_forever() {
-        let b = chat_body(Flavor::Ollama, "m", "sys", "hi");
+        let b = chat_body(Flavor::Ollama, "m", "sys", "hi", 84);
         assert_eq!(b["keep_alive"], -1);
         assert_eq!(b["stream"], false);
         assert_eq!(b["options"]["num_predict"], 84);
@@ -170,5 +191,31 @@ mod tests {
         assert_eq!(unload_body("m")["model"], "m");
         assert!(warm_body(Flavor::OpenAi, "m").is_none());
         assert_eq!(warm_body(Flavor::Ollama, "m").unwrap()["keep_alive"], -1);
+    }
+
+    #[test]
+    fn preamble_rule_keeps_code_and_headings() {
+        assert_eq!(clean_output("```python\ndef add(a, b):\n    return a + b\n```"), "def add(a, b):\n    return a + b");
+        assert_eq!(clean_output("Shopping list:\n- milk\n- eggs"), "Shopping list:\n- milk\n- eggs");
+        assert_eq!(clean_output("services:\n  web:\n    image: nginx"), "services:\n  web:\n    image: nginx");
+        assert_eq!(clean_output("Here's the polished version:\nHello."), "Hello.");
+        assert_eq!(clean_output("Sure! Here is the cleaned text:\nHello."), "Hello.");
+        assert_eq!(clean_output("Cleaned text:\nHello."), "Hello.");
+    }
+
+    #[test]
+    fn lone_fences_do_not_panic() {
+        assert_eq!(clean_output("```"), "");
+        assert_eq!(clean_output("````"), "");
+        assert_eq!(clean_output("`````"), "");
+        assert_eq!(clean_output("``````"), "");
+    }
+
+    #[test]
+    fn ask_mode_gets_a_real_answer_budget() {
+        use crate::polish::Mode;
+        assert_eq!(max_tokens_for_mode(Mode::Clean, "one two three"), 88);
+        assert!(max_tokens_for_mode(Mode::Ask, "explain tcp") >= 512);
+        assert!(max_tokens_for_mode(Mode::Code, "write a function that adds") >= 256);
     }
 }

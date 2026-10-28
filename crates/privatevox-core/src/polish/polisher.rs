@@ -3,9 +3,9 @@
 use super::client::LlmClient;
 use super::endpoints::{Endpoint, Health, Registry};
 use super::modes::{effective_prompt, Mode};
+use super::request::max_tokens_for_mode;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -14,6 +14,9 @@ pub const COLD_START_GRACE: Duration = Duration::from_secs(25);
 
 /// Health checks use this timeout (§8.2: 1 s).
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(1);
+/// Chat requests get at least this much of the budget; anything less is not worth a round trip.
+const MIN_CHAT_BUDGET: Duration = Duration::from_millis(150);
+
 /// Pill notice when the preferred endpoint was skipped and another answered (§8.2 step 2).
 pub fn failover_notice(preferred: &Endpoint, used: &Endpoint) -> String {
     if !super::is_local(&preferred.base_url) && super::is_local(&used.base_url) {
@@ -50,13 +53,13 @@ pub struct Polisher {
     registry: Mutex<Registry>,
     client: Arc<dyn LlmClient>,
     config: Mutex<Config>,
-    /// True while `warm` is waiting on the runtime (a cold model is loading).
-    warming: AtomicBool,
+    /// The endpoint whose warm-up is in flight (a cold model is loading there), if any.
+    warming: Mutex<Option<String>>,
 }
 
 impl Polisher {
     pub fn new(client: Arc<dyn LlmClient>, endpoints: Vec<Endpoint>, timeout: Duration) -> Self {
-        Polisher { registry: Mutex::new(Registry::new(endpoints)), client, config: Mutex::new(Config { timeout, prompts: HashMap::new(), enabled: true }), warming: AtomicBool::new(false) }
+        Polisher { registry: Mutex::new(Registry::new(endpoints)), client, config: Mutex::new(Config { timeout, prompts: HashMap::new(), enabled: true }), warming: Mutex::new(None) }
     }
 
     pub fn set_endpoints(&self, endpoints: Vec<Endpoint>) {
@@ -106,10 +109,12 @@ impl Polisher {
             let reachable = |h: Option<Health>| h.map(|h| h.failures == 0 && h.last_ok.is_some());
             let before = reachable(self.health_of(&ep.id));
             let result = self.client.probe(&ep, PROBE_TIMEOUT);
+            // Stamp the verdict when the probe answered, not when the pass started, so slow probes never eat the TTL.
+            let stamped = if now > Instant::now() { now } else { Instant::now() };
             let mut reg = self.registry.lock().unwrap();
             match result {
-                Ok(p) => reg.mark_ok(&ep.id, now, p.models, p.loaded_models, p.loaded_bytes),
-                Err(e) => reg.mark_failure(&ep.id, now, e),
+                Ok(p) => reg.mark_ok(&ep.id, stamped, p.models, p.loaded_models, p.loaded_bytes),
+                Err(e) => reg.mark_failure(&ep.id, stamped, e),
             }
             let after = reachable(reg.health(&ep.id).cloned());
             changed |= before != after;
@@ -117,9 +122,9 @@ impl Polisher {
         changed
     }
 
-    /// True while a warm-up request is in flight.
-    pub fn warming(&self) -> bool {
-        self.warming.load(Ordering::SeqCst)
+    /// The endpoint id whose warm-up request is in flight, if any.
+    pub fn warming(&self) -> Option<String> {
+        self.warming.lock().unwrap().clone()
     }
 
     pub fn polish(&self, mode: Mode, raw: &str, now: Instant) -> PolishOutcome {
@@ -132,15 +137,28 @@ impl Polisher {
         }
         let (candidates, preferred) = {
             let reg = self.registry.lock().unwrap();
-            (reg.candidates(now), reg.endpoints().first().cloned())
+            // Only an endpoint the user added counts as "preferred" for the skipped notice; auto-probed localhost
+            // runtimes the user never configured do not earn a complaint when one of them is missing.
+            (reg.candidates(now), reg.endpoints().iter().find(|e| e.enabled && e.source == super::Source::Manual).cloned())
         };
+        // One budget for the whole dictation, shared by every candidate. It stretches to the cold-start grace only
+        // when the first candidate is the one whose model is still loading behind the warm-up.
+        let budget = match (self.warming(), candidates.first()) {
+            (Some(w), Some(first)) if w == first.id => timeout.max(COLD_START_GRACE),
+            _ => timeout,
+        };
+        let deadline = Instant::now() + budget;
+        let max_tokens = max_tokens_for_mode(mode, raw);
         let mut last_error: Option<String> = None;
         for ep in candidates.iter() {
             let Some(model) = self.active_model(ep) else { continue };
-            // A cold model still loading behind the warm-up gets more time than the steady-state budget.
-            let budget = if self.warming() { timeout.max(COLD_START_GRACE) } else { timeout };
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining < MIN_CHAT_BUDGET {
+                last_error.get_or_insert_with(|| "LLM timeout".into());
+                break;
+            }
             let t = Instant::now();
-            match self.client.chat(ep, &model, &system, raw, budget) {
+            match self.client.chat(ep, &model, &system, raw, max_tokens, remaining) {
                 Ok(text) if !text.trim().is_empty() => {
                     let ms = t.elapsed().as_millis() as u64;
                     let notice = preferred.as_ref().filter(|p| p.id != ep.id).map(|p| failover_notice(p, ep));
@@ -168,10 +186,16 @@ impl Polisher {
         }
         let Some(ep) = self.selected(now) else { return };
         let Some(model) = self.active_model(&ep) else { return };
-        self.warming.store(true, Ordering::SeqCst);
+        {
+            let mut w = self.warming.lock().unwrap();
+            if w.is_some() {
+                return; // one in flight is enough; LM Studio serialises requests and would queue the polish behind extras
+            }
+            *w = Some(ep.id.clone());
+        }
         let t = Instant::now();
         let r = self.client.warm(&ep, &model);
-        self.warming.store(false, Ordering::SeqCst);
+        *self.warming.lock().unwrap() = None;
         match r {
             Ok(()) => log::info!("llm warm-up on {} took {:?}", ep.label, t.elapsed()),
             Err(e) => log::warn!("llm warm-up on {} failed: {e}", ep.label),
@@ -182,7 +206,8 @@ impl Polisher {
     pub fn unload_all(&self) {
         let targets: Vec<(Endpoint, Vec<String>)> = {
             let reg = self.registry.lock().unwrap();
-            reg.endpoints().iter().filter_map(|e| reg.health(&e.id).filter(|h| !h.loaded_models.is_empty()).map(|h| (e.clone(), h.loaded_models.clone()))).collect()
+            // Only runtimes on this machine: the Mac's idle timer must not evict a model other tools on the PC may be using.
+            reg.endpoints().iter().filter(|e| super::is_local(&e.base_url)).filter_map(|e| reg.health(&e.id).filter(|h| !h.loaded_models.is_empty()).map(|h| (e.clone(), h.loaded_models.clone()))).collect()
         };
         for (ep, models) in targets {
             for m in models {
@@ -323,7 +348,8 @@ mod tests {
         assert_eq!(p.polish(Mode::Clean, "a", t0).text, "local");
         drop(pref);
         let _pref2 = FakeLlm::start_on(Behaviour::OpenAi { reply: "pc".into() }, port);
-        let t1 = t0 + Duration::from_secs(10);
+        // The failure was stamped when the 1 s probe gave up, so its 10 s backoff ends a little after t0 + 11 s.
+        let t1 = t0 + Duration::from_secs(12);
         p.check_due(t1);
         let o = p.polish(Mode::Clean, "a", t1);
         assert_eq!(o.text, "pc");
@@ -406,39 +432,129 @@ mod tests {
     struct SpyClient {
         chat_timeouts: Mutex<Vec<Duration>>,
         warm_delay: Duration,
+        probe_delay: Duration,
+        warms: Mutex<u32>,
+        unloads: Mutex<Vec<String>>,
+    }
+    impl SpyClient {
+        fn new(warm_delay: Duration) -> Self {
+            SpyClient { chat_timeouts: Mutex::new(vec![]), warm_delay, probe_delay: Duration::ZERO, warms: Mutex::new(0), unloads: Mutex::new(vec![]) }
+        }
     }
     impl LlmClient for SpyClient {
         fn probe(&self, _ep: &Endpoint, _t: Duration) -> Result<crate::polish::Probe, String> {
-            Ok(crate::polish::Probe { models: vec!["m".into()], loaded_models: vec![], loaded_bytes: 0 })
+            std::thread::sleep(self.probe_delay);
+            Ok(crate::polish::Probe { models: vec!["m".into()], loaded_models: vec!["m".into()], loaded_bytes: 1 })
         }
-        fn chat(&self, _ep: &Endpoint, _m: &str, _s: &str, _u: &str, timeout: Duration) -> Result<String, String> {
+        fn chat(&self, _ep: &Endpoint, _m: &str, _s: &str, _u: &str, _max_tokens: u32, timeout: Duration) -> Result<String, String> {
             self.chat_timeouts.lock().unwrap().push(timeout);
             Ok("ok".into())
         }
         fn warm(&self, _ep: &Endpoint, _m: &str) -> Result<(), String> {
+            *self.warms.lock().unwrap() += 1;
             std::thread::sleep(self.warm_delay);
             Ok(())
         }
-        fn unload(&self, _ep: &Endpoint, _m: &str) -> Result<(), String> {
+        fn unload(&self, ep: &Endpoint, _m: &str) -> Result<(), String> {
+            self.unloads.lock().unwrap().push(ep.base_url.clone());
             Ok(())
         }
     }
 
     #[test]
-    fn polish_waits_longer_while_warm_up_is_in_flight() {
-        let spy = Arc::new(SpyClient { chat_timeouts: Mutex::new(vec![]), warm_delay: Duration::from_millis(400) });
+    fn polish_waits_longer_only_when_the_warming_endpoint_comes_first() {
+        let spy = Arc::new(SpyClient::new(Duration::from_millis(400)));
         let p = Arc::new(Polisher::new(spy.clone(), local_candidates(), Duration::from_secs(8)));
         let now = Instant::now();
         p.check_due(now);
         let p2 = p.clone();
         let warm = std::thread::spawn(move || p2.warm(now));
         std::thread::sleep(Duration::from_millis(100));
-        assert!(p.warming());
+        assert_eq!(p.warming().as_deref(), Some("local-ollama"));
         p.polish(Mode::Clean, "a", now);
         warm.join().unwrap();
-        assert!(!p.warming());
+        assert!(p.warming().is_none());
         p.polish(Mode::Clean, "a", now);
         let t = spy.chat_timeouts.lock().unwrap().clone();
-        assert_eq!(t, vec![COLD_START_GRACE, Duration::from_secs(8)]);
+        assert!(t[0] >= COLD_START_GRACE - Duration::from_millis(50) && t[0] <= COLD_START_GRACE, "{t:?}");
+        assert!(t[1] <= Duration::from_secs(8) && t[1] >= Duration::from_millis(7900), "{t:?}");
+        // A warm-up on a different endpoint than the first candidate does not stretch the budget.
+        let spy2 = Arc::new(SpyClient::new(Duration::from_millis(400)));
+        let mut eps = local_candidates();
+        eps[0].base_url = "http://127.0.0.1:1".into();
+        let p = Arc::new(Polisher::new(spy2.clone(), eps, Duration::from_secs(8)));
+        p.check_due(now);
+        let p3 = p.clone();
+        let mut prefers_second = p.registry.lock().unwrap();
+        prefers_second.mark_failure("local-ollama", now, "down".into());
+        drop(prefers_second);
+        let warm = std::thread::spawn(move || p3.warm(now));
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(p.warming().as_deref(), Some("local-lmstudio"));
+        p.polish(Mode::Clean, "a", now);
+        warm.join().unwrap();
+        let t = spy2.chat_timeouts.lock().unwrap().clone();
+        assert!(t[0] >= COLD_START_GRACE - Duration::from_millis(50), "warming endpoint is the first candidate: {t:?}");
+    }
+
+    #[test]
+    fn warm_is_skipped_while_one_is_in_flight() {
+        let spy = Arc::new(SpyClient::new(Duration::from_millis(300)));
+        let p = Arc::new(Polisher::new(spy.clone(), local_candidates(), Duration::from_secs(8)));
+        let now = Instant::now();
+        p.check_due(now);
+        let hs: Vec<_> = (0..3).map(|_| { let p = p.clone(); std::thread::spawn(move || p.warm(now)) }).collect();
+        for h in hs { h.join().unwrap(); }
+        assert_eq!(*spy.warms.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn timeout_is_one_budget_across_candidates() {
+        let a = FakeLlm::start(Behaviour::Hang);
+        let b = FakeLlm::start(Behaviour::Hang);
+        let mut ea = a.endpoint(Flavor::OpenAi); ea.model = Some("m".into()); ea.label = "A".into();
+        let mut eb = b.endpoint(Flavor::OpenAi); eb.model = Some("m".into()); eb.label = "B".into();
+        let p = polisher(vec![ea, eb], 400);
+        let t = Instant::now();
+        let o = p.polish(Mode::Clean, "x", Instant::now());
+        assert!(matches!(o.status, PolishStatus::Unpolished { .. }));
+        assert!(t.elapsed() < Duration::from_millis(900), "two hanging candidates must share one 400 ms budget, took {:?}", t.elapsed());
+    }
+
+    #[test]
+    fn no_notice_when_only_auto_detected_candidates_were_skipped() {
+        let lm = FakeLlm::start(Behaviour::OpenAi { reply: "ok".into() });
+        let mut eps = local_candidates();
+        eps[0].base_url = "http://127.0.0.1:1".into();
+        eps[1].base_url = lm.base_url.clone();
+        eps[1].id = crate::polish::endpoint_id(&lm.base_url);
+        let p = polisher(eps, 1000);
+        let now = Instant::now();
+        p.check_due(now);
+        let o = p.polish(Mode::Clean, "x", now);
+        assert_eq!(o.text, "ok");
+        assert!(o.notice.is_none(), "{:?}", o.notice);
+    }
+
+    #[test]
+    fn unload_all_leaves_remote_runtimes_alone() {
+        let spy = Arc::new(SpyClient::new(Duration::ZERO));
+        let mut pc = local_candidates().remove(0);
+        pc.base_url = "http://192.168.1.20:11434".into();
+        pc.id = "pc".into();
+        let p = Polisher::new(spy.clone(), vec![pc, local_candidates().remove(0)], Duration::from_secs(1));
+        p.check_due(Instant::now());
+        p.unload_all();
+        assert_eq!(spy.unloads.lock().unwrap().clone(), vec!["http://127.0.0.1:11434".to_string()]);
+    }
+
+    #[test]
+    fn health_is_stamped_after_the_probe_not_before() {
+        let spy = Arc::new(SpyClient { probe_delay: Duration::from_millis(300), ..SpyClient::new(Duration::ZERO) });
+        let p = Polisher::new(spy, local_candidates(), Duration::from_secs(1));
+        let t = Instant::now();
+        p.check_due(t);
+        let h = p.health_of("local-ollama").unwrap();
+        assert!(h.last_ok.unwrap() >= t + Duration::from_millis(250), "last_ok must reflect when the probe answered");
     }
 }

@@ -41,12 +41,18 @@ pub fn has_repetition_loop(text: &str, n: usize) -> bool {
 
 /// Fillers removed in every language.
 const UNIVERSAL_FILLERS: &[&str] = &["uh", "uhm", "uhh", "umm", "hmm", "mhm", "mm", "erm", "err"];
+/// Tokens that are units or codes when they follow a number ("10 mm bolt").
+const UNIT_LIKE: &[&str] = &["mm", "err"];
 /// Fillers that are real words elsewhere ("um" in German and Portuguese), so only removed when the text is English.
 const ENGLISH_FILLERS: &[&str] = &["um", "ah", "eh"];
 
-fn is_filler(token: &str, english: bool) -> bool {
+fn is_filler(token: &str, english: bool, previous: Option<&str>) -> bool {
     let core = token.trim_end_matches(|c| c == ',' || c == '.').to_lowercase();
     if core.chars().any(|c| !c.is_alphabetic()) || core.is_empty() {
+        return false;
+    }
+    let after_number = previous.map(|p| p.trim_matches(|c: char| !c.is_alphanumeric()).chars().all(|c| c.is_ascii_digit()) && !p.is_empty()).unwrap_or(false);
+    if after_number && UNIT_LIKE.contains(&core.as_str()) {
         return false;
     }
     UNIVERSAL_FILLERS.contains(&core.as_str()) || (english && ENGLISH_FILLERS.contains(&core.as_str()))
@@ -69,8 +75,11 @@ fn capitalize_first(token: &str) -> String {
 pub fn remove_fillers(text: &str, english: bool) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut restore_capital = false;
+    let mut previous: Option<&str> = None;
     for token in text.split_whitespace() {
-        if is_filler(token, english) {
+        let prev = previous;
+        previous = Some(token);
+        if is_filler(token, english, prev) {
             // The filler owed its capital to the next word only when it had one ("Um, we go" → "We go").
             let at_sentence_start = out.last().map(|t| ends_sentence(t)).unwrap_or(true);
             let had_capital = token.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
@@ -138,6 +147,12 @@ mod tests {
     #[test]
     fn restores_sentence_opening_capital() {
         assert_eq!(remove_fillers("Um, we should go. Uh, now.", true), "We should go. Now.");
+    }
+
+    #[test]
+    fn units_are_not_fillers() {
+        assert_eq!(remove_fillers("a 10 mm bolt", true), "a 10 mm bolt");
+        assert_eq!(remove_fillers("mm, let me think", true), "let me think");
     }
 
     #[test]

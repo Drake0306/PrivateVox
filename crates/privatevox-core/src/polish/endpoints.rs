@@ -5,8 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-/// A health check result stays trusted for this long (§8.2 "last health check ≤ 10 s old").
-pub const HEALTH_TTL: Duration = Duration::from_secs(10);
+/// Healthy endpoints are probed again after this long (§8.2: every 10 s).
+pub const RECHECK_PERIOD: Duration = Duration::from_secs(10);
+/// A successful check stays trusted for this long. Longer than the recheck period, so a probe pass that takes a
+/// moment never leaves a fine endpoint looking unhealthy in between.
+pub const HEALTH_TTL: Duration = Duration::from_secs(15);
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
 #[serde(rename_all = "snake_case")]
@@ -93,9 +96,10 @@ pub fn local_candidates() -> Vec<Endpoint> {
     ]
 }
 
-/// Enabled user endpoints in their list order, then the local candidates not already present.
+/// User endpoints in their list order (disabled ones included, so the panel can show them), then the local
+/// candidates not already present. The registry never selects or probes a disabled endpoint.
 pub fn ordered(user: &[Endpoint], auto_local: bool) -> Vec<Endpoint> {
-    let mut out: Vec<Endpoint> = user.iter().filter(|e| e.enabled).cloned().collect();
+    let mut out: Vec<Endpoint> = user.to_vec();
     if auto_local {
         for c in local_candidates() {
             if !user.iter().any(|u| u.base_url == c.base_url) {
@@ -159,7 +163,7 @@ impl Registry {
         h.last_ok = Some(now);
         h.last_checked = Some(now);
         h.failures = 0;
-        h.next_check = Some(now + HEALTH_TTL);
+        h.next_check = Some(now + RECHECK_PERIOD);
         h.models = models;
         h.loaded_models = loaded;
         h.loaded_bytes = loaded_bytes;
@@ -188,6 +192,7 @@ impl Registry {
     pub fn due_for_check(&self, now: Instant) -> Vec<Endpoint> {
         self.endpoints
             .iter()
+            .filter(|e| e.enabled)
             .filter(|e| match self.health.get(&e.id).and_then(|h| h.next_check) {
                 None => true,
                 Some(t) => t <= now,
@@ -198,7 +203,7 @@ impl Registry {
 
     /// Highest-priority endpoint with a fresh successful check (§8.2 step 1).
     pub fn select(&self, now: Instant) -> Option<Endpoint> {
-        self.endpoints.iter().find(|e| self.health.get(&e.id).map(|h| h.healthy(now)).unwrap_or(false)).cloned()
+        self.endpoints.iter().filter(|e| e.enabled).find(|e| self.health.get(&e.id).map(|h| h.healthy(now)).unwrap_or(false)).cloned()
     }
 
     /// Request-time order: the selected endpoint first, then every other in priority order (failover, §8.2 step 2).
@@ -207,7 +212,7 @@ impl Registry {
         if let Some(sel) = self.select(now) {
             out.push(sel);
         }
-        for e in &self.endpoints {
+        for e in self.endpoints.iter().filter(|e| e.enabled) {
             if !out.iter().any(|o| o.id == e.id) {
                 out.push(e.clone());
             }
@@ -271,10 +276,22 @@ mod tests {
     }
 
     #[test]
-    fn disabled_endpoints_are_skipped() {
+    fn disabled_endpoints_are_listed_but_never_used() {
         let mut e = local_candidates().remove(0);
         e.enabled = false;
-        assert!(ordered(&[e], false).is_empty());
+        let list = ordered(&[e], false);
+        assert_eq!(list.len(), 1, "stays visible so the user can switch it back on");
+        let mut r = Registry::new(list);
+        let t0 = Instant::now();
+        assert!(r.due_for_check(t0).is_empty());
+        r.mark_ok("local-ollama", t0, vec![], vec![], 0);
+        assert!(r.select(t0).is_none());
+        assert!(r.candidates(t0).is_empty());
+    }
+
+    #[test]
+    fn health_ttl_outlasts_the_recheck_period() {
+        assert!(HEALTH_TTL > RECHECK_PERIOD);
     }
 
     #[test]
@@ -302,7 +319,7 @@ mod tests {
         assert_eq!(r.select(t0).unwrap().id, "local-lmstudio");
         r.mark_ok("local-ollama", t0, vec![], vec![], 0);
         assert_eq!(r.select(t0).unwrap().id, "local-ollama");
-        assert!(r.select(t0 + Duration::from_secs(11)).is_none());
+        assert!(r.select(t0 + HEALTH_TTL + Duration::from_secs(1)).is_none());
     }
 
     #[test]

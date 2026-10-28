@@ -14,3 +14,9 @@ Measured on the M1 (8 GB) with Ollama 0.40 and qwen2.5:3b, through the real pipe
 Filler removal before the LLM: "Um, so, uh, hello there." → "So, hello there." (raw column), "Hello there." after Clean.
 
 Not verified by a person yet: the LAN path against the RX 9070 PC (built and unit-tested with a fake server; needs the PC on), the Re-polish control and the Polish settings page by hand in the panel, pasting into an app (Accessibility is not granted on the dev Mac, so every run ended in "Copied (paste blocked)").
+
+## Final review (fresh reviewer) and fix pass
+
+Two Critical and seven Important findings, all fixed with a failing test first: the preamble stripper deleted the first line of Code and Bullets replies; adding a LAN endpoint ran the blocking HTTP client on a tokio worker (debug-build panic); disabled endpoints vanished from the list; a false "unreachable" notice for auto-detected runtimes; the timeout was per candidate instead of per dictation; the cold-start grace applied globally and warm-ups could pile up; a lone code fence panicked the pipeline thread; Ask answers were truncated; health flickered for the length of each probe pass. Two minors promoted and fixed: the Mac's idle timer unloaded a remote Ollama's model; "10 mm" lost its unit to the filler list.
+
+Deferred minors and rulings are listed in the session summary and in `.superpowers` history (git log carries the commits).
