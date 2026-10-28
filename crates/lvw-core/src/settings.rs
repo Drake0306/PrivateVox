@@ -46,6 +46,8 @@ pub struct Settings {
     pub activation: Activation,
     pub ptt: HotkeyBinding,
     pub toggle: HotkeyBinding,
+    /// Undo the last paste (sends the app's undo keystroke within the undo window).
+    pub undo: HotkeyBinding,
     pub hold_threshold_ms: u64,
     pub microphone: Option<String>,
     pub spoken_languages: Vec<String>,
@@ -67,6 +69,7 @@ impl Default for Settings {
             activation: Activation::PushToTalk,
             ptt: HotkeyBinding { combo: None, modifier: Some(ModifierKey::RightOption) },
             toggle: HotkeyBinding { combo: Some("Ctrl+Shift+Space".to_string()), modifier: None },
+            undo: HotkeyBinding { combo: Some("Ctrl+Shift+Z".to_string()), modifier: None },
             hold_threshold_ms: 300,
             microphone: None,
             spoken_languages: vec!["en".to_string()],
@@ -142,6 +145,7 @@ mod tests {
         assert!(matches!(s.ptt.modifier, Some(ModifierKey::RightOption)));
         assert_eq!(s.toggle.combo.as_deref(), Some("Ctrl+Shift+Space"));
         assert_eq!(s.toggle.modifier, None);
+        assert_eq!(s.undo.combo.as_deref(), Some("Ctrl+Shift+Z"));
         assert_eq!(s.hold_threshold_ms, 300);
         assert_eq!(s.microphone, None);
         assert_eq!(s.spoken_languages, vec!["en".to_string()]);

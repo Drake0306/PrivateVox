@@ -88,6 +88,7 @@ pub fn run() {
             commands::delete_model,
             commands::benchmark_model,
             commands::memory_report,
+            commands::check_combo,
             commands::debug_start,
             commands::debug_stop,
             commands::debug_cancel,

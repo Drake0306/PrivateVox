@@ -67,6 +67,8 @@ pub enum Cmd {
     SwitchModel(String),
     /// Benchmark a model: switches to it if needed, decodes the fixed clip, reports speed.
     Benchmark(String),
+    /// Undo the last paste (hotkey).
+    Undo,
     Quit,
 }
 
@@ -289,6 +291,7 @@ impl Coordinator {
                         self.benchmark(&id);
                     }
                 }
+                Cmd::Undo => self.undo(),
                 Cmd::PauseAndUnload => {
                     self.machine.force_idle();
                     self.cancel();
@@ -422,6 +425,11 @@ impl Coordinator {
             }
             Err(e) => self.error(&format!("Benchmark failed: {e}")),
         }
+    }
+
+    /// Undo last paste: filled in by the undo task.
+    fn undo(&mut self) {
+        log::info!("undo requested (not implemented yet)");
     }
 
     fn tick(&mut self, gen: u64, tx: &Sender<Cmd>) {

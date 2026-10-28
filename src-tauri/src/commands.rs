@@ -13,8 +13,22 @@ pub fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
 
 /// Validates, saves and applies new settings. Invalid settings are rejected and the old ones kept.
 #[tauri::command]
-pub fn set_settings(state: State<'_, AppState>, settings: Settings) -> Result<(), String> {
-    apply_settings(&state.settings, &state.paths.settings(), settings)?;
+pub fn set_settings(app: AppHandle, state: State<'_, AppState>, mut settings: Settings) -> Result<(), String> {
+    if let Some(c) = settings.toggle.combo.clone() {
+        settings.toggle.combo = Some(validate_combo(&c)?);
+    }
+    if let Some(c) = settings.ptt.combo.clone() {
+        settings.ptt.combo = Some(validate_combo(&c)?);
+    }
+    if let Some(c) = settings.undo.combo.clone() {
+        settings.undo.combo = Some(validate_combo(&c)?);
+    }
+    apply_settings(&state.settings, &state.paths.settings(), settings.clone())?;
+    let tx = state.tx.lock().map(|t| t.clone()).map_err(|e| e.to_string())?;
+    if let Err(e) = crate::hotkeys::install(&app, &settings, tx) {
+        log::error!("rebind hotkeys: {e}");
+        return Err(format!("Settings saved, but the hotkeys could not be registered: {e}"));
+    }
     state.send(Cmd::SettingsChanged);
     Ok(())
 }
@@ -245,6 +259,60 @@ pub fn memory_report(state: State<'_, AppState>) -> Result<lvw_core::memory::Mem
     Ok(lvw_core::memory::budget(&input))
 }
 
+/// Normalises a key combination ("ctrl+shift+space" → "Ctrl+Shift+Space") and checks the shortcut plugin
+/// can register it. A lone modifier is rejected: that is the hold key's job.
+pub fn validate_combo(combo: &str) -> Result<String, String> {
+    let mut mods: Vec<&str> = Vec::new();
+    let mut key: Option<String> = None;
+    for raw in combo.split('+') {
+        let t = raw.trim();
+        if t.is_empty() {
+            return Err("Empty key".into());
+        }
+        let lower = t.to_lowercase();
+        let m = match lower.as_str() {
+            "ctrl" | "control" => Some("Ctrl"),
+            "shift" => Some("Shift"),
+            "alt" | "option" => Some("Alt"),
+            "cmd" | "command" | "super" | "meta" => Some("Cmd"),
+            "cmdorctrl" | "commandorcontrol" => Some("CmdOrCtrl"),
+            _ => None,
+        };
+        match m {
+            Some(m) => {
+                if !mods.contains(&m) {
+                    mods.push(m);
+                }
+            }
+            None => {
+                if key.is_some() {
+                    return Err("Only one non-modifier key is allowed".into());
+                }
+                let mut chars = lower.chars();
+                let cap = match chars.next() {
+                    Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+                    None => String::new(),
+                };
+                key = Some(cap);
+            }
+        }
+    }
+    let Some(key) = key else {
+        return Err("A key combination needs a key besides modifiers (use the hold key for a lone modifier)".into());
+    };
+    let parts: Vec<&str> = mods.iter().copied().chain(std::iter::once(key.as_str())).collect();
+    let normalised = parts.join("+");
+    normalised
+        .parse::<tauri_plugin_global_shortcut::Shortcut>()
+        .map_err(|e| format!("Unrecognised key combination {normalised:?}: {e}"))?;
+    Ok(normalised)
+}
+
+#[tauri::command]
+pub fn check_combo(combo: String) -> Result<String, String> {
+    validate_combo(&combo)
+}
+
 /// Shared by the command and its test: validate, persist, swap in.
 pub fn apply_settings(current: &std::sync::Mutex<Settings>, path: &std::path::Path, new: Settings) -> Result<(), String> {
     new.validate()?;
@@ -309,5 +377,20 @@ mod memory_tests {
         // With turbo resident (703 MB counted in `used`), others must exclude it.
         let input2 = build_memory_input(&store, "large-v3-turbo", 703_000_000, (16_000_000_000, 4_000_000_000), 0);
         assert_eq!(input2.used_by_others, 4_000_000_000 - 703_000_000);
+    }
+}
+
+#[cfg(test)]
+mod hotkey_tests {
+    use super::*;
+
+    #[test]
+    fn validate_combo_accepts_ctrl_shift_space_and_rejects_bare_modifier() {
+        assert_eq!(validate_combo("Ctrl+Shift+Space").unwrap(), "Ctrl+Shift+Space");
+        assert_eq!(validate_combo("ctrl+shift+space").unwrap(), "Ctrl+Shift+Space", "normalised casing");
+        assert!(validate_combo("Alt").is_err(), "a lone modifier needs the hold-key path, not a combo");
+        assert!(validate_combo("").is_err());
+        assert!(validate_combo("Banana+Q").is_err());
+        assert_eq!(validate_combo("CmdOrCtrl+Shift+Z").unwrap(), "CmdOrCtrl+Shift+Z");
     }
 }

@@ -63,8 +63,9 @@
     <form class="settings" id="settings">
       <label>Activation <select name="activation"><option value="push_to_talk">Push to talk (hold)</option><option value="toggle">Toggle (tap to start, tap to stop)</option><option value="hold_or_toggle">Hold or toggle (tap locks on)</option></select></label>
       <label>Hold threshold (ms) <input name="hold_threshold_ms" type="number" min="100" max="2000"></label>
-      <label>Hold key <span id="pttHint" class="muted" style="font-size:13px;color:var(--fg)"></span></label>
-      <label>Toggle key <span id="toggleHint" class="muted" style="font-size:13px;color:var(--fg)"></span></label>
+      <label>Hold key (push to talk) <select name="ptt_modifier"><option value="right_option">Right ⌥ Option</option><option value="left_option">Left ⌥ Option</option><option value="right_command">Right ⌘ Command</option><option value="right_control">Right ⌃ Control</option><option value="">Use a key combination instead</option></select><input name="ptt_combo" placeholder="e.g. Ctrl+Alt+Space" hidden><button type="button" data-rec="ptt_combo" hidden>Record key</button></label>
+      <label>Toggle key <span style="display:flex;gap:6px"><input name="toggle_combo" placeholder="Ctrl+Shift+Space" style="flex:1"><button type="button" data-rec="toggle_combo">Record key</button></span></label>
+      <label>Undo last paste <span style="display:flex;gap:6px"><input name="undo_combo" placeholder="Ctrl+Shift+Z" style="flex:1"><button type="button" data-rec="undo_combo">Record key</button></span></label>
       <label>Microphone <select name="microphone"><option value="">System default</option></select></label>
       <label>Paste method <select name="paste_method"><option value="clipboard">Clipboard + ⌘V</option><option value="type">Type the text</option></select></label>
       <label>Unload model after idle (minutes, 1–240) <input name="idle_unload_minutes" type="number" min="1" max="240"></label>
@@ -73,7 +74,7 @@
       <label>Maximum clip (seconds) <input name="max_clip_seconds" type="number" min="10" max="600"></label>
       <div style="grid-column:1/-1;display:flex;gap:8px;align-items:center"><button class="primary" type="submit">Save</button><span id="settingsErr" class="err"></span><span id="settingsOk" class="muted"></span></div>
     </form>
-    <p class="muted">Hotkeys are rebound from this file for now: edit <code>settings.json</code> in the data folder, then Save here to apply. A key picker arrives with the next plan.</p>
+    <p class="muted">Changes apply on Save without a restart. "Record key" captures the next combination you press.</p>
   </section>
 
   <section id="tab-setup" hidden>
@@ -161,7 +162,23 @@
     async function loadSettings() {
       const s = await inv('get_settings'); const f = $('settings');
       f.activation.value = s.activation; f.hold_threshold_ms.value = s.hold_threshold_ms;
-      $('pttHint').textContent = hint(s.ptt); $('toggleHint').textContent = hint(s.toggle);
+      f.ptt_modifier.value = s.ptt.modifier || ''; f.ptt_combo.value = s.ptt.combo || '';
+      const pttMode = () => { const combo = !f.ptt_modifier.value; f.ptt_combo.hidden = !combo; f.querySelector('[data-rec=ptt_combo]').hidden = !combo; };
+      f.ptt_modifier.onchange = pttMode; pttMode();
+      f.toggle_combo.value = s.toggle.combo || ''; f.undo_combo.value = (s.undo && s.undo.combo) || '';
+      f.querySelectorAll('[data-rec]').forEach(b => b.onclick = () => {
+        const input = f[b.dataset.rec]; const old = b.textContent; b.textContent = 'Press keys…';
+        const onKey = (e) => {
+          e.preventDefault();
+          if (['Control','Shift','Alt','Meta'].includes(e.key)) return; // wait for the non-modifier
+          const parts = []; if (e.ctrlKey) parts.push('Ctrl'); if (e.altKey) parts.push('Alt'); if (e.shiftKey) parts.push('Shift'); if (e.metaKey) parts.push('Cmd');
+          let k = e.code.replace(/^Key/, '').replace(/^Digit/, ''); if (k === 'Space') k = 'Space';
+          parts.push(k);
+          window.removeEventListener('keydown', onKey, true); b.textContent = old;
+          inv('check_combo', { combo: parts.join('+') }).then(v => { input.value = v; $('settingsErr').textContent = ''; }).catch(err => { $('settingsErr').textContent = String(err); });
+        };
+        window.addEventListener('keydown', onKey, true);
+      });
       const mics = await inv('list_input_devices'); f.microphone.innerHTML = '<option value="">System default</option>' + mics.map(m => `<option>${esc(m)}</option>`).join('');
       f.microphone.value = s.microphone || ''; f.paste_method.value = s.paste_method;
       f.idle_never.checked = s.idle_unload_minutes == null; f.idle_unload_minutes.value = s.idle_unload_minutes ?? 10; f.idle_unload_minutes.disabled = f.idle_never.checked;
@@ -170,6 +187,8 @@
       f.onsubmit = async (e) => {
         e.preventDefault(); $('settingsErr').textContent = ''; $('settingsOk').textContent = '';
         const n = { ...s, activation: f.activation.value, hold_threshold_ms: +f.hold_threshold_ms.value, microphone: f.microphone.value || null, paste_method: f.paste_method.value,
+          ptt: f.ptt_modifier.value ? { modifier: f.ptt_modifier.value, combo: null } : { modifier: null, combo: f.ptt_combo.value || null },
+          toggle: { modifier: null, combo: f.toggle_combo.value || null }, undo: { modifier: null, combo: f.undo_combo.value || null },
           idle_unload_minutes: f.idle_never.checked ? null : +f.idle_unload_minutes.value, post_release_ms: +f.post_release_ms.value, max_clip_seconds: +f.max_clip_seconds.value };
         try { await inv('set_settings', { settings: n }); $('settingsOk').textContent = 'Saved'; } catch (err) { $('settingsErr').textContent = String(err); }
       };

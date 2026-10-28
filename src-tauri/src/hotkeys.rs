@@ -72,6 +72,18 @@ pub fn install(app: &AppHandle, settings: &Settings, tx: Sender<Cmd>) -> anyhow:
     let mut modifiers: Vec<(rdev::Key, Binding)> = Vec::new();
     bind(app, &settings.ptt, Binding::Ptt, &tx, &mut modifiers)?;
     bind(app, &settings.toggle, Binding::Toggle, &tx, &mut modifiers)?;
+    if let Some(c) = &settings.undo.combo {
+        let shortcut: Shortcut = c.parse().map_err(|e| anyhow::anyhow!("undo hotkey {c:?}: {e}"))?;
+        let utx = tx.clone();
+        app.global_shortcut()
+            .on_shortcut(shortcut, move |_app, _sc, event| {
+                if event.state == ShortcutState::Pressed {
+                    let _ = utx.send(Cmd::Undo);
+                }
+            })
+            .map_err(|e| anyhow::anyhow!("register undo {c:?}: {e}"))?;
+        log::info!("hotkey registered: {c} -> Undo");
+    }
     if !modifiers.is_empty() {
         if !input_monitoring_granted(true) {
             log::warn!("Input Monitoring not granted: the modifier-only hotkey will not fire until it is");
