@@ -2296,6 +2296,7 @@ dependencies = [
  "anyhow",
  "arboard",
  "enigo",
+ "hound",
  "log",
  "lvw-core",
  "lvw-engine",

@@ -6,10 +6,35 @@
 <link rel="stylesheet" href="lvw.css">
 </head>
 <body class="pill-body">
-  <div class="pill idle" id="pill" data-tauri-drag-region>
-    <span class="dot" data-tauri-drag-region></span>
-    <span class="label" id="label" data-tauri-drag-region>Hold ⌥ to talk</span>
+  <div class="pill idle" id="pill" data-tauri-drag-region title="Click for history">
+    <span class="dot" id="dot" data-tauri-drag-region></span>
+    <span class="bars" id="bars" hidden><i></i><i></i><i></i><i></i><i></i></span>
+    <span class="spin" id="spin" hidden></span>
+    <span class="label" id="label" data-tauri-drag-region>LVW</span>
   </div>
   <script src="lvw.js"></script>
+  <script>
+    const pill = document.getElementById('pill'), label = document.getElementById('label');
+    const bars = document.getElementById('bars'), spin = document.getElementById('spin'), dot = document.getElementById('dot');
+    function render(s) {
+      pill.className = 'pill ' + s.state;
+      bars.hidden = s.state !== 'listening';
+      spin.hidden = !(s.state === 'transcribing' || s.state === 'loading_model');
+      dot.hidden = !(s.state === 'idle' || s.state === 'listening' || s.state === 'error' || s.state === 'pasted');
+      switch (s.state) {
+        case 'idle': label.textContent = s.hotkey_hint; break;
+        case 'listening': label.textContent = s.seconds.toFixed(0) + 's'; document.documentElement.style.setProperty('--lvl', Math.max(0, Math.min(1, (s.level_db + 60) / 60))); break;
+        case 'transcribing': label.textContent = 'Transcribing…'; break;
+        case 'loading_model': label.textContent = s.progress == null ? 'Loading model…' : 'Downloading ' + Math.round(s.progress * 100) + '%'; break;
+        case 'pasted': label.textContent = s.preview; break;
+        case 'error': label.textContent = s.message; break;
+      }
+    }
+    window.lvw.listen('pill-state', render);
+    let dragged = false, downAt = 0;
+    pill.addEventListener('mousedown', () => { downAt = Date.now(); dragged = false; });
+    pill.addEventListener('mousemove', (e) => { if (e.buttons) dragged = true; });
+    pill.addEventListener('mouseup', () => { if (!dragged && Date.now() - downAt < 400) window.lvw.invoke('open_panel'); });
+  </script>
 </body>
 </html>

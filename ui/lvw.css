@@ -11,3 +11,11 @@ body.pill-body { background: transparent; display: flex; align-items: center; ju
 .pill.listening .dot { background: var(--rec); box-shadow: 0 0 0 4px rgba(229,72,77,.3); }
 .pill .label { overflow: hidden; text-overflow: ellipsis; }
 body.panel-body { background: var(--bg); color: var(--fg); padding: 16px; }
+.pill .bars { display: inline-flex; gap: 2px; align-items: center; height: 16px; }
+.pill .bars i { display: block; width: 3px; border-radius: 2px; background: var(--pill-fg); height: calc(4px + 12px * var(--lvl, 0)); transition: height .08s; }
+.pill .bars i:nth-child(2), .pill .bars i:nth-child(4) { height: calc(6px + 10px * var(--lvl, 0)); }
+.pill .spin { width: 12px; height: 12px; border: 2px solid rgba(255,255,255,.25); border-top-color: var(--pill-fg); border-radius: 50%; animation: spin .8s linear infinite; flex: none; }
+.pill.pasted .dot { background: var(--ok); }
+.pill.error .dot { background: var(--warn); }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .pill .spin { animation: none; } }
