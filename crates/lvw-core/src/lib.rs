@@ -1,6 +1,7 @@
 //! LVW core: pure logic shared by the app and the engine worker. No Tauri dependency.
 
 pub mod audio;
+pub mod hotkeys;
 pub mod settings;
 pub mod vad;
 
