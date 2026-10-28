@@ -1,0 +1,5 @@
+cold: wall 13369 ms | load 10730 ms | prompt_eval 718 ms (104 tok) | eval 1849 ms (51 tok)
+    Can you send me the updated deck before the 3 pm call? I folded the review comments into the spec and pushed a new revision this morning. Two points are still open: the retry budget and who owns the on-call rota next wee
+warm: wall 1950 ms | load 1 ms | prompt_eval 39 ms (104 tok) | eval 1862 ms (51 tok)
+    Can you send me the updated deck before the 3 pm call? I folded the review comments into the spec and pushed a new revision this morning. Two points are still open: the retry budget and who owns the on-call rota next wee
+loaded: qwen2.5:3b size_vram MB 2164

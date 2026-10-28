@@ -99,7 +99,7 @@ Core ML is not faster than Metal on this M1 for the turbo encoder (3.2 vs 2.8 s 
 4. Language ID: v1 defaults to one spoken language (no detection cost). Multi-language users get Whisper's own detection on a short head with reduced audio context, which is cheap; a separate identifier model is not needed in v1.
 5. transcribe-cpp remains documented as the alternative engine behind the `Engine` trait if Parakeet or streaming models are wanted later.
 
-**Default decode settings (turbo, "Fast" tier):** greedy, `best_of 1`, flash attention on, language fixed from the spoken-languages setting, `no_context` on, `suppress_blank` and `suppress_nst` on, timestamps off, 4 threads on the M1, `audio_ctx` chosen from clip length (policy pinned by the sweep below). **"Accuracy" tier:** large-v3, same settings, full audio context, still greedy (beam 5 cost 15–70% for no measured gain).
+**Default decode settings (turbo, "Fast" tier):** greedy, `best_of 1`, flash attention on, language fixed from the spoken-languages setting, `no_context` on, `suppress_blank` and `suppress_nst` on, timestamps off, 4 threads on the M1, `audio_ctx` from clip length: `clamp(round_up_64(1500 × (seconds + 2) / 30), 768, 1500)` with a repetition guard (sweep below). **"Accuracy" tier:** large-v3, same settings, full audio context, still greedy (beam 5 cost 15–70% for no measured gain).
 
 **Core ML:** not built into v1.
 
@@ -109,10 +109,32 @@ Core ML is not faster than Metal on this M1 for the turbo encoder (3.2 vs 2.8 s 
 
 **Measured latencies (replace §11 targets on this M1 8 GB):** turbo, fast tier, one-word clip ~1.1 s, 7.5 s clip ~1.3 s, 30 s clip ~4.8 s (flash, full context). First Metal shader compile after install ~12 s, once.
 
-## Audio-context sweep (turbo, whisper-rs)
+## Audio-context sweep (turbo, whisper-rs, greedy, en)
 
-_pending_
+`audio_ctx` is the number of encoder positions whisper.cpp runs; 1500 covers the full 30 s window, so 768 covers about 15 s and 512 about 10 s. Run while Ollama held a 2.2 GB model resident, so absolute times are slightly worse than the quiet turbo table; the pattern is what matters.
 
-## LLM polish round trip (Ollama, qwen2.5:3b, this M1)
+| audio_ctx | 7.5 s clip (ms, warm) | text | 0.7 s clip (ms, warm) | text |
+|---|---|---|---|---|
+| 1500 (full) | 2766 | correct | 2567 | correct |
+| 1024 | 1579 | correct | 1400 | correct |
+| 768 | 1258 | correct | 1078 | correct |
+| 768 + flash | 1112 | correct | 986 | correct |
+| 512 | 832 | correct | 6104 | **"Hello." repeated 7 times** |
+| 384 | 670 | correct | 9104 | **"Hello." repeated 14 times** |
 
-_pending_
+Two things follow. The context can go well below the clip's duration without harming text on a 7.5 s clip (384 still correct, 4× faster than full). But a very short clip with a small context hallucinates a repetition loop and takes longer than the full context did. 768 is the lowest value that was correct on everything tested.
+
+**Policy for v1:** `audio_ctx = clamp(round_up_64(1500 × (clip_seconds + 2) / 30), 768, 1500)`. So anything under 13 s runs at 768 (about 1.0–1.3 s on this M1 with flash attention), 20 s at about 1100, 28 s and above at 1500. Plus a repetition guard: if the output contains the same word four or more times in a row, re-run once at 1500 before accepting it. The lower floor (512) is left for a later experiment with more clip lengths between 1 and 7 s.
+
+## LLM polish round trip (Ollama 0.40, qwen2.5:3b Q4_K_M, this M1)
+
+Clean-mode system prompt, 104 prompt tokens (a 43-word filler-laden transcript), 51 output tokens.
+
+| Run | Wall | Model load | Prompt eval | Generation |
+|---|---|---|---|---|
+| Cold (model not loaded) | 13369 ms | 10730 ms | 718 ms | 1849 ms |
+| Warm | 1950 ms | 1 ms | 39 ms | 1862 ms |
+
+Resident size reported by Ollama: 2164 MB. Generation runs at ~27 tokens/s, so a 100-word cleaned output costs about 4–5 s on this machine and a 40-word one about 2 s. The 10.7 s cold load is the number that makes §18's LLM warm-up (fire on hotkey down, keep-alive while Whisper is warm) a requirement rather than a nicety on the 8 GB Mac.
+
+**Memory interaction on 8 GB:** with the 3B model resident (2.2 GB) the next whisper-rs context load took 8.6 s instead of 0.5 s. Turbo plus a 3B polish model fits, but the two should be loaded once and kept, not churned; the idle-unload timer must unload both together (§18.1 and §18 "Keeping the LLM warm" already say so).

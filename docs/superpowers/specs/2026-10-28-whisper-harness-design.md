@@ -214,7 +214,7 @@ These are planning targets, not acceptance criteria. **[call]** The engine spike
 | Transcribe 7.5 s clip, turbo, fast tier | **~1.3 s measured on M1** (flash attention + reduced audio context); one-word clip ~1.1 s; 30 s clip ~4.8 s |
 | Transcribe 7.5 s clip, large-v3 | **~3.6 s measured on M1** (flash, full context); ~2.1 s with reduced context |
 | LLM polish, 100 words, 7–8B on RX 9070 | < 2 s |
-| LLM polish, 100 words, 3B on M1 | < 2 s |
+| LLM polish, 3B (qwen2.5:3b) on M1 | **measured: 2.0 s warm for a 40-word output, ~27 tokens/s, so ~4–5 s for 100 words; 13.4 s cold (10.7 s model load)** — the warm-up rule in §4.3 step 5 is mandatory on the 8 GB Mac |
 | Paste + clipboard restore | < 200 ms |
 | Idle RAM of the shell with model unloaded | < 80 MB |
 
@@ -341,7 +341,7 @@ What Handy does: collapse stutters (three or more repeats of a word to one), rem
 
 How it lands: a `text` module runs these before history save and before the LLM (shorter prompt, fewer tokens). Raw mode gets them for free; a toggle turns filler removal off. **[call]**
 
-Own tuning to test in the spike, not from Handy: greedy decoding versus beam size 5 (whisper.cpp's CLI default) for the "fast" tier, flash attention on Metal, and reduced `audio_ctx` for clips under 10 s. These need whisper-rs (§18.2) and are measured, not assumed. **[call]**
+Own tuning, measured in the spike (2026-10-28): greedy beats beam 5 (15–70% faster, no accuracy difference on the test clips); flash attention is −20%; reduced `audio_ctx` is the biggest single win on short clips. **Policy:** `audio_ctx = clamp(round_up_64(1500 × (clip_seconds + 2) / 30), 768, 1500)`, plus a repetition guard that re-runs once at 1500 if a word repeats four or more times in a row (contexts below 768 produced "Hello." loops on a sub-second clip). **[measured]**
 
 ### 18.10 Hotkey state machine
 What Handy does: one pure state machine drives all activation modes. Hold-or-toggle uses a 300 ms threshold: a release before it is a tap that locks recording on, a release after it is push-to-talk. Key-up is deferred by a short grace so a synthesized auto-repeat press cannot end a hold. A press that arrives while the previous dictation is still processing is remembered and starts recording when the pipeline drains, so toggle parity never desyncs. The "Recording" state is entered optimistically and rolled back if the mic fails to open.
