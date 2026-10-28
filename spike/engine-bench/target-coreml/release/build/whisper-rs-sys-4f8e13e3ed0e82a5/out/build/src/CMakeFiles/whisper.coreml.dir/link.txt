@@ -1,0 +1,2 @@
+/usr/bin/ar qc libwhisper.coreml.a "CMakeFiles/whisper.coreml.dir/coreml/whisper-compat.m.o" "CMakeFiles/whisper.coreml.dir/coreml/whisper-encoder.mm.o" "CMakeFiles/whisper.coreml.dir/coreml/whisper-encoder-impl.m.o"
+/usr/bin/ranlib libwhisper.coreml.a

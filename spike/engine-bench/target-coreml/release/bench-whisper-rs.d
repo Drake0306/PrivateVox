@@ -1,0 +1,1 @@
+/Users/roy/Developer/Github/localVoiceWisper/spike/engine-bench/target-coreml/release/bench-whisper-rs: /Users/roy/Developer/Github/localVoiceWisper/spike/engine-bench/bench-whisper-rs/src/main.rs /Users/roy/Developer/Github/localVoiceWisper/spike/engine-bench/common/src/lib.rs

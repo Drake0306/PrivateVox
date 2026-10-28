@@ -7,3 +7,6 @@ edition = "2021"
 common = { path = "../common" }
 anyhow = "1"
 whisper-rs = { version = "0.16", features = ["metal"] }
+
+[features]
+coreml = ["whisper-rs/coreml"]

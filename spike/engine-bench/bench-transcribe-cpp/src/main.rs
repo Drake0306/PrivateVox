@@ -35,7 +35,7 @@ fn main() -> Result<()> {
     let load_ms = t.elapsed().as_millis();
     let backend = model.backend();
     eprintln!("loaded in {load_ms} ms on backend {backend}, rss {:.0} MB", rss_mb());
-    if backend != "metal" {
+    if !(backend.to_lowercase().contains("metal") || backend.starts_with("MTL")) {
         bail!("expected metal backend, got {backend}");
     }
     let mut session = model.session()?;
