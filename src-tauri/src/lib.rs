@@ -1,5 +1,8 @@
 //! LVW desktop app: pill and panel windows, tray, hotkeys, pipeline, lifecycle.
 
+pub mod frontmost;
+pub mod paste;
+
 use tauri_plugin_log::{Target, TargetKind};
 
 /// Builds and runs the Tauri app. Never returns.
