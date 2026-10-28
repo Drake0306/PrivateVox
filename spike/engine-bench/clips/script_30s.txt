@@ -3,3 +3,5 @@ I folded the review comments into the spec and pushed a new revision this mornin
 Two points are still open: the retry budget, and who owns the on-call rota next week.
 We are building the shell with Tauri, so the user interface stays plain HTML.
 The benchmark clip is thirty seconds long and contains seventy five words, give or take.
+If the Vulkan build is slower than expected, we fall back to the CPU path and measure again.
+Please add the numbers to the results table and push before you leave.
