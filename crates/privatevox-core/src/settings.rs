@@ -165,7 +165,7 @@ impl Default for Settings {
             auto_stop_silence_secs: Some(2),
             app_modes: Vec::new(),
             sound_cues: true,
-            live_preview: crate::preview::Preview::Auto,
+            live_preview: crate::preview::Preview::On,
             spoken_commands: true,
         }
     }
@@ -346,5 +346,13 @@ mod tests {
         assert!(s.validate().unwrap_err().contains("port"));
         s.host.port = 8765;
         assert!(s.validate().is_ok());
+    }
+
+    #[test]
+    fn live_preview_defaults_on() {
+        // Owner's call 2026-10-29: the preview is the feature people look for first, so it is on until switched off.
+        let s = Settings::default();
+        assert_eq!(s.live_preview, crate::preview::Preview::On);
+        assert!(crate::preview::preview_enabled(s.live_preview, false, 8 * 1024 * 1024 * 1024));
     }
 }

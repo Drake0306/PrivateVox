@@ -49,7 +49,7 @@ mod tests {
         assert!(preview_enabled(Preview::Auto, false, 16 * GB), "auto: on with 16 GB or more");
         assert!(preview_enabled(Preview::On, false, 4 * GB));
         assert!(!preview_enabled(Preview::Off, true, 64 * GB));
-        assert_eq!(crate::settings::Settings::default().live_preview, Preview::Auto);
+        assert_eq!(crate::settings::Settings::default().live_preview, Preview::On, "owner's call 2026-10-29");
     }
 
     #[test]
