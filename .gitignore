@@ -12,3 +12,4 @@ spike/engine-bench/target/
 target/
 src-tauri/gen/
 src-tauri/icon-src.png
+spike/engine-bench/target-coreml/
