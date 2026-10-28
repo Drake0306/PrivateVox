@@ -62,6 +62,8 @@ pub enum Cmd {
     PauseAndUnload,
     /// The input stream failed while recording.
     CaptureError(String),
+    /// Switch the resident Whisper model (deferred while a recording is in progress).
+    SwitchModel(String),
     Quit,
 }
 
@@ -80,8 +82,12 @@ pub struct Deps {
     pub capture: Box<dyn CaptureSource>,
     pub paste: Box<dyn PasteSink>,
     pub model_path: Option<PathBuf>,
+    /// Where model files live; switching resolves ids against the catalog here.
+    pub model_dir: PathBuf,
     pub frontmost: Box<dyn Fn() -> Option<String> + Send>,
     pub idle: Arc<Mutex<IdleTimer>>,
+    /// Called after a successful switch with the new id and its load info (persist settings, record stats).
+    pub on_model_switched: Box<dyn Fn(&str, LoadInfo) + Send>,
 }
 
 struct Recording {
@@ -101,6 +107,8 @@ pub struct Coordinator {
     queued: Option<Vec<f32>>,
     generation: u64,
     machine: Machine,
+    /// A switch requested while recording; applied once the pipeline drains.
+    pending_switch: Option<String>,
 }
 
 fn hotkey_hint(s: &Settings) -> String {
@@ -120,7 +128,44 @@ impl Coordinator {
             let s = settings.lock().map(|s| s.clone()).unwrap_or_default();
             Machine::new(s.activation, Duration::from_millis(s.hold_threshold_ms))
         };
-        Coordinator { deps, settings, store, vad, emit, recording: None, queued: None, generation: 0, machine }
+        Coordinator { deps, settings, store, vad, emit, recording: None, queued: None, generation: 0, machine, pending_switch: None }
+    }
+
+    /// Unloads the current model and loads `id` from the models directory. Refused if the file is missing.
+    fn switch_model(&mut self, id: &str) {
+        let Some(path) = lvw_core::models::model_file(&self.deps.model_dir, id) else {
+            self.error(&format!("Unknown model {id}"));
+            return;
+        };
+        if !path.exists() {
+            self.error(&format!("Model {id} is not downloaded yet"));
+            return;
+        }
+        (self.emit)(PillState::LoadingModel { progress: None });
+        let flash = self.settings().flash_attention;
+        let result = self.deps.engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| {
+            if e.is_loaded() {
+                e.unload()?;
+            }
+            e.load(&path, flash)
+        });
+        match result {
+            Ok(info) => {
+                self.deps.model_path = Some(path);
+                if let Ok(mut s) = self.settings.lock() {
+                    s.model_id = id.to_string();
+                }
+                if let Ok(mut t) = self.deps.idle.lock() {
+                    t.touch(Instant::now());
+                }
+                (self.deps.on_model_switched)(id, info);
+                log::info!("switched to {id} in {:?} ({} MB resident)", info.duration, info.resident_bytes / 1_000_000);
+                self.idle();
+            }
+            Err(e) => {
+                self.error(&format!("Model {id} failed to load: {e}"));
+            }
+        }
     }
 
     fn apply(&mut self, effect: Effect, tx: &Sender<Cmd>) {
@@ -197,6 +242,14 @@ impl Coordinator {
                 Cmd::ModelUnloaded => {
                     if self.recording.is_none() {
                         self.idle();
+                    }
+                }
+                Cmd::SwitchModel(id) => {
+                    if self.recording.is_some() || matches!(self.machine.stage(), lvw_core::hotkeys::Stage::Processing) {
+                        log::info!("model switch to {id} deferred until the pipeline is idle");
+                        self.pending_switch = Some(id);
+                    } else {
+                        self.switch_model(&id);
                     }
                 }
                 Cmd::PauseAndUnload => {
@@ -315,6 +368,11 @@ impl Coordinator {
         if matches!(self.machine.stage(), lvw_core::hotkeys::Stage::Processing) {
             let effect = self.machine.on(Input::PipelineDone, Instant::now());
             self.apply(effect, tx);
+        }
+        if self.recording.is_none() {
+            if let Some(id) = self.pending_switch.take() {
+                self.switch_model(&id);
+            }
         }
     }
 
@@ -491,15 +549,19 @@ mod tests {
         text: String,
         loaded: bool,
         load_calls: Arc<Mutex<u32>>,
+        loads: Arc<Mutex<Vec<PathBuf>>>,
+        unloads: Arc<Mutex<u32>>,
     }
     impl Engine for FakeEngine {
-        fn load(&mut self, _model: &Path, _flash: bool) -> anyhow::Result<LoadInfo> {
+        fn load(&mut self, model: &Path, _flash: bool) -> anyhow::Result<LoadInfo> {
             *self.load_calls.lock().unwrap() += 1;
+            self.loads.lock().unwrap().push(model.to_path_buf());
             std::thread::sleep(self.load_delay);
             self.loaded = true;
             Ok(LoadInfo { duration: self.load_delay, resident_bytes: 1 })
         }
         fn unload(&mut self) -> anyhow::Result<()> {
+            *self.unloads.lock().unwrap() += 1;
             self.loaded = false;
             Ok(())
         }
@@ -552,6 +614,8 @@ mod tests {
         states: Arc<Mutex<Vec<PillState>>>,
         pasted: Arc<Mutex<Vec<String>>>,
         store: Arc<Mutex<Store>>,
+        settings: Arc<Mutex<Settings>>,
+        switched: Arc<Mutex<Vec<String>>>,
         tx: std::sync::mpsc::Sender<Cmd>,
         join: std::thread::JoinHandle<()>,
         _dir: tempfile::TempDir,
@@ -566,20 +630,29 @@ mod tests {
         let vad = Vad::new(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../resources/models/ggml-silero-v5.1.2.bin")).unwrap();
         let states = Arc::new(Mutex::new(Vec::new()));
         let pasted = Arc::new(Mutex::new(Vec::new()));
+        let models_dir = dir.path().join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+        for m in lvw_core::models::catalog() {
+            std::fs::write(models_dir.join(m.file), b"stub").unwrap();
+        }
+        let switched = Arc::new(Mutex::new(Vec::new()));
+        let sw = switched.clone();
         let deps = Deps {
             engine: Arc::new(Mutex::new(Box::new(engine) as Box<dyn Engine>)),
             capture: Box::new(capture),
             paste: Box::new(FakePaste(pasted.clone())),
-            model_path: Some(PathBuf::from("/fake/model.bin")),
+            model_path: Some(models_dir.join("ggml-large-v3-turbo-q5_0.bin")),
+            model_dir: models_dir,
             frontmost: Box::new(|| Some("TestApp".into())),
             idle: Arc::new(Mutex::new(lvw_core::lifecycle::IdleTimer::new(None))),
+            on_model_switched: Box::new(move |id, _info| sw.lock().unwrap().push(id.to_string())),
         };
         let st = states.clone();
-        let coord = Coordinator::new(deps, settings, store.clone(), vad, Box::new(move |s| st.lock().unwrap().push(s)));
+        let coord = Coordinator::new(deps, settings.clone(), store.clone(), vad, Box::new(move |s| st.lock().unwrap().push(s)));
         let (tx, rx) = channel();
         let tx2 = tx.clone();
         let join = std::thread::spawn(move || coord.run(rx, tx2));
-        Harness { states, pasted, store, tx, join, _dir: dir }
+        Harness { states, pasted, store, settings, switched, tx, join, _dir: dir }
     }
 
     fn kinds(states: &[PillState]) -> Vec<&'static str> {
@@ -605,7 +678,7 @@ mod tests {
 
     #[test]
     fn pipeline_records_transcribes_pastes_and_stores() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         let (states, pasted, count) = run_once(h);
         assert_eq!(pasted, vec!["Hello.".to_string()]);
         assert_eq!(count, 1);
@@ -616,7 +689,7 @@ mod tests {
 
     #[test]
     fn pipeline_discards_clips_under_300ms() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default() }, FakeCapture { pcm: vec![0.3; 2_000], fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default() }, FakeCapture { pcm: vec![0.3; 2_000], fail: false, die_after_start: false });
         let (states, pasted, count) = run_once(h);
         assert!(pasted.is_empty());
         assert_eq!(count, 0);
@@ -625,7 +698,7 @@ mod tests {
 
     #[test]
     fn pipeline_reports_silent_mic() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default() }, FakeCapture { pcm: vec![0.0; 16_000], fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default() }, FakeCapture { pcm: vec![0.0; 16_000], fail: false, die_after_start: false });
         let (states, pasted, count) = run_once(h);
         assert!(pasted.is_empty());
         assert_eq!(count, 0);
@@ -634,7 +707,7 @@ mod tests {
 
     #[test]
     fn pipeline_queues_clip_until_engine_loaded() {
-        let h = harness(FakeEngine { load_delay: Duration::from_millis(300), text: "Hello.".into(), loaded: false, load_calls: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::from_millis(300), text: "Hello.".into(), loaded: false, load_calls: Default::default(), loads: Default::default(), unloads: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         let (states, pasted, _) = run_once(h);
         assert_eq!(pasted, vec!["Hello.".to_string()]);
         assert!(kinds(&states).contains(&"loading_model"), "{:?}", kinds(&states));
@@ -643,7 +716,7 @@ mod tests {
     #[test]
     fn direct_stop_after_hotkey_start_keeps_hotkeys_working() {
         use lvw_core::hotkeys::{Binding, Input};
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::Key(Input::Down(Binding::Ptt))).unwrap();
         h.tx.send(Cmd::Stop).unwrap(); // what the clip cap, the tray or the debug button sends
         h.tx.send(Cmd::Key(Input::Up(Binding::Ptt))).unwrap();
@@ -658,7 +731,7 @@ mod tests {
 
     #[test]
     fn pipeline_reports_device_loss_mid_recording() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: true });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: true });
         h.tx.send(Cmd::Start).unwrap();
         std::thread::sleep(Duration::from_millis(2300));
         h.tx.send(Cmd::Quit).unwrap();
@@ -672,7 +745,7 @@ mod tests {
     #[test]
     fn pipeline_starts_model_load_while_recording() {
         let calls = Arc::new(Mutex::new(0u32));
-        let h = harness(FakeEngine { load_delay: Duration::from_millis(200), text: "Hello.".into(), loaded: false, load_calls: calls.clone() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::from_millis(200), text: "Hello.".into(), loaded: false, load_calls: calls.clone(), loads: Default::default(), unloads: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::Start).unwrap();
         std::thread::sleep(Duration::from_millis(80));
         assert_eq!(*calls.lock().unwrap(), 1, "load must begin at Start, not after Stop");
@@ -684,8 +757,54 @@ mod tests {
     }
 
     #[test]
+    fn switch_unloads_then_loads_and_updates_settings() {
+        let loads: Arc<Mutex<Vec<PathBuf>>> = Default::default();
+        let unloads: Arc<Mutex<u32>> = Default::default();
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: unloads.clone() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        h.tx.send(Cmd::SwitchModel("large-v3".into())).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+        assert_eq!(*unloads.lock().unwrap() >= 1, true, "old model unloaded first");
+        let last = loads.lock().unwrap().last().cloned().unwrap();
+        assert!(last.ends_with("ggml-large-v3-q5_0.bin"), "{last:?}");
+        assert_eq!(h.settings.lock().unwrap().model_id, "large-v3");
+        assert_eq!(h.switched.lock().unwrap().clone(), vec!["large-v3".to_string()]);
+        assert!(kinds(&h.states.lock().unwrap()).contains(&"loading_model"));
+    }
+
+    #[test]
+    fn switch_during_recording_is_deferred() {
+        let loads: Arc<Mutex<Vec<PathBuf>>> = Default::default();
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::SwitchModel("large-v3".into())).unwrap();
+        std::thread::sleep(Duration::from_millis(150));
+        assert!(loads.lock().unwrap().iter().all(|p| !p.ends_with("ggml-large-v3-q5_0.bin")), "switch must wait while recording");
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+        assert_eq!(h.pasted.lock().unwrap().clone(), vec!["Hello.".to_string()], "the clip is not lost");
+        assert!(loads.lock().unwrap().iter().any(|p| p.ends_with("ggml-large-v3-q5_0.bin")), "switch applied after the pipeline drained");
+        assert_eq!(h.settings.lock().unwrap().model_id, "large-v3");
+    }
+
+    #[test]
+    fn switch_to_missing_model_is_refused() {
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        std::fs::remove_file(h._dir.path().join("models/ggml-distil-large-v3.bin")).unwrap();
+        h.tx.send(Cmd::SwitchModel("distil-large-v3".into())).unwrap();
+        std::thread::sleep(Duration::from_millis(150));
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+        assert_eq!(h.settings.lock().unwrap().model_id, "large-v3-turbo");
+        assert!(h.states.lock().unwrap().iter().any(|s| matches!(s, PillState::Error { message } if message.contains("not downloaded"))));
+    }
+
+    #[test]
     fn pipeline_reports_capture_error() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default() }, FakeCapture { pcm: vec![], fail: true, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default() }, FakeCapture { pcm: vec![], fail: true, die_after_start: false });
         let (states, pasted, count) = run_once_waiting(h, Duration::from_millis(2300));
         assert!(pasted.is_empty());
         assert_eq!(count, 0);

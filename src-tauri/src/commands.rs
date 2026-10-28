@@ -57,15 +57,9 @@ pub fn permissions(state: State<'_, AppState>) -> Permissions {
 
 /// Starts (or restarts) the download of the configured model.
 #[tauri::command]
-pub fn download_model(app: AppHandle, state: State<'_, AppState>) {
+pub fn download_model(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let model_id = state.settings.lock().map(|s| s.model_id.clone()).unwrap_or_default();
-    let tx = state.tx.lock().map(|t| t.clone());
-    if let Ok(tx) = tx {
-        let h = app.clone();
-        crate::models::ensure_model(app.clone(), &model_id, &state.paths.models_dir(), tx, move |s| {
-            let _ = h.emit("pill-state", &s);
-        });
-    }
+    download_model_by_id(app, state, model_id)
 }
 
 #[tauri::command]
@@ -122,6 +116,90 @@ pub fn debug_cancel(state: State<'_, AppState>) {
     state.send(Cmd::Cancel);
 }
 
+/// Removes a model's file (and any partial download). The active model cannot be deleted.
+pub fn delete_model_file(models_dir: &std::path::Path, id: &str, active_id: &str) -> Result<(), String> {
+    if id == active_id {
+        return Err("That model is in use; switch to another one first".into());
+    }
+    let path = lvw_core::models::model_file(models_dir, id).ok_or_else(|| format!("unknown model {id}"))?;
+    let part = models_dir.join(format!("{}.part", path.file_name().and_then(|f| f.to_str()).unwrap_or("")));
+    let _ = std::fs::remove_file(&part);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[derive(serde::Serialize)]
+pub struct ModelRow {
+    pub id: String,
+    pub label: String,
+    pub file: String,
+    pub bytes: u64,
+    pub quant: String,
+    pub english_only: bool,
+    pub downloaded: bool,
+    pub downloading: bool,
+    pub active: bool,
+    pub stats: Option<lvw_core::store::ModelStats>,
+}
+
+#[tauri::command]
+pub fn list_models(state: State<'_, AppState>) -> Result<Vec<ModelRow>, String> {
+    let active = state.settings.lock().map(|s| s.model_id.clone()).map_err(|e| e.to_string())?;
+    let store = state.store.lock().map_err(|e| e.to_string())?;
+    let dir = state.paths.models_dir();
+    let downloading = state.downloading.lock().map(|d| d.clone()).unwrap_or_default();
+    Ok(lvw_core::models::catalog()
+        .into_iter()
+        .map(|m| ModelRow {
+            id: m.id.into(),
+            label: m.label.into(),
+            file: m.file.into(),
+            bytes: m.bytes,
+            quant: m.quant.into(),
+            english_only: m.english_only,
+            downloaded: lvw_core::download::is_present(&m.spec, &dir),
+            downloading: downloading.contains(m.id),
+            active: m.id == active,
+            stats: store.model_stats(m.id).ok().flatten(),
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub fn switch_model(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    lvw_core::models::info(&id).ok_or_else(|| format!("unknown model {id}"))?;
+    state.send(Cmd::SwitchModel(id));
+    Ok(())
+}
+
+#[tauri::command]
+pub fn download_model_by_id(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
+    lvw_core::models::info(&id).ok_or_else(|| format!("unknown model {id}"))?;
+    if let Ok(mut d) = state.downloading.lock() {
+        if !d.insert(id.clone()) {
+            return Ok(()); // already running
+        }
+    }
+    let tx = state.tx.lock().map(|t| t.clone()).map_err(|e| e.to_string())?;
+    let h = app.clone();
+    let active = state.settings.lock().map(|s| s.model_id.clone()).unwrap_or_default();
+    crate::models::ensure_model(app.clone(), &id, &state.paths.models_dir(), tx, active == id, move |s| {
+        let _ = h.emit("pill-state", &s);
+    });
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_model(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let active = state.settings.lock().map(|s| s.model_id.clone()).map_err(|e| e.to_string())?;
+    delete_model_file(&state.paths.models_dir(), &id, &active)?;
+    let _ = app.emit("models-changed", ());
+    Ok(())
+}
+
 /// Shared by the command and its test: validate, persist, swap in.
 pub fn apply_settings(current: &std::sync::Mutex<Settings>, path: &std::path::Path, new: Settings) -> Result<(), String> {
     new.validate()?;
@@ -135,6 +213,20 @@ pub fn apply_settings(current: &std::sync::Mutex<Settings>, path: &std::path::Pa
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[test]
+    fn delete_active_model_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("ggml-large-v3-q5_0.bin");
+        std::fs::write(&f, b"stub").unwrap();
+        std::fs::write(dir.path().join("ggml-large-v3-q5_0.bin.part"), b"p").unwrap();
+        assert!(delete_model_file(dir.path(), "large-v3", "large-v3").is_err());
+        assert!(f.exists());
+        delete_model_file(dir.path(), "large-v3", "large-v3-turbo").unwrap();
+        assert!(!f.exists());
+        assert!(!dir.path().join("ggml-large-v3-q5_0.bin.part").exists());
+        assert!(delete_model_file(dir.path(), "nope", "large-v3-turbo").is_err());
+    }
 
     #[test]
     fn set_settings_rejects_invalid_and_keeps_old() {

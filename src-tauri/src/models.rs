@@ -5,7 +5,7 @@ use lvw_core::download::{download_blocking, is_present, ModelSpec, TURBO_Q5_0};
 use serde::Serialize;
 use std::path::Path;
 use std::sync::mpsc::Sender;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DownloadProgress {
@@ -17,22 +17,33 @@ pub struct DownloadProgress {
 }
 
 pub fn spec_for(model_id: &str) -> Option<ModelSpec> {
-    match model_id {
-        "large-v3-turbo" => Some(TURBO_Q5_0),
-        "large-v3" => Some(lvw_core::download::LARGE_V3_Q5_0),
-        _ => None,
-    }
+    lvw_core::models::info(model_id).map(|m| m.spec)
 }
 
 /// Downloads the model for `model_id` into `models_dir` on a background thread, emitting `model-download`
 /// events and pill progress, then tells the pipeline the model is ready.
-pub fn ensure_model(app: AppHandle, model_id: &str, models_dir: &Path, tx: Sender<Cmd>, emit_pill: impl Fn(PillState) + Send + 'static) {
+pub fn ensure_model(app: AppHandle, model_id: &str, models_dir: &Path, tx: Sender<Cmd>, activate: bool, emit_pill: impl Fn(PillState) + Send + 'static) {
     let Some(spec) = spec_for(model_id) else {
         log::error!("unknown model id {model_id}");
         return;
     };
+    let finish = {
+        let app = app.clone();
+        let id = model_id.to_string();
+        move || {
+            if let Some(state) = app.try_state::<crate::state::AppState>() {
+                if let Ok(mut d) = state.downloading.lock() {
+                    d.remove(&id);
+                }
+            }
+            let _ = app.emit("models-changed", ());
+        }
+    };
     if is_present(&spec, models_dir) {
-        let _ = tx.send(Cmd::ModelReady(models_dir.join(spec.file)));
+        if activate {
+            let _ = tx.send(Cmd::ModelReady(models_dir.join(spec.file)));
+        }
+        finish();
         return;
     }
     let dir = models_dir.to_path_buf();
@@ -54,7 +65,11 @@ pub fn ensure_model(app: AppHandle, model_id: &str, models_dir: &Path, tx: Sende
             match result {
                 Ok(path) => {
                     let _ = app.emit("model-download", DownloadProgress { model: spec.id.into(), received: spec.bytes, total: spec.bytes, done: true, error: None });
-                    let _ = tx.send(Cmd::ModelReady(path));
+                    if activate {
+                        let _ = tx.send(Cmd::ModelReady(path));
+                    } else {
+                        emit_pill(PillState::Idle { hotkey_hint: String::new() });
+                    }
                 }
                 Err(e) => {
                     log::error!("model download failed: {e:#}");
@@ -62,6 +77,7 @@ pub fn ensure_model(app: AppHandle, model_id: &str, models_dir: &Path, tx: Sende
                     emit_pill(PillState::Error { message: "Model download failed; open the panel to retry".into() });
                 }
             }
+            finish();
         })
         .expect("download thread");
 }

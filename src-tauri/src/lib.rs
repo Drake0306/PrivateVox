@@ -81,6 +81,10 @@ pub fn run() {
             commands::open_privacy,
             commands::permissions,
             commands::download_model,
+            commands::list_models,
+            commands::switch_model,
+            commands::download_model_by_id,
+            commands::delete_model,
             commands::debug_start,
             commands::debug_stop,
             commands::debug_cancel,
@@ -140,13 +144,30 @@ pub fn run() {
 
             let idle = Arc::new(Mutex::new(IdleTimer::new(current.idle_unload_minutes)));
             let paster = Paster::new(current.paste_method, Duration::from_millis(150), paths.clipboard_backup());
+            let switched_settings = settings.clone();
+            let switched_store = store.clone();
+            let switched_paths = paths.clone();
+            let switched_app = app.handle().clone();
             let deps = Deps {
                 engine: engine.clone(),
                 capture: Box::new(MicCapture::new(settings.clone())),
                 paste: Box::new(SystemPaste::new(paster)),
                 model_path,
+                model_dir: paths.models_dir(),
                 frontmost: Box::new(frontmost::frontmost_app_name),
                 idle: idle.clone(),
+                on_model_switched: Box::new(move |id, info| {
+                    if let Ok(s) = switched_settings.lock() {
+                        if let Err(e) = s.save(&switched_paths.settings()) {
+                            log::warn!("save settings after switch: {e}");
+                        }
+                    }
+                    if let Ok(mut st) = switched_store.lock() {
+                        let stats = lvw_core::store::ModelStats { load_ms: Some(info.duration.as_millis() as u64), speed_x: None, mem_bytes: Some(info.resident_bytes) };
+                        let _ = st.set_model_stats(id, &stats);
+                    }
+                    let _ = switched_app.emit("models-changed", ());
+                }),
             };
 
             let last_state = Arc::new(laststate::LastState::default());
@@ -238,11 +259,11 @@ pub fn run() {
             if deps_model_missing {
                 let h = app.handle().clone();
                 let h2 = h.clone();
-                models::ensure_model(h, &current.model_id, &paths.models_dir(), tx.clone(), move |s| {
+                models::ensure_model(h, &current.model_id, &paths.models_dir(), tx.clone(), true, move |s| {
                     let _ = h2.emit("pill-state", &s);
                 });
             }
-            app.manage(AppState { paths, settings, store, tx: Mutex::new(tx), stale_lock: stale, last_state });
+            app.manage(AppState { paths, settings, store, tx: Mutex::new(tx), stale_lock: stale, last_state, downloading: Mutex::new(Default::default()) });
             Ok(())
         })
         .on_window_event(|window, event| {
