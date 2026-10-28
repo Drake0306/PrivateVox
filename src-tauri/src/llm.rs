@@ -39,6 +39,7 @@ fn apply_settings_inner(p: &Polisher, s: &Settings, user_change: bool) {
     p.set_prompts(s.mode_prompts.clone());
     p.set_enabled(s.polish_enabled);
     let turned_off = was_enabled && !s.polish_enabled;
+    let enabled_now = s.polish_enabled;
     if let Some(p) = SHARED.get() {
         let p = p.clone();
         let spawned = std::thread::Builder::new().name("privatevox-llm-apply".into()).spawn(move || {
@@ -51,7 +52,7 @@ fn apply_settings_inner(p: &Polisher, s: &Settings, user_change: bool) {
             } else {
                 p.unload_unused(Instant::now());
                 // Polish is on after a user change: load the model now so the strip shows it and the first dictation is quick.
-                if user_change && s.polish_enabled {
+                if user_change && enabled_now {
                     p.warm(Instant::now());
                 }
             }
