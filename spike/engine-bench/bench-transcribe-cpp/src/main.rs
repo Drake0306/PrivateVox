@@ -60,7 +60,7 @@ fn main() -> Result<()> {
                         engine: "transcribe-cpp",
                         model: model_name.clone(),
                         clip: name.clone(),
-                        config,
+                        config: config.clone(),
                         run,
                         load_ms,
                         decode_ms,
