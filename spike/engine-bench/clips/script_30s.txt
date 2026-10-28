@@ -1,0 +1,5 @@
+Can you send me the updated deck before the three p.m. call?
+I folded the review comments into the spec and pushed a new revision this morning.
+Two points are still open: the retry budget, and who owns the on-call rota next week.
+We are building the shell with Tauri, so the user interface stays plain HTML.
+The benchmark clip is thirty seconds long and contains seventy five words, give or take.

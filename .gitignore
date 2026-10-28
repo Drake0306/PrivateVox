@@ -3,3 +3,6 @@ node_modules/
 target/
 dist/
 *.log
+spike/engine-bench/clips/*.wav
+spike/engine-bench/clips/*.aiff
+spike/engine-bench/target/
