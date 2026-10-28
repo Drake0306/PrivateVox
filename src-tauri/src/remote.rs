@@ -58,7 +58,7 @@ pub fn spawn_health_loop(state: Arc<RemoteState>, app: AppHandle) {
         .name("privatevox-remote-health".into())
         .spawn(move || {
             let mut failures: u32 = 0;
-            let mut last_reported: Option<bool> = None;
+            let mut last_reported: Option<bool> = Some(false); // a host that is down at launch is not news
             loop {
                 let mut wait = HEALTH_PERIOD;
                 if state.enabled.load(Ordering::SeqCst) {
@@ -84,7 +84,7 @@ pub fn spawn_health_loop(state: Arc<RemoteState>, app: AppHandle) {
                         }
                     }
                 } else {
-                    last_reported = None;
+                    last_reported = Some(false);
                 }
                 std::thread::sleep(wait);
             }

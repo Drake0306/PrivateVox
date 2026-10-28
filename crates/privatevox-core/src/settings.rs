@@ -200,6 +200,9 @@ impl Settings {
             let url = self.remote.base_url.as_deref().map(str::trim).filter(|u| !u.is_empty()).ok_or_else(|| "Enter the host's address, like 192.168.1.20:8765".to_string())?;
             crate::polish::normalize_base_url(url).map_err(|e| format!("Host address: {e}"))?;
         }
+        if !(0.0..=0.5).contains(&self.dictionary_strictness) {
+            return Err("Dictionary strictness must be between 0 and 0.5".into());
+        }
         if self.host.enabled && self.host.port < 1024 {
             return Err("Host port must be 1024 or higher".into());
         }
@@ -295,6 +298,15 @@ mod tests {
         assert!(s.remote.base_url.is_none());
         assert_eq!(s.remote.label, "PC");
         assert!(s.machine_name.is_none());
+    }
+
+    #[test]
+    fn validate_bounds_dictionary_strictness() {
+        let mut s = Settings::default();
+        s.dictionary_strictness = 1.0;
+        assert!(s.validate().unwrap_err().contains("strictness"));
+        s.dictionary_strictness = 0.5;
+        assert!(s.validate().is_ok());
     }
 
     #[test]

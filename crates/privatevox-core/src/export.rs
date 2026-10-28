@@ -56,6 +56,12 @@ pub fn to_json(rows: &[Dictation]) -> String {
 /// limit (hard wrap when a run of text has no sentence end at all).
 pub fn paragraphs(text: &str, words_per: usize) -> Vec<String> {
     let words: Vec<&str> = text.split_whitespace().collect();
+    if words.is_empty() {
+        return Vec::new();
+    }
+    if words_per == 0 {
+        return vec![words.join(" ")];
+    }
     let mut out = Vec::new();
     let mut start = 0;
     while start < words.len() {
@@ -63,7 +69,7 @@ pub fn paragraphs(text: &str, words_per: usize) -> Vec<String> {
         let mut cut = end_limit;
         if end_limit < words.len() {
             // Prefer the last sentence end within the window, but not so early that paragraphs become tiny.
-            let min_cut = start + words_per / 2;
+            let min_cut = start + (words_per / 2).max(1);
             if let Some(i) = (min_cut..=end_limit).rev().find(|&i| words[i - 1].ends_with(['.', '!', '?'])) {
                 cut = i;
             }
@@ -149,5 +155,7 @@ mod tests {
         assert_eq!(paragraphs("short text.", 80), vec!["short text.".to_string()]);
         assert_eq!(paragraphs("no punctuation at all but many words ".repeat(30).trim(), 80).len(), 3, "without sentence ends, hard-wrap at the limit");
         assert!(paragraphs("", 80).is_empty());
+        assert_eq!(paragraphs("one two three", 1).len(), 3, "a tiny limit still terminates");
+        assert_eq!(paragraphs("one two three", 0).len(), 1, "zero means no splitting");
     }
 }

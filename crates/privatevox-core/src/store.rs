@@ -212,9 +212,9 @@ impl Store {
         Ok(())
     }
 
-    /// A re-run from the kept clip replaces Whisper's text.
-    pub fn update_raw(&mut self, id: i64, raw_text: &str) -> Result<()> {
-        self.conn.execute("UPDATE dictations SET raw_text = ?1 WHERE id = ?2", params![raw_text, id])?;
+    /// A re-run from the kept clip replaces Whisper's text and records which model produced it.
+    pub fn update_raw(&mut self, id: i64, raw_text: &str, model: &str) -> Result<()> {
+        self.conn.execute("UPDATE dictations SET raw_text = ?1, model = ?2 WHERE id = ?3", params![raw_text, model, id])?;
         Ok(())
     }
 
@@ -468,8 +468,10 @@ INSERT INTO dictations(created_at_ms, mode, model, duration_ms, raw_text, status
         assert!(s.get(id).unwrap().unwrap().audio_path.is_none());
         s.set_audio_path(id, Some("/tmp/clips/1.wav")).unwrap();
         assert_eq!(s.get(id).unwrap().unwrap().audio_path.as_deref(), Some("/tmp/clips/1.wav"));
-        s.update_raw(id, "second pass").unwrap();
-        assert_eq!(s.get(id).unwrap().unwrap().raw_text, "second pass");
+        s.update_raw(id, "second pass", "large-v3").unwrap();
+        let d = s.get(id).unwrap().unwrap();
+        assert_eq!(d.raw_text, "second pass");
+        assert_eq!(d.model, "large-v3");
         s.set_audio_path(id, None).unwrap();
         assert!(s.list(10, 0).unwrap()[0].audio_path.is_none());
     }

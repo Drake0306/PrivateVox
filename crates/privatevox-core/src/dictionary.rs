@@ -4,6 +4,11 @@
 const MAX_PROMPT_WORDS: usize = 150;
 /// Tokens shorter than this are never rewritten: too many real words are within one edit of each other.
 const MIN_TOKEN_LEN: usize = 4;
+/// A near-miss (one or more edits) is only rewritten for words at least this long; "tailor"/"Taylor" at six letters
+/// is one edit apart and both are real words.
+const MIN_FUZZY_LEN: usize = 8;
+/// Halves that are everyday words are never glued into a name ("Alex and" is not "Alexander").
+const STOP_WORDS: &[&str] = &["a", "an", "the", "and", "or", "but", "i", "me", "my", "we", "he", "she", "it", "is", "as", "at", "be", "by", "do", "go", "if", "in", "no", "of", "on", "so", "to", "up", "us", "you", "are", "was", "sir", "yes", "not", "for", "its", "our", "his", "her", "him", "had", "has", "can", "did", "get", "got", "one", "two", "all", "any", "now", "new", "old", "out", "off", "too", "way", "who", "why", "how"];
 
 /// The prompt Whisper sees before the audio: the words as a plain list, which biases their spelling.
 pub fn initial_prompt(words: &[String]) -> Option<String> {
@@ -47,6 +52,42 @@ fn with_case_of(original: &str, word: &str) -> String {
     }
 }
 
+/// American Soundex of the ASCII letters of `s` (non-ASCII letters are kept as-is in the first position and
+/// otherwise ignored); two spellings of the same name agree, "career" and "Carter" do not.
+pub fn soundex(s: &str) -> String {
+    let letters: Vec<char> = s.chars().filter(|c| c.is_alphabetic()).map(|c| c.to_ascii_uppercase()).collect();
+    let Some(&first) = letters.first() else { return String::new() };
+    let code = |c: char| match c {
+        'B' | 'F' | 'P' | 'V' => '1',
+        'C' | 'G' | 'J' | 'K' | 'Q' | 'S' | 'X' | 'Z' => '2',
+        'D' | 'T' => '3',
+        'L' => '4',
+        'M' | 'N' => '5',
+        'R' => '6',
+        _ => '0',
+    };
+    let mut out = String::from(first);
+    let mut last = code(first);
+    for &c in &letters[1..] {
+        let d = code(c);
+        if d != '0' && d != last {
+            out.push(d);
+        }
+        if c != 'H' && c != 'W' {
+            last = d;
+        }
+        if out.len() == 4 {
+            break;
+        }
+    }
+    while out.len() < 4 {
+        out.push('0');
+    }
+    out
+}
+
+/// Spelling of the same word? Case-only differences count; otherwise the token must be long, close in length, within
+/// the edit budget and sound the same.
 fn close_enough(candidate: &str, word: &str, strictness: f32) -> bool {
     if strictness <= 0.0 || candidate.is_empty() {
         return false;
@@ -56,23 +97,26 @@ fn close_enough(candidate: &str, word: &str, strictness: f32) -> bool {
         return false; // exact: nothing to fix
     }
     let (la, lb) = (a.chars().count(), b.chars().count());
-    if la.abs_diff(lb) > 2 {
+    if la < MIN_FUZZY_LEN || la.abs_diff(lb) > 2 {
         return false;
     }
     let dist = strsim::levenshtein(&a, &b) as f32;
-    dist / la.max(lb) as f32 <= strictness
+    dist / la.max(lb) as f32 <= strictness && soundex(&a) == soundex(&b)
 }
 
-/// A split word ("Charge B") matches when the join is close, or is a clear prefix of the dictionary word.
-fn join_matches(joined: &str, word: &str, strictness: f32) -> bool {
-    let (a, b) = (joined.to_lowercase(), word.to_lowercase());
-    if a == b {
-        return true;
+fn is_stop_word(t: &str) -> bool {
+    let l = t.to_lowercase();
+    STOP_WORDS.contains(&l.as_str())
+}
+
+/// A split word ("Charge Bee") matches when the two halves joined are the dictionary word, or a long near-miss of it.
+/// Neither half may be an everyday word.
+fn join_matches(first: &str, second: &str, word: &str, strictness: f32) -> bool {
+    if is_stop_word(first) || is_stop_word(second) {
+        return false;
     }
-    if close_enough(joined, word, strictness) {
-        return true;
-    }
-    b.starts_with(&a) && a.chars().count() * 10 >= b.chars().count() * 7
+    let joined = format!("{first}{second}");
+    joined.eq_ignore_ascii_case(word) || close_enough(&joined, word, strictness)
 }
 
 /// Fix near-misses of dictionary words in `text`. Exact matches, short tokens and words of a different length class
@@ -91,8 +135,8 @@ pub fn correct(text: &str, words: &[String], strictness: f32) -> String {
         if i + 1 < tokens.len() && !t.core.is_empty() && t.suffix.is_empty() {
             let n = split_token(tokens[i + 1]);
             if !n.core.is_empty() && n.prefix.is_empty() && t.core.chars().all(|c| c.is_alphabetic()) && n.core.chars().all(|c| c.is_alphabetic()) {
-                let joined = format!("{}{}", t.core, n.core);
-                if let Some(w) = words.iter().find(|w| join_matches(&joined, w, strictness)) {
+                if let Some(w) = words.iter().find(|w| join_matches(t.core, n.core, w, strictness)) {
+                    let joined = format!("{}{}", t.core, n.core);
                     out.push(format!("{}{}{}", t.prefix, with_case_of(&joined, w), n.suffix));
                     i += 2;
                     continue;
@@ -136,7 +180,7 @@ mod tests {
 
     #[test]
     fn fuzzy_fixes_near_misses() {
-        assert_eq!(correct("I used Charge B and Kuber netes today", &w(&["ChargeBee", "Kubernetes"]), 0.18), "I used ChargeBee and Kubernetes today");
+        assert_eq!(correct("I used Charge Bee and Kuber netes today", &w(&["ChargeBee", "Kubernetes"]), 0.18), "I used ChargeBee and Kubernetes today");
         assert_eq!(correct("talk to chargebe about it", &w(&["ChargeBee"]), 0.18), "talk to ChargeBee about it");
         assert_eq!(correct("the kubernets cluster", &w(&["Kubernetes"]), 0.18), "the Kubernetes cluster");
     }
@@ -171,5 +215,34 @@ mod tests {
         let s = crate::settings::Settings::default();
         assert!(s.dictionary.is_empty());
         assert!((s.dictionary_strictness - 0.18).abs() < 1e-6);
+    }
+
+    #[test]
+    fn ordinary_words_near_names_are_left_alone() {
+        assert_eq!(correct("her career took off", &w(&["Carter"]), 0.18), "her career took off");
+        assert_eq!(correct("the tailor fixed it", &w(&["Taylor"]), 0.18), "the tailor fixed it");
+        assert_eq!(correct("add a clause to the contract", &w(&["Claude"]), 0.18), "add a clause to the contract");
+        assert_eq!(correct("he plays the organ", &w(&["Morgan"]), 0.18), "he plays the organ");
+        assert_eq!(correct("the border guard", &w(&["Boarder"]), 0.18), "the border guard");
+    }
+
+    #[test]
+    fn real_words_are_never_glued_into_a_name() {
+        assert_eq!(correct("I asked Alex and Sam", &w(&["Alexander"]), 0.18), "I asked Alex and Sam");
+        assert_eq!(correct("yes sir I will", &w(&["Siri"]), 0.18), "yes sir I will");
+        assert_eq!(correct("I told Alex a joke", &w(&["Alexa"]), 0.18), "I told Alex a joke");
+        assert_eq!(correct("got an A on the test", &w(&["Ana"]), 0.18), "got an A on the test");
+        // Genuine splits still join.
+        assert_eq!(correct("open Charge Bee now", &w(&["ChargeBee"]), 0.18), "open ChargeBee now");
+        assert_eq!(correct("the Kuber netes cluster", &w(&["Kubernetes"]), 0.18), "the Kubernetes cluster");
+    }
+
+    #[test]
+    fn long_near_misses_still_fix_with_matching_sound() {
+        assert_eq!(correct("talk to chargebe", &w(&["ChargeBee"]), 0.18), "talk to ChargeBee");
+        assert_eq!(correct("the kubernets cluster", &w(&["Kubernetes"]), 0.18), "the Kubernetes cluster");
+        assert_eq!(correct("ask Alexandar", &w(&["Alexander"]), 0.18), "ask Alexander");
+        assert_eq!(soundex("ChargeBee"), soundex("chargebe"));
+        assert_ne!(soundex("career"), soundex("Carter"));
     }
 }

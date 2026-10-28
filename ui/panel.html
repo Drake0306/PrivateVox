@@ -56,7 +56,7 @@
           <h3>Dictation</h3>
           <div class="inline" style="align-items:flex-start;gap:18px;flex-wrap:wrap">
             <div style="min-width:260px;flex:1">
-              <div class="muted" style="margin-bottom:4px">Spoken languages <span style="font-weight:400">· one means no detection; several means Whisper picks per clip from this list</span></div>
+              <div class="muted" style="margin-bottom:4px">Spoken languages <span style="font-weight:400">· one means no detection; several means Whisper picks per clip from this list</span> · <span id="langCount"></span></div>
               <input type="search" id="langFilter" placeholder="Filter languages…" aria-label="Filter languages" style="font:14px var(--body);padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--fg);width:100%;margin-bottom:6px">
               <div id="langList" style="max-height:160px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:6px 10px;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:2px 10px"></div>
             </div>
@@ -203,7 +203,7 @@
       el.classList.toggle('pinned', !!d.pinned);
       el.innerHTML = `<div class="meta">${d.pinned ? '<span class="pinbadge" title="Pinned: stays at the top">📌 pinned</span>' : ''}${kindChip(d.engine_kind)}<span>${esc(ago(d.created_at_ms))}</span><span>${esc(d.app_name || 'unknown app')}</span><span>${esc(modeLabel(d.mode))}</span><span>${esc(short(d.model))}</span><span>${dur(d.duration_ms)}</span>${d.status !== 'ok' ? `<span>${esc(d.status.replace('_', ' '))}</span>` : ''}${d.polish_status === 'unpolished' ? '<span class="unp" title="No LLM answered; this is Whisper\'s text">unpolished</span>' : ''}</div>
         <div class="txt" tabindex="0">${esc(text)}</div>
-        <div class="acts"><button class="btn" data-copy>Copy</button><button class="btn" data-edit>Edit</button><button class="btn" data-raw ${hasRaw ? '' : 'disabled title="Same as Whisper\'s text"'}>Raw</button><span class="repol"><select data-mode aria-label="Mode for re-polish" title="Mode to re-polish this row with">${rowModes.map(m => `<option value="${m.id}" ${m.id === d.mode ? 'selected' : ''}>${esc(m.label)}</option>`).join('')}</select><button class="btn" data-repolish title="Run this row through the LLM again with the chosen mode">Re-polish</button></span>${(text.length > 600 || d.duration_ms > 60000) ? '<button class="btn" data-doc title="Read the whole dictation as a document">Open as document</button>' : ''}${d.audio_path ? '<button class="btn" data-play title="Play the kept clip">▶ Play</button><span class="repol"><select data-rerun-model aria-label="Model for re-run">' + models.filter(m => m.downloaded).map(m => `<option value="${m.id}" ${m.id === d.model ? 'selected' : ''}>${esc(short(m.id))}</option>`).join('') + '</select><button class="btn" data-rerun title="Decode the kept clip again with this model">Re-run</button></span>' : ''}<button class="btn ${d.pinned ? 'active' : ''}" data-pin title="${d.pinned ? 'Unpin: back to its place in time' : 'Pin: keep at the top'}">${d.pinned ? 'Pinned' : 'Pin'}</button><button class="btn" data-del>Delete</button></div>`;
+        <div class="acts"><button class="btn" data-copy>Copy</button><button class="btn" data-edit>Edit</button><button class="btn" data-raw ${hasRaw ? '' : 'disabled title="Same as Whisper\'s text"'}>Raw</button><span class="repol"><select data-mode aria-label="Mode for re-polish" title="Mode to re-polish this row with">${rowModes.map(m => `<option value="${m.id}" ${m.id === d.mode ? 'selected' : ''}>${esc(m.label)}</option>`).join('')}</select><button class="btn" data-repolish title="Run this row through the LLM again with the chosen mode">Re-polish</button></span>${(text.length > 600 || d.duration_ms > 60000) ? '<button class="btn" data-doc title="Read the whole dictation as a document">Open as document</button>' : ''}${d.audio_path ? '<button class="btn" data-play title="Play the kept clip">▶ Play</button>' + (models.some(m => m.downloaded) ? '<span class="repol"><select data-rerun-model aria-label="Model for re-run">' + models.filter(m => m.downloaded).map(m => `<option value="${m.id}" ${m.id === d.model ? 'selected' : ''}>${esc(short(m.id))}</option>`).join('') + '</select><button class="btn" data-rerun title="Decode the kept clip again with this model">Re-run</button></span>' : '') : ''}<button class="btn ${d.pinned ? 'active' : ''}" data-pin title="${d.pinned ? 'Unpin: back to its place in time' : 'Pin: keep at the top'}">${d.pinned ? 'Pinned' : 'Pin'}</button><button class="btn" data-del>Delete</button></div>`;
       const txt = el.querySelector('.txt');
       el.querySelector('[data-copy]').onclick = async () => { try { await navigator.clipboard.writeText(txt.innerText); flash('Copied'); } catch { flash('Copy blocked'); } };
       el.querySelector('[data-del]').onclick = async () => { await inv('delete_history', { id: d.id }); loadHistory(); };
@@ -363,17 +363,21 @@
 
   // ---------- dictation settings (languages, dictionary) ----------
   let langTable = [];
-  function renderLangs(selected, filter) {
+  let selectedLangs = new Set(); // survives filtering: hidden choices are never dropped
+  function renderLangs(filter) {
     const q = (filter || '').toLowerCase();
     const rows = langTable.filter(([c, n]) => !q || n.toLowerCase().includes(q) || c.includes(q));
-    rows.sort((a, b) => (selected.includes(b[0]) - selected.includes(a[0])) || a[1].localeCompare(b[1]));
-    $('langList').innerHTML = rows.map(([c, n]) => `<label><input type="checkbox" value="${c}" ${selected.includes(c) ? 'checked' : ''}> ${esc(n)} <span class="muted">${c}</span></label>`).join('');
+    rows.sort((a, b) => (selectedLangs.has(b[0]) - selectedLangs.has(a[0])) || a[1].localeCompare(b[1]));
+    $('langList').innerHTML = rows.map(([c, n]) => `<label><input type="checkbox" value="${c}" ${selectedLangs.has(c) ? 'checked' : ''}> ${esc(n)} <span class="muted">${c}</span></label>`).join('');
+    $('langList').querySelectorAll('input').forEach(i => i.onchange = () => { if (i.checked) selectedLangs.add(i.value); else selectedLangs.delete(i.value); $('langCount').textContent = selectedLangs.size + ' selected'; });
+    $('langCount').textContent = selectedLangs.size + ' selected';
   }
   async function loadDictation() {
     const s = await inv('get_settings');
     if (!langTable.length) langTable = await inv('whisper_languages');
-    renderLangs(s.spoken_languages, $('langFilter').value);
-    $('langFilter').oninput = () => { const sel = [...$('langList').querySelectorAll('input:checked')].map(i => i.value); renderLangs(sel.length ? sel : s.spoken_languages, $('langFilter').value); };
+    selectedLangs = new Set(s.spoken_languages);
+    renderLangs($('langFilter').value);
+    $('langFilter').oninput = () => renderLangs($('langFilter').value);
     $('dictWords').value = (s.dictionary || []).join('\n');
     $('keepAudio').checked = !!s.keep_audio;
     $('dictStrict').value = Math.round((s.dictionary_strictness || 0) * 100); $('dictStrictVal').textContent = $('dictStrict').value === '0' ? 'off' : ($('dictStrict').value + '%');
@@ -381,7 +385,7 @@
   }
   $('dictationSave').onclick = async () => {
     const live = await inv('get_settings');
-    const selected = [...$('langList').querySelectorAll('input:checked')].map(i => i.value);
+    const selected = [...selectedLangs];
     const n = { ...live, spoken_languages: selected.length ? selected : live.spoken_languages, dictionary: $('dictWords').value.split('\n').map(w => w.trim()).filter(Boolean), dictionary_strictness: (+$('dictStrict').value) / 100, keep_audio: $('keepAudio').checked };
     try { await inv('set_settings', { settings: n }); $('dictationMsg').textContent = 'Saved'; flash('Dictation settings saved'); } catch (e) { $('dictationMsg').textContent = String(e); }
   };

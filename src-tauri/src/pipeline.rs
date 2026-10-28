@@ -388,8 +388,12 @@ impl Coordinator {
     }
 
     fn idle(&self) {
-        let warning = self.secure_input.then(|| "Secure input is on (a password field?). The hold key may not fire; use Ctrl+Shift+Space".to_string());
-        (self.emit)(PillState::Idle { hotkey_hint: hotkey_hint(&self.settings()), warning });
+        let settings = self.settings();
+        let warning = self.secure_input.then(|| match settings.toggle.combo.as_deref() {
+            Some(c) => format!("Secure input is on (a password field?). The hold key may not fire; use {c}"),
+            None => "Secure input is on (a password field?). The hold key may not fire until it is off".to_string(),
+        });
+        (self.emit)(PillState::Idle { hotkey_hint: hotkey_hint(&settings), warning });
     }
 
     fn error(&self, message: &str) {
@@ -882,6 +886,10 @@ impl Coordinator {
 
     /// Decode a row's kept clip again (optionally with another model), then polish it the way the row was polished.
     fn rerun(&mut self, id: i64, model: &str, tx: &Sender<Cmd>) {
+        if self.recording.is_some() {
+            self.error("Finish the dictation first, then re-run");
+            return;
+        }
         let row = match self.store.lock().map_err(|e| e.to_string()).and_then(|s| s.get(id).map_err(|e| e.to_string())) {
             Ok(Some(r)) => r,
             Ok(None) => return,
@@ -905,7 +913,8 @@ impl Coordinator {
             }
         };
         let settings = self.settings();
-        if model != settings.model_id {
+        let previous_model = settings.model_id.clone();
+        if model != previous_model {
             self.switch_model(model);
             if self.settings().model_id != model {
                 return; // switch_model reported the problem
@@ -940,7 +949,7 @@ impl Coordinator {
             None
         };
         if let Ok(mut st) = self.store.lock() {
-            let _ = st.update_raw(id, &text);
+            let _ = st.update_raw(id, &text, model);
             let _ = match polish.as_ref().map(|o| &o.status) {
                 Some(PolishStatus::Polished { endpoint_id, .. }) => st.update_polish(id, mode.id(), polish.as_ref().map(|o| o.text.as_str()), Some(endpoint_id), "ok"),
                 Some(PolishStatus::Unpolished { .. }) => st.update_polish(id, mode.id(), None, None, "unpolished"),
@@ -949,6 +958,10 @@ impl Coordinator {
         }
         (self.deps.on_history_changed)();
         (self.emit)(PillState::Pasted { preview: format!("Re-run done: {}", first_chars(polish.as_ref().map(|o| o.text.as_str()).unwrap_or(&text), 50)) });
+        // A re-run is a one-off: the model in daily use stays what it was (like a benchmark).
+        if model != previous_model {
+            self.switch_model(&previous_model);
+        }
         self.schedule_idle(tx);
     }
 
@@ -1241,7 +1254,8 @@ impl Coordinator {
         };
         // Several spoken languages: the model detected; if it picked one off the list, decode again with the first.
         let (settled_language, language_source) = settle(&settings.spoken_languages, transcript.language.as_deref());
-        if language_source == LanguageSource::Fallback && settings.spoken_languages.len() > 1 {
+        // Never on the host path: a second final chunk would corrupt the host's session; the host's pick is recorded.
+        if language_source == LanguageSource::Fallback && settings.spoken_languages.len() > 1 && !self.last_used_remote {
             let opts = DecodeOptions { language: settled_language.clone(), ..opts };
             match transcribe_routed(&self.deps.remote, &self.deps.engine, &speech, &opts, self.last_used_remote, &self.fell_back, self.deps.model_path.as_ref(), settings.flash_attention) {
                 Ok(t2) => transcript = t2,
@@ -2306,7 +2320,7 @@ mod tests {
 
     #[test]
     fn dictionary_corrects_transcript_and_prompts_whisper() {
-        let e = engine_saying("charge b works fine");
+        let e = engine_saying("charge bee works fine");
         let prompts = e.prompts.clone();
         let h = harness(e, capture_ok());
         {
@@ -2438,6 +2452,81 @@ mod tests {
         std::thread::sleep(Duration::from_millis(100));
         let states = h.states.lock().unwrap().clone();
         assert!(matches!(states.last().unwrap(), PillState::Idle { warning: None, .. }));
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn no_language_rerun_on_the_host_path() {
+        let host = FakeHost::start(HostBehaviour::Ok { text: "host text".into(), polished: "".into(), token: None });
+        let st = in_use(&host);
+        let h = harness_remote(engine_saying("local"), capture_ok(), st.clone());
+        {
+            let mut s = h.settings.lock().unwrap();
+            s.mode = Mode::Raw;
+            s.spoken_languages = vec!["de".into(), "es".into()]; // the host reports "en": off the list
+        }
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        assert_eq!(host.requests.lock().unwrap().len(), 1, "the host decoded once; no second final chunk");
+        let row = last_row(&h);
+        assert_eq!(row.raw_text, "host text");
+        assert_eq!(row.language.as_deref(), Some("de"));
+        assert!(row.timing_json.as_deref().unwrap_or("").contains("\"language_source\":\"fallback\""));
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn rerun_is_refused_while_recording() {
+        let h = harness(engine_saying("x"), capture_ok());
+        h.tx.send(Cmd::Start).unwrap();
+        std::thread::sleep(Duration::from_millis(150));
+        h.tx.send(Cmd::Rerun { id: 1, model: "large-v3-turbo".into() }).unwrap();
+        std::thread::sleep(Duration::from_millis(150));
+        let states = h.states.lock().unwrap().clone();
+        assert!(states.iter().any(|s| matches!(s, PillState::Error { message } if message.contains("Finish the dictation"))), "{:?}", kinds(&states));
+        assert!(!states.iter().any(|s| matches!(s, PillState::Transcribing)), "the live recording was not interrupted");
+        h.tx.send(Cmd::Cancel).unwrap();
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn rerun_records_the_model_used_and_restores_the_previous_model() {
+        let e = engine_saying("{n}");
+        let loads = e.loads.clone();
+        let h = harness(e, capture_ok());
+        {
+            let mut s = h.settings.lock().unwrap();
+            s.mode = Mode::Raw;
+            s.keep_audio = true;
+        }
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        let id = last_row(&h).id;
+        wait_for_clip(&h, id).expect("clip saved");
+        h.tx.send(Cmd::Rerun { id, model: "large-v3".into() }).unwrap();
+        std::thread::sleep(Duration::from_millis(800));
+        let row = h.store.lock().unwrap().get(id).unwrap().unwrap();
+        assert_eq!(row.model, "large-v3", "the row says which model produced its text");
+        assert_eq!(h.settings.lock().unwrap().model_id, "large-v3-turbo", "the active model is restored after the re-run");
+        let loaded: Vec<String> = loads.lock().unwrap().iter().map(|p| p.file_name().unwrap().to_string_lossy().to_string()).collect();
+        assert!(loaded.iter().any(|f| f.contains("large-v3-q5_0")) && loaded.last().map(|f| f.contains("turbo")).unwrap_or(false), "{loaded:?}");
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn secure_input_warning_names_the_toggle_combo() {
+        let h = harness(engine_saying("x"), capture_ok());
+        h.settings.lock().unwrap().toggle.combo = Some("Ctrl+Alt+T".into());
+        h.tx.send(Cmd::SecureInput(true)).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        let states = h.states.lock().unwrap().clone();
+        assert!(matches!(states.last().unwrap(), PillState::Idle { warning: Some(w), .. } if w.contains("Ctrl+Alt+T")), "{:?}", states.last());
         h.tx.send(Cmd::Quit).unwrap();
         h.join.join().unwrap();
     }

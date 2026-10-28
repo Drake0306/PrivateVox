@@ -112,8 +112,16 @@ impl ClipboardBackup {
 pub enum Decision {
     Wait,
     Restore,
-    /// A newer user copy is on the pasteboard, or the transcript should stay: never clobber it.
+    /// A newer user copy is on the pasteboard: never clobber it.
     Leave,
+    /// Nothing read the pasteboard before the deadline: the chord was swallowed. The transcript stays on the
+    /// clipboard (§18.11's failure mode), so the user can paste it by hand.
+    TimedOut,
+}
+
+/// Pasteboard types the promise declares: the string, plus the markers clipboard managers honour to skip it.
+pub fn promised_types() -> Vec<&'static str> {
+    vec!["public.utf8-plain-text", "org.nspasteboard.ConcealedType", "org.nspasteboard.TransientType"]
 }
 
 /// `read_after_chord`: when the target app read our promise (after the chord). Restore after `quiet` has passed
@@ -126,7 +134,7 @@ pub fn restore_decision(read_after_chord: Option<Instant>, now: Instant, quiet: 
     match read_after_chord {
         Some(t) if now.duration_since(t) >= quiet => Decision::Restore,
         Some(_) => Decision::Wait,
-        None if now >= deadline => Decision::Restore,
+        None if now >= deadline => Decision::TimedOut,
         None => Decision::Wait,
     }
 }
@@ -172,11 +180,16 @@ mod macos_receipt {
         impl PromiseOwner {
             #[unsafe(method(pasteboard:provideDataForType:))]
             fn provide(&self, pasteboard: &NSPasteboard, data_type: &NSPasteboardType) {
-                let text = NSString::from_str(&self.ivars().text);
-                let _ = pasteboard.setString_forType(&text, data_type);
-                if let Ok(mut r) = self.ivars().receipt.lock() {
-                    r.read_at = Some(Instant::now());
-                    r.reads += 1;
+                // The marker types carry no content; a read of the string type is the receipt.
+                if data_type.to_string() == "public.utf8-plain-text" {
+                    let text = NSString::from_str(&self.ivars().text);
+                    let _ = pasteboard.setString_forType(&text, data_type);
+                    if let Ok(mut r) = self.ivars().receipt.lock() {
+                        r.read_at = Some(Instant::now());
+                        r.reads += 1;
+                    }
+                } else {
+                    let _ = pasteboard.setString_forType(&NSString::from_str(""), data_type);
                 }
             }
         }
@@ -203,7 +216,9 @@ mod macos_receipt {
         let pb = NSPasteboard::generalPasteboard();
         let receipt = Arc::new(Mutex::new(Receipt::default()));
         let owner = PromiseOwner::new(text, receipt.clone());
-        let types = NSArray::from_slice(&[unsafe { NSPasteboardTypeString }]);
+        let type_strings: Vec<Retained<NSString>> = super::promised_types().iter().map(|t| NSString::from_str(t)).collect();
+        let type_refs: Vec<&NSString> = type_strings.iter().map(|t| t.as_ref()).collect();
+        let types = NSArray::from_slice(&type_refs);
         let ours = unsafe { pb.declareTypes_owner(&types, Some(owner.as_ref() as &AnyObject)) } as i64;
         let chord_at = Instant::now();
         if let Err(e) = sender.paste_chord() {
@@ -227,14 +242,17 @@ mod macos_receipt {
                             put_string(&pb, text);
                         }
                     }
-                    if read_after.is_none() {
-                        log::info!("paste: nothing read the pasteboard within {:?}; clipboard restored", RESTORE_TIMEOUT);
-                    }
                     break;
                 }
                 Decision::Leave => {
                     log::info!("paste: the pasteboard changed under us; leaving it alone");
                     break;
+                }
+                Decision::TimedOut => {
+                    put_string(&pb, text);
+                    log::warn!("paste: nothing read the pasteboard within {:?}; the transcript stays on the clipboard", RESTORE_TIMEOUT);
+                    drop(owner);
+                    return Ok(PasteOutcome::CopiedOnly(format!("nothing read the pasteboard within {} s", RESTORE_TIMEOUT.as_secs())));
                 }
             }
         }
@@ -458,11 +476,18 @@ mod tests {
     }
 
     #[test]
-    fn timeout_restores_when_nothing_read() {
+    fn timeout_leaves_the_transcript_when_nothing_read() {
         use std::time::{Duration, Instant};
         let t0 = Instant::now();
         let deadline = t0 + Duration::from_secs(3);
-        assert_eq!(restore_decision(None, deadline, Duration::from_millis(100), deadline, 7, 7), Decision::Restore, "the chord was swallowed: put the old clipboard back");
+        assert_eq!(restore_decision(None, deadline, Duration::from_millis(100), deadline, 7, 7), Decision::TimedOut, "the chord was swallowed: the transcript stays on the clipboard, never stale content pasted (§18.11)");
+    }
+
+    #[test]
+    fn concealment_marker_types_are_declared_with_the_string() {
+        let t = promised_types();
+        assert!(t.contains(&"org.nspasteboard.ConcealedType"));
+        assert!(t.contains(&"org.nspasteboard.TransientType"));
     }
 
     #[test]
