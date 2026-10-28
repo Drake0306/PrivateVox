@@ -33,7 +33,7 @@
           break;
         }
         case 'transcribing': label.textContent = 'Transcribing…'; break;
-        case 'polishing': label.textContent = 'Polishing…'; break;
+        case 'polishing': label.textContent = s.on ? 'Polishing on ' + s.on + '…' : 'Polishing…'; break;
         case 'loading_model': label.textContent = s.progress == null ? 'Loading model…' : 'Downloading ' + Math.round(s.progress * 100) + '%'; break;
         case 'pasted': label.textContent = s.preview; break;
         case 'error': label.textContent = s.message; break;

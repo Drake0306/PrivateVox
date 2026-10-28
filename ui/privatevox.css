@@ -122,3 +122,11 @@ form.settings input, form.settings select { font: 15px var(--body); padding: 8px
 .inline input[type=text], .inline input[type=number] { font: 14px var(--body); padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--fg); }
 .row .meta .unp { color: var(--warn); }
 .row .acts select { font: 13px var(--display); padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--fg); }
+
+/* network: history source toggle and origin chips */
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { font: 500 13px var(--display); padding: 7px 12px; border: 0; background: var(--surface); color: var(--muted); cursor: pointer; }
+.seg button[aria-pressed=true] { background: var(--accent); color: #fff; }
+.chip { display: inline-block; font: 600 11px var(--mono); letter-spacing: .04em; padding: 2px 7px; border-radius: 4px; background: var(--surface-2); color: var(--muted); }
+.chip.remote { background: var(--accent-soft); color: var(--accent-fg); }
+.chip.host { background: var(--warn-soft); color: var(--warn); }

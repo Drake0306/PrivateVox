@@ -12,6 +12,7 @@
     <input id="q" type="search" placeholder="Search dictations…" aria-label="Search dictations">
     <select id="modePick" title="Polish mode for the next dictation" aria-label="Mode"></select>
     <select id="modelPick" title="Whisper model in use" aria-label="Whisper model"></select>
+    <span class="seg" id="src" hidden role="group" aria-label="History source"><button data-src="local" aria-pressed="true">This Mac</button><button data-src="remote" aria-pressed="false" id="srcRemote">PC</button></span>
     <span class="stats" id="stats"></span>
   </header>
   <nav class="tabs"><button data-tab="history" aria-pressed="true">History</button><button data-tab="models" aria-pressed="false">Models</button><button data-tab="settings" aria-pressed="false">Settings</button><button data-tab="setup" aria-pressed="false">Setup</button></nav>
@@ -19,7 +20,7 @@
   <div class="scroll">
     <section class="tab" id="tab-history">
       <div class="gpu" id="gpu">
-        <div class="head"><h2>GPU memory</h2><span class="lab">Detected</span><span class="box" id="machine">…</span><span class="lab">Polish LLM</span><select class="box" id="llmPick" title="Which LLM cleans up the text"><option value="off">Off</option></select></div>
+        <div class="head"><h2 id="gpuTitle">GPU memory</h2><span class="lab">Detected</span><span class="box" id="machine">…</span><span class="lab">Polish LLM</span><select class="box" id="llmPick" title="Which LLM cleans up the text"><option value="off">Off</option></select></div>
         <div class="meter" id="meter" role="img" aria-label="Memory usage"><i class="o"></i><i class="w"></i><i class="l"></i></div>
         <div class="ticks"><span>0</span><span id="tickMid"></span><span id="tickMax"></span></div>
         <div class="leg" id="memLeg"></div>
@@ -67,6 +68,27 @@
           </div>
           <p class="muted">On the PC: LM Studio → Developer → "Serve on local network", or set <code>OLLAMA_HOST=0.0.0.0</code> for Ollama. Add it here by IP and port; the Mac uses it whenever it is reachable and falls back to a local model when it is not.</p>
         </div>
+        <div class="card" id="networkCard">
+          <h3>Network <span class="muted" style="font-weight:400">· one PrivateVox can do the work for another</span></h3>
+          <div class="inline" style="margin-bottom:6px"><label>This machine is called <input type="text" id="machineName" style="width:180px" aria-label="Machine name"></label><button class="btn sm" id="machineNameSave">Save</button></div>
+          <div class="inline" style="margin-bottom:4px">
+            <label><input type="checkbox" id="hostOn"> Act as host for other machines</label>
+            <label>Port <input type="number" id="hostPort" min="1024" max="65535" style="width:84px"></label>
+            <label>Token <input type="text" id="hostToken" placeholder="optional" style="width:140px"></label>
+            <button class="btn sm" id="hostApply">Apply</button>
+          </div>
+          <p class="muted" id="hostLine" style="margin:0 0 12px"></p>
+          <div class="inline" style="margin-bottom:4px">
+            <label><input type="checkbox" id="remoteOn"> Use a host on this network</label>
+            <input type="text" id="remoteUrl" placeholder="192.168.1.20:8765" style="width:170px" aria-label="Host address">
+            <input type="text" id="remoteToken" placeholder="token (if set)" style="width:130px" aria-label="Host token">
+            <input type="text" id="remoteLabel" placeholder="PC" style="width:90px" aria-label="Host label">
+            <button class="btn sm" id="remoteTest">Test</button>
+            <button class="btn sm" id="remoteApply">Apply</button>
+          </div>
+          <p class="muted" id="remoteLine" style="margin:0"></p>
+          <p class="muted">While the host is reachable, what you dictate here is transcribed and polished there, and the memory strip shows the host's figures. When it is not, this machine does the work and the pill says so. Both machines keep a history; the toggle in the History header shows the host's.</p>
+        </div>
       </div>
     </section>
 
@@ -111,11 +133,38 @@
   document.querySelectorAll('nav.tabs button').forEach(b => b.onclick = () => {
     document.querySelectorAll('nav.tabs button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
     for (const t of ['history', 'models', 'settings', 'setup']) $('tab-' + t).hidden = t !== b.dataset.tab;
-    if (b.dataset.tab === 'settings') { loadSettings(); loadPolish(); } if (b.dataset.tab === 'setup') loadSetup(); if (b.dataset.tab === 'models') loadModels(); if (b.dataset.tab === 'history') loadMemory();
+    if (b.dataset.tab === 'settings') { loadSettings(); loadPolish(); loadNetwork(); } if (b.dataset.tab === 'setup') loadSetup(); if (b.dataset.tab === 'models') loadModels(); if (b.dataset.tab === 'history') loadMemory();
   });
 
   // ---------- history ----------
+  let historySource = 'local';
+  let remoteLabel = 'PC';
+  document.querySelectorAll('#src button').forEach(b => b.onclick = () => { historySource = b.dataset.src; document.querySelectorAll('#src button').forEach(x => x.setAttribute('aria-pressed', String(x === b))); loadHistory(); });
+  function kindChip(engineKind) {
+    if (!engineKind || engineKind === 'local') return '';
+    if (engineKind === 'host') return '<span class="chip host" title="Processed here for another machine">host</span>';
+    if (engineKind.startsWith('remote:')) return `<span class="chip remote" title="Transcribed and polished on ${esc(engineKind.slice(7))}">via ${esc(engineKind.slice(7))}</span>`;
+    return `<span class="chip">${esc(engineKind)}</span>`;
+  }
+  async function loadRemoteHistory() {
+    const rows = $('rows');
+    let reply;
+    try { reply = await inv('remote_history', { limit: 200, offset: 0, search: $('q').value || null }); }
+    catch (e) { rows.innerHTML = `<p class="empty">${esc(String(e))}</p>`; $('stats').textContent = ''; return; }
+    $('stats').textContent = `${reply.total} dictations on ${esc(remoteLabel)}`;
+    rows.innerHTML = `<p class="muted" style="padding:10px 22px 0">Showing ${esc(remoteLabel)}'s history. Edit, pin and delete work on that machine.</p>` + (reply.rows.length ? '' : '<p class="empty">Nothing there yet.</p>');
+    for (const d of reply.rows) {
+      const el = document.createElement('div'); el.className = 'row';
+      const text = d.polished_text || d.raw_text;
+      el.innerHTML = `<div class="meta">${kindChip(d.engine_kind)}<span>${esc(ago(d.created_at_ms))}</span><span>${esc(d.app_name || 'unknown')}</span><span>${esc(modeLabel(d.mode))}</span><span>${esc(short(d.model))}</span><span>${dur(d.duration_ms)}</span>${d.polish_status === 'unpolished' ? '<span class="unp">unpolished</span>' : ''}</div>
+        <div class="txt">${esc(text)}</div>
+        <div class="acts"><button class="btn" data-copy>Copy</button></div>`;
+      el.querySelector('[data-copy]').onclick = async () => { try { await navigator.clipboard.writeText(text); flash('Copied'); } catch { flash('Copy blocked'); } };
+      rows.appendChild(el);
+    }
+  }
   async function loadHistory() {
+    if (historySource === 'remote') return loadRemoteHistory();
     const list = $('q').value ? await inv('search_history', { query: $('q').value }) : await inv('list_history', { limit: 200, offset: 0 });
     const st = await inv('history_stats');
     $('stats').textContent = `${st.count} dictations · ${st.words} words`;
@@ -126,7 +175,7 @@
       const hasRaw = !!d.polished_text && d.polished_text !== d.raw_text;
       const rowModes = modes.filter(m => m.uses_llm || m.id === 'raw');
       el.classList.toggle('pinned', !!d.pinned);
-      el.innerHTML = `<div class="meta">${d.pinned ? '<span class="pinbadge" title="Pinned: stays at the top">📌 pinned</span>' : ''}<span>${esc(ago(d.created_at_ms))}</span><span>${esc(d.app_name || 'unknown app')}</span><span>${esc(modeLabel(d.mode))}</span><span>${esc(short(d.model))}</span><span>${dur(d.duration_ms)}</span>${d.status !== 'ok' ? `<span>${esc(d.status.replace('_', ' '))}</span>` : ''}${d.polish_status === 'unpolished' ? '<span class="unp" title="No LLM answered; this is Whisper\'s text">unpolished</span>' : ''}</div>
+      el.innerHTML = `<div class="meta">${d.pinned ? '<span class="pinbadge" title="Pinned: stays at the top">📌 pinned</span>' : ''}${kindChip(d.engine_kind)}<span>${esc(ago(d.created_at_ms))}</span><span>${esc(d.app_name || 'unknown app')}</span><span>${esc(modeLabel(d.mode))}</span><span>${esc(short(d.model))}</span><span>${dur(d.duration_ms)}</span>${d.status !== 'ok' ? `<span>${esc(d.status.replace('_', ' '))}</span>` : ''}${d.polish_status === 'unpolished' ? '<span class="unp" title="No LLM answered; this is Whisper\'s text">unpolished</span>' : ''}</div>
         <div class="txt" tabindex="0">${esc(text)}</div>
         <div class="acts"><button class="btn" data-copy>Copy</button><button class="btn" data-edit>Edit</button><button class="btn" data-raw ${hasRaw ? '' : 'disabled title="Same as Whisper\'s text"'}>Raw</button><span class="repol"><select data-mode aria-label="Mode for re-polish" title="Mode to re-polish this row with">${rowModes.map(m => `<option value="${m.id}" ${m.id === d.mode ? 'selected' : ''}>${esc(m.label)}</option>`).join('')}</select><button class="btn" data-repolish title="Run this row through the LLM again with the chosen mode">Re-polish</button></span><button class="btn ${d.pinned ? 'active' : ''}" data-pin title="${d.pinned ? 'Unpin: back to its place in time' : 'Pin: keep at the top'}">${d.pinned ? 'Pinned' : 'Pin'}</button><button class="btn" data-del>Delete</button></div>`;
       const txt = el.querySelector('.txt');
@@ -166,12 +215,18 @@
   let memTimer = null;
   async function loadMemory() {
     const [models, mem, machine, eps, llm] = await Promise.all([inv('list_models'), inv('memory_report'), inv('machine_label'), inv('list_llm_endpoints'), inv('llm_status')]);
-    $('machine').textContent = machine;
+    const onHost = !!mem.source_label;
+    $('gpuTitle').textContent = onHost ? 'GPU memory · on ' + mem.source_label : 'GPU memory';
+    $('machine').textContent = onHost ? (mem.adapter || mem.source_label) : machine;
+    if (onHost) {
+      try { const rm = await inv('remote_models'); $('modelPick').innerHTML = rm.models.map(m => `<option value="${m.id}" ${m.active ? 'selected' : ''} ${m.downloaded ? '' : 'disabled'}>${esc(m.id)} on ${esc(mem.source_label)}${m.downloaded ? '' : ' (not downloaded)'}</option>`).join(''); } catch (e) { /* keep the local list */ }
+    }
+    $('modelPick').dataset.remote = onHost ? '1' : '';
     const sel = llm.enabled && llm.selected ? llm.selected.id : (llm.enabled && eps[0] ? '' : 'off');
     $('llmPick').innerHTML = '<option value="off">Off</option>' + eps.map(e => `<option value="${e.id}" ${e.id === sel ? 'selected' : ''} ${e.healthy ? '' : 'disabled'}>${esc(e.label)}${e.model ? ' · ' + esc(e.model) : (e.models[0] ? ' · ' + esc(e.models[0]) : '')} (${e.is_local ? 'local' : 'LAN'})${e.healthy ? '' : ' · unreachable'}</option>`).join('');
     if (sel === 'off') $('llmPick').value = 'off';
     const llmLegend = !llm.enabled ? 'off' : !llm.selected ? 'none reachable' : llm.selected.is_local ? (llm.selected.loaded_bytes ? fmtMB(llm.selected.loaded_bytes) : 'not loaded yet') : 'on ' + llm.selected.label;
-    $('modelPick').innerHTML = models.map(m => `<option value="${m.id}" ${m.active ? 'selected' : ''} ${m.downloaded ? '' : 'disabled'}>${esc(m.id)} · ${esc(m.label.split(' · ')[0].toLowerCase())}${m.downloaded ? '' : ' (not downloaded)'}</option>`).join('');
+    if (!onHost) $('modelPick').innerHTML = models.map(m => `<option value="${m.id}" ${m.active ? 'selected' : ''} ${m.downloaded ? '' : 'disabled'}>${esc(m.id)} · ${esc(m.label.split(' · ')[0].toLowerCase())}${m.downloaded ? '' : ' (not downloaded)'}</option>`).join('');
     const seg = $('meter').children, T = Math.max(1, mem.total);
     seg[0].style.flexBasis = (mem.used_by_others / T * 100) + '%'; seg[1].style.flexBasis = (mem.selected_bytes / T * 100) + '%'; seg[2].style.flexBasis = (mem.llm_bytes / T * 100) + '%';
     $('meter').classList.toggle('over', mem.verdict === 'wont_fit');
@@ -200,7 +255,7 @@
       cards.appendChild(el);
     }
   }
-  $('modelPick').onchange = async (e) => { try { await inv('switch_model', { id: e.target.value }); } catch (err) { flash(String(err)); } };
+  $('modelPick').onchange = async (e) => { try { if (e.target.dataset.remote) { await inv('select_remote_model', { id: e.target.value }); flash('Asked the host to switch'); } else { await inv('switch_model', { id: e.target.value }); } } catch (err) { flash(String(err)); } };
   $('llmPick').onchange = async (e) => {
     try {
       if (e.target.value === 'off') { await inv('set_polish_enabled', { enabled: false }); flash('Polish off: Whisper\'s text is pasted as is'); }
@@ -292,6 +347,31 @@
   });
   window.pvx.listen('history-changed', () => { loadHistory(); flash('History updated'); });
 
+  // ---------- network settings ----------
+  async function loadNetwork() {
+    const n = await inv('network_status');
+    $('machineName').value = n.remote.machine_name;
+    $('hostOn').checked = n.host.enabled; $('hostPort').value = n.host.port; if (!$('hostToken').value && n.host.token_set) $('hostToken').placeholder = 'set (leave blank to keep)';
+    $('hostLine').textContent = n.host.running ? `Serving on ${n.host.addresses.map(a => a + ':' + n.host.port).join(', ') || 'this machine:' + n.host.port} · ${n.host.clients} client${n.host.clients === 1 ? '' : 's'} in the last minute` : (n.host.enabled ? 'Enabled but not running: the port may be in use.' : 'Off');
+    $('remoteOn').checked = n.remote.enabled; if (n.remote.base_url) $('remoteUrl').value = n.remote.base_url; if (n.remote.label) $('remoteLabel').value = n.remote.label; if (n.remote.token_set) $('remoteToken').placeholder = 'set (leave blank to keep)';
+    remoteLabel = n.remote.label || 'PC'; $('srcRemote').textContent = remoteLabel; $('src').hidden = !n.remote.enabled;
+    if (!n.remote.enabled && historySource === 'remote') { historySource = 'local'; document.querySelector('#src button[data-src=local]').click(); }
+    const st = n.remote.status;
+    $('remoteLine').textContent = !n.remote.enabled ? 'Off' : n.remote.in_use ? `In use: ${st ? `${st.name} · ${st.gpu.name} · ${fmtGB(st.gpu.total_bytes)} · Whisper ${st.whisper.model}${st.whisper.loaded ? ' loaded' : ''} · polish ${st.polish.enabled ? (st.polish.endpoint_label || 'on') : 'off'}` : 'reachable'}` : `Not reachable${n.remote.last_error ? ': ' + n.remote.last_error : ''} · dictating locally`;
+  }
+  $('machineNameSave').onclick = () => inv('set_machine_name', { name: $('machineName').value }).then(() => { flash('Saved'); loadNetwork(); }).catch(e => flash(String(e)));
+  $('hostApply').onclick = () => inv('set_host', { enabled: $('hostOn').checked, port: +$('hostPort').value, token: $('hostToken').value || null }).then(() => { flash($('hostOn').checked ? 'Host mode on' : 'Host mode off'); loadNetwork(); }).catch(e => { flash(String(e)); loadNetwork(); });
+  $('hostOn').onchange = () => $('hostApply').click();
+  $('remoteApply').onclick = () => inv('set_remote', { enabled: $('remoteOn').checked, base_url: $('remoteUrl').value || null, token: $('remoteToken').value || null, label: $('remoteLabel').value || null }).then(() => { flash($('remoteOn').checked ? 'Using the host when it is reachable' : 'Host off: dictating locally'); setTimeout(() => { loadNetwork(); loadMemory(); }, 600); }).catch(e => flash(String(e)));
+  $('remoteOn').onchange = () => $('remoteApply').click();
+  $('remoteTest').onclick = async () => {
+    const b = $('remoteTest'); b.disabled = true; b.textContent = 'Testing…';
+    try { const st = await inv('test_host', { url: $('remoteUrl').value, token: $('remoteToken').value || null }); $('remoteLine').textContent = `${st.name} answered · ${st.gpu.name} · ${fmtGB(st.gpu.total_bytes)} total, ${fmtGB(st.gpu.used_bytes)} used · Whisper ${st.whisper.model} · polish ${st.polish.enabled ? (st.polish.endpoint_label || 'on') : 'off'} · ${st.clients} client(s)`; }
+    catch (e) { $('remoteLine').textContent = String(e); }
+    finally { b.disabled = false; b.textContent = 'Test'; }
+  };
+  window.pvx.listen('remote-changed', (ev) => { flash(ev && ev.payload ? remoteLabel + ' reachable, dictation goes there' : remoteLabel + ' unreachable, dictating locally'); loadMemory(); if (!$('tab-settings').hidden) loadNetwork(); });
+
   // ---------- setup ----------
   async function loadSetup() {
     const p = await inv('permissions');
@@ -311,7 +391,7 @@
   window.pvx.listen('model-download', (d) => { $('dl').hidden = d.done; $('dlBar').style.width = Math.round(100 * d.received / Math.max(1, d.total)) + '%'; if (d.done) { loadSetup(); loadMemory(); } if (d.error) flash('Download failed: ' + d.error); $('status').textContent = d.done ? '' : `Downloading ${d.model}: ${Math.round(100 * d.received / Math.max(1, d.total))}%`; });
   window.pvx.listen('pill-state', (s) => { $('status').textContent = s.state === 'idle' ? '' : s.state.replace('_', ' ') + (s.message ? ': ' + s.message : ''); if (s.state === 'pasted') loadHistory(); });
   document.addEventListener('visibilitychange', () => { if (!document.hidden && !$('tab-history').hidden) loadMemory(); });
-  loadModes().then(loadHistory); loadMemory();
+  loadModes().then(loadHistory); loadMemory(); loadNetwork();
   inv('permissions').then(p => { if (!p.model_present || !p.accessibility) document.querySelector('[data-tab=setup]').click(); });
 </script>
 </body>
