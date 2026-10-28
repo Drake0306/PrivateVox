@@ -129,3 +129,11 @@ fn worker_exits_when_its_parent_dies_mid_decode() {
     }
     assert!(!alive(worker_pid), "worker must exit within 3 s of its parent dying");
 }
+
+#[test]
+fn load_reports_resident_bytes_from_worker() {
+    let mut e = WorkerEngine::new(fake_worker(0));
+    let info = e.load(std::path::Path::new("/nonexistent/model.bin"), true).unwrap();
+    assert_eq!(info.resident_bytes, 123_456_789);
+    assert_eq!(e.last_load().map(|l| l.resident_bytes), Some(123_456_789));
+}

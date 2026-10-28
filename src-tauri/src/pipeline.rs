@@ -10,7 +10,7 @@ use lvw_core::store::{NewDictation, Store};
 use lvw_core::textnorm::normalize;
 use lvw_core::vad::{is_too_short, pad_min, ClipClass, Vad, VadConfig};
 use lvw_engine::protocol::DecodeOptions;
-use lvw_engine::supervisor::Engine;
+use lvw_engine::supervisor::{Engine, LoadInfo};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
@@ -276,7 +276,7 @@ impl Coordinator {
                     if !e.is_loaded() {
                         match e.load(&path, flash) {
                             Ok(d) => {
-                                log::info!("model preloaded in {:?}", d);
+                                log::info!("model preloaded in {:?} ({} MB resident)", d.duration, d.resident_bytes / 1_000_000);
                                 if let Ok(mut t) = idle.lock() {
                                     t.touch(Instant::now());
                                 }
@@ -383,7 +383,7 @@ impl Coordinator {
                 return;
             };
             (self.emit)(PillState::LoadingModel { progress: None });
-            let load = self.deps.engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| if e.is_loaded() { Ok(Duration::ZERO) } else { e.load(&path, settings.flash_attention) });
+            let load = self.deps.engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| if e.is_loaded() { Ok(LoadInfo { duration: Duration::ZERO, resident_bytes: 0 }) } else { e.load(&path, settings.flash_attention) });
             if let Err(e) = load {
                 self.error(&format!("Model failed to load: {e}"));
                 self.schedule_idle(tx);
@@ -480,7 +480,7 @@ mod tests {
     use lvw_core::store::Store;
     use lvw_core::vad::Vad;
     use lvw_engine::protocol::DecodeOptions;
-    use lvw_engine::supervisor::{Engine, Transcript};
+    use lvw_engine::supervisor::{Engine, LoadInfo, Transcript};
     use std::path::{Path, PathBuf};
     use std::sync::mpsc::channel;
     use std::sync::{Arc, Mutex};
@@ -493,11 +493,11 @@ mod tests {
         load_calls: Arc<Mutex<u32>>,
     }
     impl Engine for FakeEngine {
-        fn load(&mut self, _model: &Path, _flash: bool) -> anyhow::Result<Duration> {
+        fn load(&mut self, _model: &Path, _flash: bool) -> anyhow::Result<LoadInfo> {
             *self.load_calls.lock().unwrap() += 1;
             std::thread::sleep(self.load_delay);
             self.loaded = true;
-            Ok(self.load_delay)
+            Ok(LoadInfo { duration: self.load_delay, resident_bytes: 1 })
         }
         fn unload(&mut self) -> anyhow::Result<()> {
             self.loaded = false;

@@ -24,8 +24,15 @@ pub struct Transcript {
     pub reran: bool,
 }
 
+/// What a load cost: wall time and the worker's resident-memory growth.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoadInfo {
+    pub duration: Duration,
+    pub resident_bytes: u64,
+}
+
 pub trait Engine: Send {
-    fn load(&mut self, model: &Path, flash_attn: bool) -> Result<Duration>;
+    fn load(&mut self, model: &Path, flash_attn: bool) -> Result<LoadInfo>;
     fn unload(&mut self) -> Result<()>;
     fn is_loaded(&self) -> bool;
     fn transcribe(&mut self, pcm: &[f32], opts: &DecodeOptions) -> Result<Transcript>;
@@ -49,6 +56,7 @@ pub struct WorkerEngine {
     next_id: u64,
     deadline_override: Option<Duration>,
     last_failure: Option<String>,
+    last_load: Option<LoadInfo>,
     stderr_tail: Arc<Mutex<VecDeque<String>>>,
     /// Current worker pid (0 when none), readable without the engine lock so an exit path can kill a busy worker.
     pid: Arc<AtomicU32>,
@@ -95,9 +103,14 @@ impl WorkerEngine {
             next_id: 1,
             deadline_override: None,
             last_failure: None,
+            last_load: None,
             stderr_tail: Arc::new(Mutex::new(VecDeque::new())),
             pid: Arc::new(AtomicU32::new(0)),
         }
+    }
+
+    pub fn last_load(&self) -> Option<LoadInfo> {
+        self.last_load
     }
 
     pub fn pid_handle(&self) -> PidHandle {
@@ -213,13 +226,15 @@ impl WorkerEngine {
         }
     }
 
-    fn send_load(&mut self, path: &Path, flash_attn: bool) -> Result<Duration> {
+    fn send_load(&mut self, path: &Path, flash_attn: bool) -> Result<LoadInfo> {
         let t = Instant::now();
         self.send(&Request::Load { model_path: path.to_path_buf(), flash_attn, use_gpu: true })?;
         match self.recv(LOAD_DEADLINE) {
-            Ok(Response::Loaded { .. }) => {
+            Ok(Response::Loaded { resident_bytes, .. }) => {
                 self.loaded = true;
-                Ok(t.elapsed())
+                let info = LoadInfo { duration: t.elapsed(), resident_bytes };
+                self.last_load = Some(info);
+                Ok(info)
             }
             Ok(Response::Error { message, .. }) => {
                 self.loaded = false;
@@ -235,7 +250,7 @@ impl WorkerEngine {
 }
 
 impl Engine for WorkerEngine {
-    fn load(&mut self, model: &Path, flash_attn: bool) -> Result<Duration> {
+    fn load(&mut self, model: &Path, flash_attn: bool) -> Result<LoadInfo> {
         self.model = Some((model.to_path_buf(), flash_attn));
         if !self.worker_alive() {
             if self.worker.is_some() {

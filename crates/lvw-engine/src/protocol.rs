@@ -32,7 +32,7 @@ pub enum Request {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Response {
     Pong,
-    Loaded { load_ms: u64 },
+    Loaded { load_ms: u64, resident_bytes: u64 },
     Unloaded,
     Transcript { id: u64, text: String, language: Option<String>, decode_ms: u64, audio_ctx: i32, reran: bool },
     Error { id: Option<u64>, message: String },
@@ -84,6 +84,20 @@ mod tests {
                 assert_eq!(opts.n_threads, 4);
             }
             _ => panic!("wrong message"),
+        }
+    }
+
+    #[test]
+    fn frame_roundtrip_loaded_with_resident_bytes() {
+        let mut buf = Vec::new();
+        write_frame(&mut buf, &Response::Loaded { load_ms: 480, resident_bytes: 577_000_000 }).unwrap();
+        let mut cursor = std::io::Cursor::new(buf);
+        match read_frame::<_, Response>(&mut cursor).unwrap() {
+            Some(Response::Loaded { load_ms, resident_bytes }) => {
+                assert_eq!(load_ms, 480);
+                assert_eq!(resident_bytes, 577_000_000);
+            }
+            other => panic!("{other:?}"),
         }
     }
 

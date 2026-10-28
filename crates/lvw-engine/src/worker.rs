@@ -35,12 +35,14 @@ pub fn run_worker() -> i32 {
             Request::Load { model_path, flash_attn, use_gpu } => {
                 if fake {
                     fake_loaded = true;
-                    Response::Loaded { load_ms: 1 }
+                    Response::Loaded { load_ms: 1, resident_bytes: 123_456_789 }
                 } else {
+                    let before = resident_bytes();
                     match WhisperBackend::load(&model_path, flash_attn, use_gpu) {
                         Ok((b, d)) => {
                             backend = Some(b);
-                            Response::Loaded { load_ms: d.as_millis() as u64 }
+                            let after = resident_bytes();
+                            Response::Loaded { load_ms: d.as_millis() as u64, resident_bytes: after.saturating_sub(before) }
                         }
                         Err(e) => Response::Error { id: None, message: e.to_string() },
                     }
@@ -85,6 +87,16 @@ pub fn run_worker() -> i32 {
     // Skip native destructors on the way out: ggml-metal teardown can assert, and the OS reclaims everything.
     std::mem::forget(backend);
     0
+}
+
+/// Resident set size of this process in bytes (0 if unavailable). On unified-memory Macs this includes
+/// the model's GPU buffers, which is what the memory strip wants.
+pub fn resident_bytes() -> u64 {
+    let out = std::process::Command::new("ps").args(["-o", "rss=", "-p", &std::process::id().to_string()]).output();
+    match out {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).trim().parse::<u64>().map(|kb| kb * 1024).unwrap_or(0),
+        Err(_) => 0,
+    }
 }
 
 /// Exits the worker as soon as the parent is gone, even in the middle of a decode (the stdin EOF is only

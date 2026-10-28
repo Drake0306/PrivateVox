@@ -66,7 +66,7 @@ pub fn spawn_idle_watch(engine: SharedEngine, timer: Arc<Mutex<IdleTimer>>, tx: 
 mod tests {
     use super::*;
     use lvw_engine::protocol::DecodeOptions;
-    use lvw_engine::supervisor::{Engine, Transcript};
+    use lvw_engine::supervisor::{Engine, LoadInfo, Transcript};
     use std::path::Path;
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
@@ -75,8 +75,8 @@ mod tests {
         unloaded: Arc<Mutex<bool>>,
     }
     impl Engine for SlowEngine {
-        fn load(&mut self, _m: &Path, _f: bool) -> anyhow::Result<Duration> {
-            Ok(Duration::ZERO)
+        fn load(&mut self, _m: &Path, _f: bool) -> anyhow::Result<LoadInfo> {
+            Ok(LoadInfo { duration: Duration::ZERO, resident_bytes: 0 })
         }
         fn unload(&mut self) -> anyhow::Result<()> {
             *self.unloaded.lock().unwrap() = true;
