@@ -37,6 +37,7 @@ pub fn ensure_model(app: AppHandle, model_id: &str, models_dir: &Path, tx: Sende
                 }
             }
             let _ = app.emit("models-changed", ());
+            crate::tray::refresh(&app);
         }
     };
     if is_present(&spec, models_dir) {

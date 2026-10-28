@@ -71,7 +71,8 @@ pub fn run() {
                 .level(log::LevelFilter::Info)
                 .build(),
         )
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build());
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None));
     #[cfg(target_os = "macos")]
     {
         builder = builder.plugin(tauri_nspanel::init());
@@ -79,7 +80,7 @@ pub fn run() {
 
     let app = builder
         .invoke_handler(tauri::generate_handler![
-            commands::get_settings,
+            commands::set_launch_at_login, commands::set_show_pill, commands::get_settings,
             commands::set_settings,
             commands::list_history,
             commands::search_history,
@@ -221,6 +222,7 @@ pub fn run() {
                         let _ = st.set_model_stats(id, &stats);
                     }
                     let _ = switched_app.emit("models-changed", ());
+                    tray::refresh(&switched_app);
                 }),
                 benchmark_clip: {
                     let dir = paths.data_dir.clone();
@@ -238,6 +240,7 @@ pub fn run() {
                             let _ = st.set_model_stats(id, &stats);
                         }
                         let _ = app.emit("models-changed", ());
+                        tray::refresh(&app);
                     })
                 },
                 polish: {
@@ -318,7 +321,20 @@ pub fn run() {
                 }
             }
 
-            let tray = tray::build(app.handle(), current.mode)?;
+            let (rows, active) = tray::catalog_rows_for(&paths.models_dir(), &current.model_id);
+            let tray = tray::build(app.handle(), current.mode, rows, &active, current.launch_at_login, current.show_pill)?;
+            // Launch at login and pill visibility follow the saved settings (§4.1, §4.5).
+            {
+                use tauri_plugin_autostart::ManagerExt;
+                let l = app.autolaunch();
+                let want = current.launch_at_login;
+                if l.is_enabled().unwrap_or(false) != want {
+                    let _ = if want { l.enable() } else { l.disable() };
+                }
+                if !current.show_pill {
+                    commands::apply_pill_visibility(app.handle(), false);
+                }
+            }
             let tray_for_idle = tray.clone();
             lifecycle::spawn_idle_watch(engine.clone(), idle.clone(), tx.clone(), Box::new(move |remaining| {
                 let text = match remaining {

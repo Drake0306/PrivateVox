@@ -122,6 +122,8 @@
           <label>Paste method <select name="paste_method"><option value="clipboard">Clipboard + ⌘V</option><option value="type">Type the text</option></select></label>
           <label>Unload model after idle (minutes, 1–240) <input name="idle_unload_minutes" type="number" min="1" max="240"></label>
           <label><span><input name="idle_never" type="checkbox"> Never unload</span></label>
+          <label><span><input type="checkbox" id="launchAtLogin"> Launch at login</span></label>
+          <label><span><input type="checkbox" id="showPill"> Show the pill (hotkeys work either way)</span></label>
           <label>Keep recording after key-up (ms) <input name="post_release_ms" type="number" min="0" max="2000"></label>
           <label>Maximum clip (seconds) <input name="max_clip_seconds" type="number" min="10" max="600"></label>
           <div style="grid-column:1/-1;display:flex;gap:10px;align-items:center"><button class="btn primary" type="submit">Save</button><span id="settingsErr" class="err"></span><span id="settingsOk" class="muted"></span></div>
@@ -371,6 +373,7 @@
     f.ptt_modifier.value = s.ptt.modifier || ''; f.ptt_combo.value = s.ptt.combo || '';
     const pttMode = () => { const combo = !f.ptt_modifier.value; f.ptt_combo.hidden = !combo; f.querySelector('[data-rec=ptt_combo]').hidden = !combo; };
     f.ptt_modifier.onchange = pttMode; pttMode();
+    $('launchAtLogin').checked = !!s.launch_at_login; $('showPill').checked = s.show_pill !== false;
     f.toggle_combo.value = s.toggle.combo || ''; f.undo_combo.value = (s.undo && s.undo.combo) || ''; f.copy_only_combo.value = (s.copy_only && s.copy_only.combo) || '';
     f.querySelectorAll('[data-rec]').forEach(b => b.onclick = () => {
       const input = f[b.dataset.rec]; const old = b.textContent; b.textContent = 'Press keys… (Esc cancels)';
@@ -453,6 +456,8 @@
     $('dictStrict').value = Math.round((s.dictionary_strictness || 0) * 100); $('dictStrictVal').textContent = $('dictStrict').value === '0' ? 'off' : ($('dictStrict').value + '%');
     $('dictStrict').oninput = () => { $('dictStrictVal').textContent = $('dictStrict').value === '0' ? 'off' : ($('dictStrict').value + '%'); };
   }
+  $('launchAtLogin').onchange = async () => { try { await inv('set_launch_at_login', { on: $('launchAtLogin').checked }); flash($('launchAtLogin').checked ? 'Starts at login' : 'No longer starts at login'); } catch (e) { flash(String(e)); $('launchAtLogin').checked = !$('launchAtLogin').checked; } };
+  $('showPill').onchange = async () => { try { await inv('set_show_pill', { on: $('showPill').checked }); } catch (e) { flash(String(e)); } };
   document.querySelectorAll('.dictationSave').forEach(b => b.onclick = async () => {
     const live = await inv('get_settings');
     const selected = [...selectedLangs];

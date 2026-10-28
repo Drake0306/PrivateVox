@@ -74,6 +74,8 @@ pub enum Cmd {
     ModelUnloaded,
     /// Tray: unload now and stay paused until the next dictation.
     PauseAndUnload,
+    /// Tray: load the model now (after a pause, or ahead of the first dictation).
+    Resume,
     /// The input stream failed while recording.
     CaptureError(String),
     /// Switch the resident Whisper model (deferred while a recording is in progress).
@@ -554,6 +556,11 @@ impl Coordinator {
                         Err(e) => self.error(&format!("Paste failed: {e}")),
                     }
                     self.schedule_idle(&tx);
+                }
+                Cmd::Resume => {
+                    if self.recording.is_none() {
+                        self.preload_model();
+                    }
                 }
                 Cmd::PauseAndUnload => {
                     self.machine.force_idle();
@@ -3168,6 +3175,22 @@ mod tests {
         h.tx.send(Cmd::Undo).unwrap();
         std::thread::sleep(Duration::from_millis(200));
         assert_eq!(*h.undos.lock().unwrap(), 0, "a copy leaves the undo target untouched");
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn resume_loads_the_model_without_recording() {
+        let mut e = engine_saying("x");
+        e.loaded = false;
+        let loads = e.load_calls.clone();
+        let h = harness(e, capture_ok());
+        h.tx.send(Cmd::Resume).unwrap();
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(*loads.lock().unwrap(), 1, "tray 'Load model now' loads the model");
+        assert_eq!(h.store.lock().unwrap().count().unwrap(), 0, "and records nothing");
+        let states = h.states.lock().unwrap().clone();
+        assert!(!states.iter().any(|s| matches!(s, PillState::Listening { .. })), "and never records");
         h.tx.send(Cmd::Quit).unwrap();
         h.join.join().unwrap();
     }

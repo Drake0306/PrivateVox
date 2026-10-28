@@ -136,6 +136,15 @@ pub struct Settings {
     pub live_preview: crate::preview::Preview,
     /// "new line", "delete that", "cancel" at the end of a dictation (phase 5, A3).
     pub spoken_commands: bool,
+    /// Register with the OS to start at login (§4.5).
+    pub launch_at_login: bool,
+    /// The pill can be hidden; hotkeys keep working (§4.1).
+    #[serde(default = "default_true")]
+    pub show_pill: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -175,6 +184,8 @@ impl Default for Settings {
             sound_cues: true,
             live_preview: crate::preview::Preview::On,
             spoken_commands: true,
+            launch_at_login: false,
+            show_pill: true,
         }
     }
 }
@@ -367,5 +378,12 @@ mod tests {
     #[test]
     fn copy_only_hotkey_defaults_to_ctrl_shift_alt_space() {
         assert_eq!(Settings::default().copy_only.combo.as_deref(), Some("Ctrl+Shift+Alt+Space"));
+    }
+
+    #[test]
+    fn login_and_pill_defaults() {
+        let s = Settings::default();
+        assert!(!s.launch_at_login, "nothing starts at login until asked (§4.5)");
+        assert!(s.show_pill, "the pill shows by default (§4.1)");
     }
 }

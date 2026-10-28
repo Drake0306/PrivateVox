@@ -321,6 +321,41 @@ pub fn list_models(state: State<'_, AppState>) -> Result<Vec<ModelRow>, String> 
         .collect())
 }
 
+/// Launch at login (§4.5): registers or removes the OS autostart entry and remembers the choice.
+pub fn set_launch_at_login_inner(app: &AppHandle, state: &AppState, on: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let launcher = app.autolaunch();
+    let r = if on { launcher.enable() } else { launcher.disable() };
+    r.map_err(|e| format!("launch at login: {e}"))?;
+    crate::llm_commands::edit_settings(state, |s| s.launch_at_login = on)?;
+    crate::tray::refresh(app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_launch_at_login(app: AppHandle, state: State<'_, AppState>, on: bool) -> Result<(), String> {
+    set_launch_at_login_inner(&app, &state, on)
+}
+
+/// Show or hide the pill (§4.1); hotkeys keep working either way.
+pub fn set_show_pill_inner(app: &AppHandle, state: &AppState, on: bool) -> Result<(), String> {
+    crate::llm_commands::edit_settings(state, |s| s.show_pill = on)?;
+    apply_pill_visibility(app, on);
+    crate::tray::refresh(app);
+    Ok(())
+}
+
+pub fn apply_pill_visibility(app: &AppHandle, show: bool) {
+    if let Some(w) = app.get_webview_window("pill") {
+        let _ = if show { w.show() } else { w.hide() };
+    }
+}
+
+#[tauri::command]
+pub fn set_show_pill(app: AppHandle, state: State<'_, AppState>, on: bool) -> Result<(), String> {
+    set_show_pill_inner(&app, &state, on)
+}
+
 #[tauri::command]
 pub fn switch_model(state: State<'_, AppState>, id: String) -> Result<(), String> {
     privatevox_core::models::info(&id).ok_or_else(|| format!("unknown model {id}"))?;
@@ -350,6 +385,7 @@ pub fn delete_model(app: AppHandle, state: State<'_, AppState>, id: String) -> R
     let active = state.settings.lock().map(|s| s.model_id.clone()).map_err(|e| e.to_string())?;
     delete_model_file(&state.paths.models_dir(), &id, &active)?;
     let _ = app.emit("models-changed", ());
+    crate::tray::refresh(&app);
     Ok(())
 }
 

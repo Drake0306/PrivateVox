@@ -82,7 +82,7 @@ pub fn prefer_or_adopt(list: &mut Vec<Endpoint>, id: &str, candidates: &[Endpoin
     true
 }
 
-fn edit_settings(state: &AppState, f: impl FnOnce(&mut Settings)) -> Result<Settings, String> {
+pub fn edit_settings(state: &AppState, f: impl FnOnce(&mut Settings)) -> Result<Settings, String> {
     let mut s = state.settings.lock().map(|s| s.clone()).map_err(|e| e.to_string())?;
     f(&mut s);
     crate::commands::apply_settings(&state.settings, &state.paths.settings(), s.clone())?;
