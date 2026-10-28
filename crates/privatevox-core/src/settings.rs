@@ -119,6 +119,8 @@ pub struct Settings {
     pub dictionary_strictness: f32,
     /// Keep the trimmed audio of every dictation next to its row (off by default, design §4.5).
     pub keep_audio: bool,
+    /// Toggle mode: end the dictation by itself after this many seconds of silence; `None` means never (phase 5, A2).
+    pub auto_stop_silence_secs: Option<u32>,
 }
 
 impl Default for Settings {
@@ -152,6 +154,7 @@ impl Default for Settings {
             dictionary: Vec::new(),
             dictionary_strictness: 0.18,
             keep_audio: false,
+            auto_stop_silence_secs: Some(2),
         }
     }
 }
@@ -199,6 +202,11 @@ impl Settings {
         if self.remote.enabled {
             let url = self.remote.base_url.as_deref().map(str::trim).filter(|u| !u.is_empty()).ok_or_else(|| "Enter the host's address, like 192.168.1.20:8765".to_string())?;
             crate::polish::normalize_base_url(url).map_err(|e| format!("Host address: {e}"))?;
+        }
+        if let Some(secs) = self.auto_stop_silence_secs {
+            if !(1..=30).contains(&secs) {
+                return Err("Stop after silence must be between 1 and 30 seconds, or Never".into());
+            }
         }
         if !(0.0..=0.5).contains(&self.dictionary_strictness) {
             return Err("Dictionary strictness must be between 0 and 0.5".into());

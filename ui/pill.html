@@ -26,7 +26,8 @@
         case 'listening': {
           // One message at a time, most urgent first: model loading, then the auto-stop countdown, then how to stop a latched recording.
           const secs = s.seconds >= 60 ? Math.floor(s.seconds / 60) + ':' + String(Math.floor(s.seconds % 60)).padStart(2, '0') : s.seconds.toFixed(0) + 's';
-          if (s.loading) label.textContent = 'Loading model, keep talking · ' + secs;
+          if (s.stopping) label.textContent = secs + ' · stopping…';
+          else if (s.loading) label.textContent = 'Loading model, keep talking · ' + secs;
           else if (s.countdown != null) label.textContent = secs + ' · stops in ' + s.countdown + 's';
           else label.textContent = secs + (s.stop_hint ? ' · ' + s.stop_hint : '') + (s.mode && s.mode !== 'Clean' ? ' · ' + s.mode : '');
           document.documentElement.style.setProperty('--lvl', Math.max(0, Math.min(1, (s.level_db + 60) / 60)));

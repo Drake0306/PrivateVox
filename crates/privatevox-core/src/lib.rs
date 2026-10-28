@@ -13,6 +13,7 @@ pub mod models;
 pub mod net;
 pub mod placement;
 pub mod settings;
+pub mod silence;
 pub mod store;
 pub mod polish;
 pub mod textnorm;

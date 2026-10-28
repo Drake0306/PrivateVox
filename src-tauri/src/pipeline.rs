@@ -12,6 +12,7 @@ use privatevox_core::net::PolishRequest;
 use privatevox_core::polish::{Mode, PolishOutcome, PolishStatus};
 use privatevox_engine::remote::RemoteState;
 use privatevox_core::settings::Settings;
+use privatevox_core::silence::TrailingSilence;
 use privatevox_core::store::{NewDictation, Store};
 use privatevox_core::textnorm::{normalize, normalize_with};
 use privatevox_core::vad::{is_too_short, pad_min, ClipClass, Vad, VadConfig};
@@ -29,7 +30,7 @@ use std::time::{Duration, Instant};
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum PillState {
     Idle { hotkey_hint: String, warning: Option<String> },
-    Listening { seconds: f32, level_db: f32, countdown: Option<u32>, loading: bool, mode: String, stop_hint: Option<String> },
+    Listening { seconds: f32, level_db: f32, countdown: Option<u32>, loading: bool, mode: String, stop_hint: Option<String>, stopping: bool },
     Transcribing,
     /// Waiting on the LLM (design §4.1); `on` names the host when the polish runs there.
     Polishing { on: Option<String> },
@@ -165,6 +166,9 @@ struct Recording {
     fell_back: Arc<AtomicBool>,
     /// Set on cancel/pause: the worker stops before its next job and never reloads the model.
     cancelled: Arc<AtomicBool>,
+    /// Auto-stop bookkeeping (toggle mode): frames scored for silence so far, and the trailing-silence counter.
+    silence_scored: usize,
+    silence: TrailingSilence,
 }
 
 const FRAME: usize = 512;
@@ -558,7 +562,7 @@ impl Coordinator {
         self.last_used_remote = used_remote;
         self.fell_back = Arc::new(AtomicBool::new(false));
         let loading = !self.deps.engine.try_lock().map(|e| e.is_loaded()).unwrap_or(false);
-        (self.emit)(PillState::Listening { seconds: 0.0, level_db: -100.0, countdown: None, loading, mode: settings.mode.label().to_string(), stop_hint: stop_hint(&settings, self.machine.stage()) });
+        (self.emit)(PillState::Listening { seconds: 0.0, level_db: -100.0, countdown: None, loading, mode: settings.mode.label().to_string(), stop_hint: stop_hint(&settings, self.machine.stage()), stopping: false });
         self.preload_model();
         if settings.polish_enabled && settings.mode.uses_llm() {
             let warm = self.deps.llm_warm.clone();
@@ -568,7 +572,7 @@ impl Coordinator {
         }
         match self.deps.capture.start(on_pcm, on_error) {
             Ok(()) => {
-                self.recording = Some(Recording { buffer, level, started: Instant::now(), ticks: 0, chunker: Chunker::new(), scored_frames: 0, probs: Vec::new(), chunks_sent: 0, worker: None, results: Arc::new(Mutex::new(Default::default())), used_remote, fell_back: Arc::new(AtomicBool::new(false)), cancelled: Arc::new(AtomicBool::new(false)) });
+                self.recording = Some(Recording { buffer, level, started: Instant::now(), ticks: 0, chunker: Chunker::new(), scored_frames: 0, probs: Vec::new(), chunks_sent: 0, worker: None, results: Arc::new(Mutex::new(Default::default())), used_remote, fell_back: Arc::new(AtomicBool::new(false)), cancelled: Arc::new(AtomicBool::new(false)), silence_scored: 0, silence: TrailingSilence::new() });
                 self.generation += 1;
                 let _ = self.machine.on(Input::StartResult(true), Instant::now());
                 schedule(tx, Cmd::Tick(self.generation), Duration::from_millis(100));
@@ -701,6 +705,7 @@ impl Coordinator {
         let max_clip = settings.max_clip_seconds;
         let mode = settings.mode.label().to_string();
         let stop_hint = stop_hint(&settings, self.machine.stage());
+        let latched = matches!(self.machine.stage(), privatevox_core::hotkeys::Stage::Recording { locked: true, .. });
         let Some(rec) = self.recording.as_mut() else {
             self.idle();
             return;
@@ -708,9 +713,32 @@ impl Coordinator {
         rec.ticks += 1;
         let seconds = rec.started.elapsed().as_secs_f32();
         let level = rec.level.lock().map(|l| *l).unwrap_or(-100.0);
+        // Auto-stop (toggle mode): score the newest audio for silence every half second.
+        let mut stopping = false;
+        if let (true, Some(limit)) = (latched, settings.auto_stop_silence_secs) {
+            if rec.ticks % 5 == 0 {
+                let frames_available = rec.buffer.lock().map(|b| b.peek().len() / FRAME).unwrap_or(0);
+                if frames_available > rec.silence_scored {
+                    let slice: Vec<f32> = rec.buffer.lock().map(|b| b.peek()[rec.silence_scored * FRAME..frames_available * FRAME].to_vec()).unwrap_or_default();
+                    if let Ok(probs) = self.vad.score(&slice) {
+                        rec.silence.push(&probs, VadConfig::default().threshold);
+                    }
+                    rec.silence_scored = frames_available;
+                }
+            }
+            let frame_ms = FRAME as f32 / SAMPLE_RATE as f32 * 1000.0;
+            let limit = limit as f32;
+            stopping = rec.silence.heard_speech() && rec.silence.silent_for(frame_ms) >= (limit - 1.0).max(0.0);
+            if rec.silence.due(limit, frame_ms) {
+                log::info!("auto-stop: {limit} s of silence after speech");
+                self.machine.force_stop();
+                self.stop(tx);
+                return;
+            }
+        }
         // While the preload holds the engine lock the model is still loading.
         let loading = !self.deps.engine.try_lock().map(|e| e.is_loaded()).unwrap_or(false);
-        (self.emit)(PillState::Listening { seconds, level_db: level, countdown: countdown_for(seconds, max_clip), loading, mode, stop_hint });
+        (self.emit)(PillState::Listening { seconds, level_db: level, countdown: countdown_for(seconds, max_clip), loading, mode, stop_hint, stopping });
         if rec.ticks % 5 == 0 {
             self.score_and_cut();
         }
@@ -2527,6 +2555,89 @@ mod tests {
         std::thread::sleep(Duration::from_millis(100));
         let states = h.states.lock().unwrap().clone();
         assert!(matches!(states.last().unwrap(), PillState::Idle { warning: Some(w), .. } if w.contains("Ctrl+Alt+T")), "{:?}", states.last());
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    fn speech_then_silence(secs: usize) -> Vec<f32> {
+        let mut v = fixture();
+        v.extend(vec![0.0f32; 16_000 * secs]);
+        v
+    }
+
+    #[test]
+    fn auto_stop_stops_a_latched_recording_after_silence() {
+        use privatevox_core::hotkeys::Binding;
+        use privatevox_core::settings::Activation;
+        let h = harness(engine_saying("hello"), FakeCapture { pcm: speech_then_silence(3), fail: false, die_after_start: false });
+        {
+            let mut s = h.settings.lock().unwrap();
+            s.mode = Mode::Raw;
+            s.activation = Activation::Toggle;
+        }
+        h.tx.send(Cmd::SettingsChanged).unwrap();
+        h.tx.send(Cmd::Key(Input::Down(Binding::Ptt))).unwrap();
+        h.tx.send(Cmd::Key(Input::Up(Binding::Ptt))).unwrap();
+        std::thread::sleep(Duration::from_millis(1800));
+        let states = h.states.lock().unwrap().clone();
+        assert!(states.iter().any(|s| matches!(s, PillState::Pasted { .. })), "stopped by itself and pasted: {:?}", kinds(&states));
+        // (The fake capture hands over all three seconds at once, so the "stopping…" tick is not observable here;
+        // the threshold itself is covered by the silence counter's unit tests.)
+        assert_eq!(h.store.lock().unwrap().count().unwrap(), 1);
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn auto_stop_ignores_held_and_silent_from_start() {
+        use privatevox_core::hotkeys::Binding;
+        // Held key: silence after speech must not stop it.
+        let h = harness(engine_saying("hello"), FakeCapture { pcm: speech_then_silence(3), fail: false, die_after_start: false });
+        h.settings.lock().unwrap().mode = Mode::Raw;
+        h.tx.send(Cmd::Key(Input::Down(Binding::Ptt))).unwrap();
+        std::thread::sleep(Duration::from_millis(1500));
+        let states = h.states.lock().unwrap().clone();
+        assert!(!states.iter().any(|s| matches!(s, PillState::Transcribing | PillState::Pasted { .. })), "a held recording is never auto-stopped: {:?}", kinds(&states));
+        h.tx.send(Cmd::Cancel).unwrap();
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+        // Latched but nothing said yet: silence from the start must not stop it either.
+        use privatevox_core::settings::Activation;
+        let h = harness(engine_saying("hello"), FakeCapture { pcm: vec![0.0f32; 16_000 * 4], fail: false, die_after_start: false });
+        {
+            let mut s = h.settings.lock().unwrap();
+            s.mode = Mode::Raw;
+            s.activation = Activation::Toggle;
+        }
+        h.tx.send(Cmd::SettingsChanged).unwrap();
+        h.tx.send(Cmd::Key(Input::Down(Binding::Ptt))).unwrap();
+        h.tx.send(Cmd::Key(Input::Up(Binding::Ptt))).unwrap();
+        std::thread::sleep(Duration::from_millis(1500));
+        let states = h.states.lock().unwrap().clone();
+        assert!(!states.iter().any(|s| matches!(s, PillState::Transcribing | PillState::Pasted { .. } | PillState::Error { .. })), "{:?}", kinds(&states));
+        h.tx.send(Cmd::Cancel).unwrap();
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn auto_stop_never_when_setting_is_none() {
+        use privatevox_core::hotkeys::Binding;
+        use privatevox_core::settings::Activation;
+        let h = harness(engine_saying("hello"), FakeCapture { pcm: speech_then_silence(3), fail: false, die_after_start: false });
+        {
+            let mut s = h.settings.lock().unwrap();
+            s.mode = Mode::Raw;
+            s.activation = Activation::Toggle;
+            s.auto_stop_silence_secs = None;
+        }
+        h.tx.send(Cmd::SettingsChanged).unwrap();
+        h.tx.send(Cmd::Key(Input::Down(Binding::Ptt))).unwrap();
+        h.tx.send(Cmd::Key(Input::Up(Binding::Ptt))).unwrap();
+        std::thread::sleep(Duration::from_millis(1500));
+        let states = h.states.lock().unwrap().clone();
+        assert!(!states.iter().any(|s| matches!(s, PillState::Transcribing | PillState::Pasted { .. })), "{:?}", kinds(&states));
+        h.tx.send(Cmd::Cancel).unwrap();
         h.tx.send(Cmd::Quit).unwrap();
         h.join.join().unwrap();
     }
