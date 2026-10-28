@@ -42,17 +42,27 @@ pub fn apply_settings(state: &RemoteState, s: &Settings) {
     }
 }
 
+/// True when `now` differs from the last verdict reported, so a flip caused by a failed request (not by this loop)
+/// is still announced on the next pass.
+pub fn report_transition(last_reported: &mut Option<bool>, now: bool) -> bool {
+    if *last_reported == Some(now) {
+        return false;
+    }
+    *last_reported = Some(now);
+    true
+}
+
 /// Every 10 s while enabled: `GET /v1/status`; flips `healthy` and emits `remote-changed` on a change. Backs off up to 60 s while it fails.
 pub fn spawn_health_loop(state: Arc<RemoteState>, app: AppHandle) {
     std::thread::Builder::new()
         .name("privatevox-remote-health".into())
         .spawn(move || {
             let mut failures: u32 = 0;
+            let mut last_reported: Option<bool> = None;
             loop {
                 let mut wait = HEALTH_PERIOD;
                 if state.enabled.load(Ordering::SeqCst) {
                     if let Some(client) = state.client() {
-                        let was = state.healthy.load(Ordering::SeqCst);
                         match client.status(PROBE_TIMEOUT) {
                             Ok(st) => {
                                 failures = 0;
@@ -68,11 +78,13 @@ pub fn spawn_health_loop(state: Arc<RemoteState>, app: AppHandle) {
                             }
                         }
                         let now = state.healthy.load(Ordering::SeqCst);
-                        if now != was {
+                        if report_transition(&mut last_reported, now) {
                             log::info!("host {}: {}", state.label(), if now { "reachable, dictation goes there" } else { "unreachable, dictating locally" });
                             let _ = app.emit("remote-changed", now);
                         }
                     }
+                } else {
+                    last_reported = None;
                 }
                 std::thread::sleep(wait);
             }
@@ -113,5 +125,15 @@ mod tests {
         apply_settings(&st, &s);
         assert!(!st.enabled.load(std::sync::atomic::Ordering::SeqCst));
         assert!(st.client().is_none());
+    }
+
+    #[test]
+    fn transition_is_reported_once_per_flip() {
+        let mut last = None;
+        assert!(report_transition(&mut last, true), "first verdict is a change");
+        assert!(!report_transition(&mut last, true));
+        assert!(report_transition(&mut last, false), "a flip from a failed request shows up on the next pass");
+        assert!(!report_transition(&mut last, false));
+        assert!(report_transition(&mut last, true));
     }
 }

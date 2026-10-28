@@ -52,7 +52,8 @@ struct Session {
 struct Inner {
     deps: HostDeps,
     token: Option<String>,
-    sessions: Mutex<HashMap<String, Session>>,
+    /// Keyed by (client name, session id): two clients may well pick the same id.
+    sessions: Mutex<HashMap<(String, String), Session>>,
     clients: Mutex<HashMap<String, Instant>>,
 }
 
@@ -361,7 +362,8 @@ impl Inner {
         let mut store_now: Option<Session> = None;
         {
             let mut sessions = self.sessions.lock().unwrap();
-            let s = sessions.entry(d.session.clone()).or_insert_with(|| Session { client: d.client.clone(), mode: d.mode.clone(), language: language.clone(), model: model.clone(), texts: Vec::new(), samples: 0, last: Instant::now() });
+            let key = (d.client.clone(), d.session.clone());
+            let s = sessions.entry(key.clone()).or_insert_with(|| Session { client: d.client.clone(), mode: d.mode.clone(), language: language.clone(), model: model.clone(), texts: Vec::new(), samples: 0, last: Instant::now() });
             if !text.is_empty() {
                 s.texts.push((d.index, text.clone()));
             }
@@ -369,7 +371,7 @@ impl Inner {
             s.last = Instant::now();
             s.mode = d.mode.clone();
             if d.final_ && !wait_for_polish {
-                store_now = sessions.remove(&d.session);
+                store_now = sessions.remove(&key);
             }
         }
         if let Some(s) = store_now {
@@ -391,7 +393,7 @@ impl Inner {
         };
         // Only a session this host transcribed gets a row; a polish for an unknown or already-closed session is
         // answered but not stored, so one dictation never becomes two rows.
-        if let Some(session) = self.sessions.lock().unwrap().remove(&p.session) {
+        if let Some(session) = self.sessions.lock().unwrap().remove(&(p.client.clone(), p.session.clone())) {
             let session = Session { mode: p.mode.clone(), ..session };
             self.store_session(session, polished_text.as_deref(), polished_by.as_deref(), status, &settings);
         } else {
@@ -445,11 +447,17 @@ impl Inner {
             Ok(s) => s,
             Err(e) => return (500, err(e.to_string())),
         };
-        let rows = match &search {
-            Some(q) if !q.trim().is_empty() => store.search(q, limit),
-            _ => store.list(limit, offset),
+        // A search has no offset in the store; page it here and count the matches, not the table.
+        let (rows, total) = match &search {
+            Some(q) if !q.trim().is_empty() => match store.search(q, 10_000) {
+                Ok(all) => {
+                    let total = all.len() as u32;
+                    (Ok(all.into_iter().skip(offset as usize).take(limit as usize).collect::<Vec<_>>()), total)
+                }
+                Err(e) => (Err(e), 0),
+            },
+            _ => (store.list(limit, offset), store.count().unwrap_or(0)),
         };
-        let total = store.count().unwrap_or(0);
         match rows {
             Ok(rows) => {
                 let rows = rows
@@ -740,5 +748,44 @@ mod tests {
         for a in lan_addresses() {
             assert!(!a.starts_with("127."), "{a}");
         }
+    }
+
+    #[test]
+    fn sessions_are_keyed_by_client_too() {
+        let r = rig(None, Duration::ZERO);
+        let c = client(&r, None);
+        let mut a = chunk("same", 0, false, "raw", &speech());
+        a.client = "Mac".into();
+        let mut b = chunk("same", 0, true, "raw", &speech());
+        b.client = "Laptop".into();
+        c.dictation(&a, Duration::from_secs(5)).unwrap();
+        c.dictation(&b, Duration::from_secs(5)).unwrap();
+        let rows = r.store.lock().unwrap().list(10, 0).unwrap();
+        assert_eq!(rows.len(), 1, "only Laptop's session closed");
+        assert_eq!(rows[0].app_name.as_deref(), Some("Laptop"));
+        assert_eq!(rows[0].raw_text, "host:2", "Mac's chunk did not leak into Laptop's row");
+        assert_eq!(r.server.session_count(), 1, "Mac's session is still open");
+    }
+
+    #[test]
+    fn history_search_pages_and_counts_matches() {
+        let r = rig(None, Duration::ZERO);
+        let c = client(&r, None);
+        for i in 0..5 {
+            c.dictation(&chunk(&format!("s{i}"), 0, true, "raw", &speech()), Duration::from_secs(5)).unwrap();
+        }
+        let all = c.history(10, 0, None, Duration::from_secs(1)).unwrap();
+        assert_eq!(all.total, 5);
+        let page = c.history(2, 2, None, Duration::from_secs(1)).unwrap();
+        assert_eq!(page.rows.len(), 2);
+        assert_eq!(page.total, 5);
+        // Every row reads "host:N"; searching "host:3" matches one row, and the total says so.
+        let hit = c.history(10, 0, Some("host:3"), Duration::from_secs(1)).unwrap();
+        assert_eq!(hit.rows.len(), 1);
+        assert_eq!(hit.total, 1, "total counts the matches, not the table");
+        let paged = c.history(2, 1, Some("host"), Duration::from_secs(1)).unwrap();
+        assert_eq!(paged.rows.len(), 2);
+        assert_eq!(paged.total, 5);
+        assert_ne!(paged.rows[0].id, c.history(2, 0, Some("host"), Duration::from_secs(1)).unwrap().rows[0].id, "offset applies to a search too");
     }
 }

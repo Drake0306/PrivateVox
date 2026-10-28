@@ -123,18 +123,20 @@ pub fn list_modes(state: State<'_, AppState>) -> Result<Vec<ModeInfo>, String> {
         .collect())
 }
 
-/// Shared by the panel command and the tray menu.
-pub fn set_mode_inner(state: &AppState, mode: Mode) -> Result<(), String> {
+/// Shared by the panel command and the tray menu: persists, tells the pipeline, ticks the tray, and tells the panel.
+pub fn set_mode_inner(app: &tauri::AppHandle, state: &AppState, mode: Mode) -> Result<(), String> {
+    use tauri::Emitter;
     edit_settings(state, |s| s.mode = mode)?;
     state.send(Cmd::SetMode(mode));
     crate::tray::sync_mode(mode);
+    let _ = app.emit("mode-changed", mode.id());
     Ok(())
 }
 
 #[tauri::command]
-pub fn set_mode(state: State<'_, AppState>, id: String) -> Result<(), String> {
+pub fn set_mode(app: tauri::AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
     let mode = Mode::parse(&id).ok_or_else(|| format!("Unknown mode {id:?}"))?;
-    set_mode_inner(&state, mode)
+    set_mode_inner(&app, &state, mode)
 }
 
 /// `None` or an empty prompt resets the mode to its default prompt.

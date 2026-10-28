@@ -49,7 +49,7 @@ pub fn build(app: &AppHandle, current_mode: Mode) -> anyhow::Result<TrayIcon> {
             match event.id.as_ref() {
                 id if id.starts_with("mode:") => {
                     if let Some(mode) = Mode::parse(&id[5..]) {
-                        if let Err(e) = crate::llm_commands::set_mode_inner(&state, mode) {
+                        if let Err(e) = crate::llm_commands::set_mode_inner(app, &state, mode) {
                             log::warn!("tray set mode: {e}");
                         }
                     }

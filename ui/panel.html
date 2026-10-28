@@ -151,6 +151,7 @@
     modes = await inv('list_modes');
     $('modePick').innerHTML = modes.map(m => `<option value="${m.id}" ${m.active ? 'selected' : ''}>${esc(m.label)}${m.uses_llm ? '' : ' (no LLM)'}</option>`).join('');
   }
+  window.pvx.listen('mode-changed', () => loadModes());
   $('modePick').onchange = async (e) => { try { await inv('set_mode', { id: e.target.value }); flash('Mode: ' + modeLabel(e.target.value)); } catch (err) { flash(String(err)); } };
 
   document.querySelectorAll('nav.tabs button').forEach(b => b.onclick = () => {
@@ -279,9 +280,9 @@
       try { const rm = await inv('remote_models'); $('modelPick').innerHTML = rm.models.map(m => `<option value="${m.id}" ${m.active ? 'selected' : ''} ${m.downloaded ? '' : 'disabled'}>${esc(m.id)} on ${esc(mem.source_label)}${m.downloaded ? '' : ' (not downloaded)'}</option>`).join(''); } catch (e) { /* keep the local list */ }
     }
     $('modelPick').dataset.remote = onHost ? '1' : '';
-    const sel = llm.enabled && llm.selected ? llm.selected.id : (llm.enabled && eps[0] ? '' : 'off');
-    $('llmPick').innerHTML = '<option value="off">Off</option>' + eps.map(e => `<option value="${e.id}" ${e.id === sel ? 'selected' : ''} ${e.healthy ? '' : 'disabled'}>${esc(e.label)}${e.model ? ' · ' + esc(e.model) : (e.models[0] ? ' · ' + esc(e.models[0]) : '')} (${e.is_local ? 'local' : 'LAN'})${e.healthy ? '' : ' · unreachable'}</option>`).join('');
-    if (sel === 'off') $('llmPick').value = 'off';
+    const sel = !llm.enabled ? 'off' : (llm.selected ? llm.selected.id : 'none');
+    $('llmPick').innerHTML = '<option value="off">Off</option>' + (sel === 'none' ? '<option value="none" selected>On · none reachable</option>' : '') + eps.map(e => `<option value="${e.id}" ${e.id === sel ? 'selected' : ''}>${esc(e.label)}${e.model ? ' · ' + esc(e.model) : (e.models[0] ? ' · ' + esc(e.models[0]) : '')} (${e.is_local ? 'local' : 'LAN'})${e.healthy ? '' : ' · unreachable, used when it comes up'}</option>`).join('');
+    if (sel === 'off' || sel === 'none') $('llmPick').value = sel;
     const llmLegend = !llm.enabled ? 'off' : !llm.selected ? 'none reachable' : llm.selected.is_local ? (llm.selected.loaded_bytes ? fmtMB(llm.selected.loaded_bytes) : 'not loaded yet') : 'on ' + llm.selected.label;
     if (!onHost) $('modelPick').innerHTML = models.map(m => `<option value="${m.id}" ${m.active ? 'selected' : ''} ${m.downloaded ? '' : 'disabled'}>${esc(m.id)} · ${esc(m.label.split(' · ')[0].toLowerCase())}${m.downloaded ? '' : ' (not downloaded)'}</option>`).join('');
     const seg = $('meter').children, T = Math.max(1, mem.total);
@@ -316,6 +317,7 @@
   $('llmPick').onchange = async (e) => {
     try {
       if (e.target.value === 'off') { await inv('set_polish_enabled', { enabled: false }); flash('Polish off: Whisper\'s text is pasted as is'); }
+      else if (e.target.value === 'none') { await inv('set_polish_enabled', { enabled: true }); }
       else { await inv('set_llm_endpoint_preferred', { id: e.target.value }); flash('Polish LLM: ' + e.target.selectedOptions[0].textContent); }
     } catch (err) { flash(String(err)); }
     loadMemory();
