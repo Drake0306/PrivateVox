@@ -84,6 +84,7 @@ pub fn run() {
             commands::history_count,
             commands::history_stats,
             commands::machine_label,
+            commands::whisper_languages,
             commands::update_history_text,
             commands::pin_history,
             commands::paste_text,

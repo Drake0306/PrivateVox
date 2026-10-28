@@ -160,6 +160,12 @@ pub fn history_stats(state: State<'_, AppState>) -> Result<HistoryStats, String>
     Ok(HistoryStats { count: rows.len() as u32, words })
 }
 
+/// Whisper's language table for the Settings picker.
+#[tauri::command]
+pub fn whisper_languages() -> Vec<(String, String)> {
+    privatevox_core::language::WHISPER_LANGUAGES.iter().map(|(c, n)| (c.to_string(), n.to_string())).collect()
+}
+
 /// "Apple M1 · 8 GB unified" style label for the memory strip.
 #[tauri::command]
 pub fn machine_label() -> String {

@@ -190,6 +190,9 @@ impl Settings {
         if self.spoken_languages.is_empty() {
             return Err("Pick at least one spoken language".into());
         }
+        if let Some(bad) = self.spoken_languages.iter().find(|l| !crate::language::is_known(l)) {
+            return Err(format!("Unknown language code {bad:?}"));
+        }
         if self.remote.enabled {
             let url = self.remote.base_url.as_deref().map(str::trim).filter(|u| !u.is_empty()).ok_or_else(|| "Enter the host's address, like 192.168.1.20:8765".to_string())?;
             crate::polish::normalize_base_url(url).map_err(|e| format!("Host address: {e}"))?;

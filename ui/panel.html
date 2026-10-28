@@ -48,6 +48,22 @@
           <div style="grid-column:1/-1;display:flex;gap:10px;align-items:center"><button class="btn primary" type="submit">Save</button><span id="settingsErr" class="err"></span><span id="settingsOk" class="muted"></span></div>
         </form>
         <p class="muted">Changes apply on Save without a restart. "Record key" captures the next combination you press.</p>
+        <div class="card" id="dictationCard">
+          <h3>Dictation</h3>
+          <div class="inline" style="align-items:flex-start;gap:18px;flex-wrap:wrap">
+            <div style="min-width:260px;flex:1">
+              <div class="muted" style="margin-bottom:4px">Spoken languages <span style="font-weight:400">· one means no detection; several means Whisper picks per clip from this list</span></div>
+              <input type="search" id="langFilter" placeholder="Filter languages…" aria-label="Filter languages" style="font:14px var(--body);padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--fg);width:100%;margin-bottom:6px">
+              <div id="langList" style="max-height:160px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:6px 10px;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:2px 10px"></div>
+            </div>
+            <div style="min-width:260px;flex:1">
+              <div class="muted" style="margin-bottom:4px">Personal dictionary <span style="font-weight:400">· names and jargon, one per line; Whisper is told to expect them</span></div>
+              <textarea id="dictWords" aria-label="Dictionary" style="width:100%;min-height:120px;font:14px/1.4 var(--body);padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--fg)"></textarea>
+              <label class="muted" style="display:flex;gap:8px;align-items:center;margin-top:6px">Fix near-misses <input type="range" id="dictStrict" min="0" max="40" step="1" style="flex:1"><span id="dictStrictVal"></span></label>
+            </div>
+          </div>
+          <div class="inline" style="margin-top:8px"><button class="btn primary" id="dictationSave">Save dictation settings</button><span id="dictationMsg" class="muted"></span></div>
+        </div>
         <div class="card" id="polishCard">
           <h3>Polish</h3>
           <div class="inline" style="margin-bottom:8px">
@@ -133,7 +149,7 @@
   document.querySelectorAll('nav.tabs button').forEach(b => b.onclick = () => {
     document.querySelectorAll('nav.tabs button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
     for (const t of ['history', 'models', 'settings', 'setup']) $('tab-' + t).hidden = t !== b.dataset.tab;
-    if (b.dataset.tab === 'settings') { loadSettings(); loadPolish(); loadNetwork(); } if (b.dataset.tab === 'setup') loadSetup(); if (b.dataset.tab === 'models') loadModels(); if (b.dataset.tab === 'history') loadMemory();
+    if (b.dataset.tab === 'settings') { loadSettings(); loadPolish(); loadNetwork(); loadDictation(); } if (b.dataset.tab === 'setup') loadSetup(); if (b.dataset.tab === 'models') loadModels(); if (b.dataset.tab === 'history') loadMemory();
   });
 
   // ---------- history ----------
@@ -301,6 +317,30 @@
       try { await inv('set_settings', { settings: n }); $('settingsOk').textContent = 'Saved'; } catch (err) { $('settingsErr').textContent = String(err); }
     };
   }
+
+  // ---------- dictation settings (languages, dictionary) ----------
+  let langTable = [];
+  function renderLangs(selected, filter) {
+    const q = (filter || '').toLowerCase();
+    const rows = langTable.filter(([c, n]) => !q || n.toLowerCase().includes(q) || c.includes(q));
+    rows.sort((a, b) => (selected.includes(b[0]) - selected.includes(a[0])) || a[1].localeCompare(b[1]));
+    $('langList').innerHTML = rows.map(([c, n]) => `<label><input type="checkbox" value="${c}" ${selected.includes(c) ? 'checked' : ''}> ${esc(n)} <span class="muted">${c}</span></label>`).join('');
+  }
+  async function loadDictation() {
+    const s = await inv('get_settings');
+    if (!langTable.length) langTable = await inv('whisper_languages');
+    renderLangs(s.spoken_languages, $('langFilter').value);
+    $('langFilter').oninput = () => { const sel = [...$('langList').querySelectorAll('input:checked')].map(i => i.value); renderLangs(sel.length ? sel : s.spoken_languages, $('langFilter').value); };
+    $('dictWords').value = (s.dictionary || []).join('\n');
+    $('dictStrict').value = Math.round((s.dictionary_strictness || 0) * 100); $('dictStrictVal').textContent = $('dictStrict').value === '0' ? 'off' : ($('dictStrict').value + '%');
+    $('dictStrict').oninput = () => { $('dictStrictVal').textContent = $('dictStrict').value === '0' ? 'off' : ($('dictStrict').value + '%'); };
+  }
+  $('dictationSave').onclick = async () => {
+    const live = await inv('get_settings');
+    const selected = [...$('langList').querySelectorAll('input:checked')].map(i => i.value);
+    const n = { ...live, spoken_languages: selected.length ? selected : live.spoken_languages, dictionary: $('dictWords').value.split('\n').map(w => w.trim()).filter(Boolean), dictionary_strictness: (+$('dictStrict').value) / 100 };
+    try { await inv('set_settings', { settings: n }); $('dictationMsg').textContent = 'Saved'; flash('Dictation settings saved'); } catch (e) { $('dictationMsg').textContent = String(e); }
+  };
 
   // ---------- polish settings ----------
   async function loadPolish() {

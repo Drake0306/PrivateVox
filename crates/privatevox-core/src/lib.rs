@@ -6,6 +6,7 @@ pub mod dictionary;
 pub mod download;
 pub mod export;
 pub mod hotkeys;
+pub mod language;
 pub mod lifecycle;
 pub mod memory;
 pub mod models;
