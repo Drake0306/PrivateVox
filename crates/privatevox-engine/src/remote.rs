@@ -160,6 +160,7 @@ impl Engine for RemoteEngine {
             translate: opts.translate,
             mode: self.state.dictation_mode(),
             polish: self.state.dictation_polish(),
+            initial_prompt: opts.initial_prompt.clone(),
         };
         let clip_secs = pcm.len() as f32 / 16_000.0;
         let timeout = self.timeout.max(crate::policy::deadline_for(clip_secs));

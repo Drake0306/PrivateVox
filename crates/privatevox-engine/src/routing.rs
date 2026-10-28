@@ -249,4 +249,14 @@ mod tests {
         assert!(h.requests.lock().unwrap().is_empty(), "nothing went to the host");
         assert_eq!(r.transcribe(&[0.1; 1600], &DecodeOptions::default()).unwrap().text, "remote", "back to routing outside the scope");
     }
+
+    #[test]
+    fn dictionary_prompt_reaches_the_host() {
+        let h = FakeHost::start(HostBehaviour::Ok { text: "r".into(), polished: "".into(), token: None });
+        let st = in_use_state(&h);
+        let mut r = routing(FakeLocal::default(), &st, 2000, None);
+        let opts = DecodeOptions { initial_prompt: Some("ChargeBee, Roy".into()), ..DecodeOptions::default() };
+        r.transcribe(&[0.0; 160], &opts).unwrap();
+        assert_eq!(h.requests.lock().unwrap()[0].initial_prompt.as_deref(), Some("ChargeBee, Roy"));
+    }
 }

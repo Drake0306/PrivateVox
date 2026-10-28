@@ -276,6 +276,20 @@ fn hotkey_hint(s: &Settings) -> String {
     }
 }
 
+/// After a clip was written: record it on the row, or remove it when the row was deleted meanwhile.
+pub fn finalize_clip(store: &mut Store, id: i64, path: &std::path::Path) {
+    match store.get(id) {
+        Ok(Some(_)) => {
+            if let Err(e) = store.set_audio_path(id, Some(&path.to_string_lossy())) {
+                log::warn!("keep audio: {e}");
+            }
+        }
+        _ => {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
 /// Transcribe on the host when it is in use, without holding the local engine lock while waiting on the network
 /// (a host served from this same process needs that lock). On a host failure the notice is set and the local engine
 /// takes over, loading `model_path` if it has to.
@@ -485,11 +499,11 @@ impl Coordinator {
                     }
                 }
                 Cmd::Notice(message) => {
-                    if self.recording.is_none() {
+                    if self.recording.is_none() && self.queued.is_none() {
                         self.error(&message);
                         self.schedule_idle(&tx);
                     } else {
-                        log::warn!("notice while recording: {message}");
+                        log::warn!("notice while busy, not shown: {message}");
                     }
                 }
                 Cmd::SwitchModel(id) => {
@@ -989,7 +1003,13 @@ impl Coordinator {
         let mode = Mode::parse(&row.mode).unwrap_or(settings.mode);
         let opts = DecodeOptions { language, translate: mode.whisper_translate(), initial_prompt: initial_prompt(&settings.dictionary), n_threads: 4, final_chunk: true };
         let fell_back = Arc::new(AtomicBool::new(false));
-        let text = match transcribe_routed(&self.deps.remote, &self.deps.engine, &pcm, &opts, false, &fell_back, self.deps.model_path.as_ref(), settings.flash_attention) {
+        // Re-run goes wherever dictation goes right now: the host when it is in use, else this machine.
+        let use_remote = self.deps.remote.in_use();
+        if use_remote {
+            self.deps.remote.new_session();
+            self.deps.remote.set_dictation(mode.id(), false);
+        }
+        let text = match transcribe_routed(&self.deps.remote, &self.deps.engine, &pcm, &opts, use_remote, &fell_back, self.deps.model_path.as_ref(), settings.flash_attention) {
             Ok(t) => {
                 let english = t.language.as_deref().map(|l| l == "en").unwrap_or(true);
                 correct(&normalize_with(&t.text, english, settings.remove_fillers), &settings.dictionary, settings.dictionary_strictness)
@@ -1146,7 +1166,8 @@ impl Coordinator {
             idle.touch(Instant::now());
         }
         let decode_ms = t_total.elapsed().as_millis() as u64;
-        self.paste_and_store(text, (total as f32 / SAMPLE_RATE as f32 * 1000.0) as u32, serde_json::json!({ "chunks": chunks, "tail_ms": decode_ms, "total_ms": decode_ms }), Some(pcm), tx);
+        // Chunks decode with the first spoken language fixed (Task 2 ruling), so the row says so.
+        self.paste_and_store(text, (total as f32 / SAMPLE_RATE as f32 * 1000.0) as u32, serde_json::json!({ "chunks": chunks, "tail_ms": decode_ms, "total_ms": decode_ms, "language_source": "fixed" }), Some(pcm), tx);
     }
 
     /// Shared tail of both decode paths: polish (when the mode asks for it), paste, store.
@@ -1273,7 +1294,7 @@ impl Coordinator {
                 .spawn(move || match privatevox_core::audio::write_wav_16k(&path, &pcm) {
                     Ok(()) => {
                         if let Ok(mut st) = store.lock() {
-                            let _ = st.set_audio_path(id, Some(&path.to_string_lossy()));
+                            finalize_clip(&mut st, id, &path);
                         }
                     }
                     Err(e) => log::warn!("keep audio: {e}"),
@@ -2881,5 +2902,60 @@ use privatevox_core::preview::{partial_text, preview_enabled};
         assert!(states.iter().any(|s| matches!(s, PillState::Pasted { preview } if preview.contains("Undoing"))), "{:?}", kinds(&states));
         h.tx.send(Cmd::Quit).unwrap();
         h.join.join().unwrap();
+    }
+
+    #[test]
+    fn chunked_rows_record_language_source() {
+        let h = harness(engine_saying("{n}"), FakeCapture { pcm: long_fixture(45), fail: false, die_after_start: false });
+        h.settings.lock().unwrap().mode = Mode::Raw;
+        h.tx.send(Cmd::Start).unwrap();
+        std::thread::sleep(Duration::from_millis(1200));
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(1500));
+        let row = last_row(&h);
+        assert!(row.timing_json.as_deref().unwrap_or("").contains("\"language_source\":\"fixed\""), "{:?}", row.timing_json);
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn rerun_uses_the_host_when_in_use() {
+        let host = FakeHost::start(HostBehaviour::Ok { text: "from host".into(), polished: "".into(), token: None });
+        let st = in_use(&host);
+        let h = harness_remote(engine_saying("local"), capture_ok(), st.clone());
+        {
+            let mut s = h.settings.lock().unwrap();
+            s.mode = Mode::Raw;
+            s.keep_audio = true;
+        }
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        let id = last_row(&h).id;
+        wait_for_clip(&h, id).expect("clip saved");
+        h.tx.send(Cmd::Rerun { id, model: "large-v3-turbo".into() }).unwrap();
+        std::thread::sleep(Duration::from_millis(600));
+        assert_eq!(host.requests.lock().unwrap().len(), 2, "the re-run went to the host too");
+        assert_eq!(h.store.lock().unwrap().get(id).unwrap().unwrap().raw_text, "from host");
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn clip_finalize_drops_the_file_when_the_row_is_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("privatevox.sqlite")).unwrap();
+        let id = store.insert(&NewDictation { app_name: None, mode: "raw".into(), model: "m".into(), language: None, duration_ms: 1, raw_text: "x".into(), polished_text: None, polished_by: None, polish_status: "none".into(), status: "ok".into(), timing_json: None, engine_kind: "local".into() }).unwrap();
+        let clip = dir.path().join("audio").join(format!("{id}.wav"));
+        privatevox_core::audio::write_wav_16k(&clip, &[0.0; 160]).unwrap();
+        store.delete(id).unwrap();
+        finalize_clip(&mut store, id, &clip);
+        assert!(!clip.exists(), "a clip whose row was deleted meanwhile is removed, not orphaned");
+        let id2 = store.insert(&NewDictation { app_name: None, mode: "raw".into(), model: "m".into(), language: None, duration_ms: 1, raw_text: "y".into(), polished_text: None, polished_by: None, polish_status: "none".into(), status: "ok".into(), timing_json: None, engine_kind: "local".into() }).unwrap();
+        let clip2 = dir.path().join("audio").join(format!("{id2}.wav"));
+        privatevox_core::audio::write_wav_16k(&clip2, &[0.0; 160]).unwrap();
+        finalize_clip(&mut store, id2, &clip2);
+        assert!(clip2.exists());
+        assert_eq!(store.get(id2).unwrap().unwrap().audio_path.as_deref(), Some(clip2.to_string_lossy().as_ref()));
     }
 }

@@ -143,7 +143,7 @@ mod tests {
     #[test]
     fn dictation_sends_pcm_and_returns_text() {
         let h = ok_host();
-        let req = DictationRequest { client: "Mac".into(), session: "s".into(), index: 0, final_: true, pcm: encode_pcm(&[0.1; 1600]), language: Some("en".into()), translate: false, mode: "clean".into(), polish: false };
+        let req = DictationRequest { client: "Mac".into(), session: "s".into(), index: 0, final_: true, pcm: encode_pcm(&[0.1; 1600]), language: Some("en".into()), translate: false, mode: "clean".into(), polish: false, initial_prompt: None };
         let r = HostClient::new(&h.base_url, None).dictation(&req, Duration::from_secs(2)).unwrap();
         assert_eq!(r.text, "hello there");
         let got = h.requests.lock().unwrap()[0].clone();

@@ -150,6 +150,7 @@ pub fn write_wav_16k(path: &std::path::Path, pcm: &[f32]) -> Result<()> {
     Ok(())
 }
 
+/// Read a WAV (any rate, mono or stereo) and return 16 kHz mono f32 samples.
 pub fn load_wav_16k(path: &std::path::Path) -> Result<Vec<f32>> {
     let mut reader = hound::WavReader::open(path).with_context(|| format!("open {}", path.display()))?;
     let spec = reader.spec();

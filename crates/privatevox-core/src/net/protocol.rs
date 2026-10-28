@@ -56,6 +56,9 @@ pub struct DictationRequest {
     /// True when the client will call `/v1/polish` for this session; false closes the session at `final`.
     #[serde(default)]
     pub polish: bool,
+    /// The client's dictionary prompt, applied by the host's Whisper.
+    #[serde(default)]
+    pub initial_prompt: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -167,7 +170,7 @@ mod tests {
 
     #[test]
     fn dictation_request_uses_final_on_the_wire() {
-        let r = DictationRequest { client: "Mac".into(), session: "s1".into(), index: 0, final_: true, pcm: "".into(), language: Some("en".into()), translate: false, mode: "clean".into(), polish: true };
+        let r = DictationRequest { client: "Mac".into(), session: "s1".into(), index: 0, final_: true, pcm: "".into(), language: Some("en".into()), translate: false, mode: "clean".into(), polish: true, initial_prompt: None };
         let j = serde_json::to_string(&r).unwrap();
         assert!(j.contains("\"final\":true"), "{j}");
         assert_eq!(serde_json::from_str::<DictationRequest>(&j).unwrap(), r);

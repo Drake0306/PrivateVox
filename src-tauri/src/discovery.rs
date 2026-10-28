@@ -59,7 +59,8 @@ pub fn advertise(name: &str, port: u16, version: &str, addresses: &[String]) -> 
     let host_label: String = instance.chars().map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '-' }).collect();
     let host_name = format!("{host_label}.local.");
     let ips = addresses.join(",");
-    let info = ServiceInfo::new(SERVICE_TYPE, &instance, &host_name, ips.as_str(), port, &txt_properties(name, port, version)[..])?;
+    // enable_addr_auto: the daemon re-announces when interfaces change (Wi-Fi switch), so the advertised address stays right.
+    let info = ServiceInfo::new(SERVICE_TYPE, &instance, &host_name, ips.as_str(), port, &txt_properties(name, port, version)[..])?.enable_addr_auto();
     let fullname = info.get_fullname().to_string();
     daemon.register(info)?;
     log::info!("mdns: advertising {fullname} on port {port}");

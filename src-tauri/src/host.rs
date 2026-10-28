@@ -156,8 +156,9 @@ pub fn apply_settings(app: &tauri::AppHandle, state: &crate::state::AppState, s:
     if running_port == wanted && (wanted.is_none() || slot.as_ref().map(|h| h.token_matches(s.host.token.as_deref())).unwrap_or(false)) {
         return;
     }
-    if let Some(h) = slot.take() {
+    if let Some(mut h) = slot.take() {
         log::info!("host mode: stopping");
+        h.advertiser = None; // say goodbye on the LAN now, before a new registration can overlap
         // Joining the workers can wait on a transcription in flight; never on the main thread.
         std::thread::Builder::new().name("privatevox-host-stop".into()).spawn(move || h.stop()).ok();
     }
@@ -339,7 +340,7 @@ impl Inner {
         let (text, language) = match speech {
             None => (String::new(), d.language.clone()),
             Some(s) => {
-                let opts = DecodeOptions { language: d.language.clone(), translate: d.translate, initial_prompt: None, n_threads: 4, final_chunk: d.final_ };
+                let opts = DecodeOptions { language: d.language.clone(), translate: d.translate, initial_prompt: d.initial_prompt.clone(), n_threads: 4, final_chunk: d.final_ };
                 // A host does the work itself, even if it is also set up to use a host.
                 let r = privatevox_engine::routing::with_local_only(|| {
                     self.deps.engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| {
@@ -608,7 +609,7 @@ mod tests {
 
     fn chunk(session: &str, index: u32, final_: bool, mode: &str, pcm: &[f32]) -> DictationRequest {
         let polish = privatevox_core::polish::Mode::parse(mode).map(|m| m.uses_llm()).unwrap_or(false);
-        DictationRequest { client: "Mac".into(), session: session.into(), index, final_, pcm: encode_pcm(pcm), language: Some("en".into()), translate: false, mode: mode.into(), polish }
+        DictationRequest { client: "Mac".into(), session: session.into(), index, final_, pcm: encode_pcm(pcm), language: Some("en".into()), translate: false, mode: mode.into(), polish, initial_prompt: None }
     }
 
     #[test]

@@ -372,6 +372,7 @@ pub fn run() {
             }
             llm::spawn_health_loop(polisher.clone(), app.handle().clone());
             remote::spawn_health_loop(remote.clone(), app.handle().clone());
+            #[cfg(target_os = "macos")]
             secure_input::spawn_watch(tx.clone());
             app.manage(AppState { paths, settings, store, tx: Mutex::new(tx), stale_lock: stale, last_state, downloading: Mutex::new(Default::default()), engine: engine.clone(), polisher, remote, host: Mutex::new(None), vad_path: vad_path.clone(), model_path_slot });
             {
