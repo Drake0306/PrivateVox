@@ -136,6 +136,8 @@ pub struct Deps {
     pub on_history_changed: Arc<dyn Fn() + Send + Sync>,
     /// Where kept audio clips go (`<data>/audio/<row id>.wav`).
     pub audio_dir: PathBuf,
+    /// Sound/visual cue hook; the app gates it on the setting and plays on a helper thread.
+    pub cue: Arc<dyn Fn(crate::cues::Cue) + Send + Sync>,
 }
 
 /// One chunk's decode request for the per-recording decode worker.
@@ -578,6 +580,7 @@ impl Coordinator {
         }
         match self.deps.capture.start(on_pcm, on_error) {
             Ok(()) => {
+                (self.deps.cue)(crate::cues::Cue::Start);
                 self.recording = Some(Recording { buffer, level, started: Instant::now(), ticks: 0, chunker: Chunker::new(), scored_frames: 0, probs: Vec::new(), chunks_sent: 0, worker: None, results: Arc::new(Mutex::new(Default::default())), used_remote, fell_back: Arc::new(AtomicBool::new(false)), cancelled: Arc::new(AtomicBool::new(false)), silence_scored: 0, silence: TrailingSilence::new() });
                 self.generation += 1;
                 let _ = self.machine.on(Input::StartResult(true), Instant::now());
@@ -1034,6 +1037,9 @@ impl Coordinator {
     }
 
     fn stop(&mut self, tx: &Sender<Cmd>) {
+        if self.recording.is_some() {
+            (self.deps.cue)(crate::cues::Cue::Stop);
+        }
         let Some(rec) = self.recording.take() else {
             self.pipeline_done(tx);
             return;
@@ -1105,6 +1111,7 @@ impl Coordinator {
         let english = settings.spoken_languages.first().map(|l| l == "en").unwrap_or(true);
         let text = correct(&normalize_with(&texts.join(" "), english, settings.remove_fillers), &settings.dictionary, settings.dictionary_strictness);
         if text.is_empty() {
+            (self.deps.cue)(crate::cues::Cue::NothingHeard);
             self.error("Nothing heard");
             self.schedule_idle(tx);
             return;
@@ -1233,11 +1240,13 @@ impl Coordinator {
         let t = Instant::now();
         let speech = match self.vad.classify(&pcm, &VadConfig::default()) {
             Ok(ClipClass::Silent) => {
+                (self.deps.cue)(crate::cues::Cue::NothingHeard);
                 self.error("Microphone is silent");
                 self.schedule_idle(tx);
                 return;
             }
             Ok(ClipClass::NothingHeard) => {
+                (self.deps.cue)(crate::cues::Cue::NothingHeard);
                 self.error("Nothing heard");
                 self.schedule_idle(tx);
                 return;
@@ -1304,6 +1313,7 @@ impl Coordinator {
         let english = transcript.language.as_deref().or(settings.spoken_languages.first().map(|s| s.as_str())).map(|l| l == "en").unwrap_or(true);
         let text = correct(&normalize_with(&transcript.text, english, settings.remove_fillers), &settings.dictionary, settings.dictionary_strictness);
         if text.is_empty() {
+            (self.deps.cue)(crate::cues::Cue::NothingHeard);
             self.error("Nothing heard");
             self.schedule_idle(tx);
             return;
@@ -1451,6 +1461,7 @@ mod tests {
         warms: Arc<Mutex<u32>>,
         llm_unloads: Arc<Mutex<u32>>,
         history_changed: Arc<Mutex<u32>>,
+        cues: Arc<Mutex<Vec<crate::cues::Cue>>>,
         tx: std::sync::mpsc::Sender<Cmd>,
         join: std::thread::JoinHandle<()>,
         _dir: tempfile::TempDir,
@@ -1498,6 +1509,8 @@ mod tests {
         let llm_unloads: Arc<Mutex<u32>> = Default::default();
         let history_changed: Arc<Mutex<u32>> = Default::default();
         let (w, u, hc) = (warms.clone(), llm_unloads.clone(), history_changed.clone());
+        let cues: Arc<Mutex<Vec<crate::cues::Cue>>> = Default::default();
+        let cq = cues.clone();
         let deps = Deps {
             engine: Arc::new(Mutex::new(engine)),
             remote: remote.clone(),
@@ -1518,6 +1531,7 @@ mod tests {
             llm_unload: Arc::new(move || *u.lock().unwrap() += 1),
             on_history_changed: Arc::new(move || *hc.lock().unwrap() += 1),
             audio_dir: dir.path().join("audio"),
+            cue: Arc::new(move |c| cq.lock().unwrap().push(c)),
         };
         let st = states.clone();
         let coord = Coordinator::new(deps, settings.clone(), store.clone(), vad, Box::new(move |s| st.lock().unwrap().push(s)));
@@ -1525,7 +1539,7 @@ mod tests {
         let tx2 = tx.clone();
         let join = std::thread::spawn(move || coord.run(rx, tx2));
         let _ = &remote;
-        Harness { states, pasted, store, settings, switched, benchmarks, undos, frontmost, polish_fn, polish_calls, warms, llm_unloads, history_changed, tx, join, _dir: dir }
+        Harness { states, pasted, store, settings, switched, benchmarks, undos, frontmost, polish_fn, polish_calls, warms, llm_unloads, history_changed, cues, tx, join, _dir: dir }
     }
 
     fn kinds(states: &[PillState]) -> Vec<&'static str> {
@@ -2681,6 +2695,26 @@ mod tests {
         h.tx.send(Cmd::Stop).unwrap();
         std::thread::sleep(Duration::from_millis(400));
         assert_eq!(last_row(&h).mode, "bullets");
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn cues_fire_on_start_stop_and_nothing_heard() {
+        use crate::cues::Cue;
+        let h = harness(engine_saying("hello"), capture_ok());
+        h.settings.lock().unwrap().mode = Mode::Raw;
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(h.cues.lock().unwrap().clone(), vec![Cue::Start, Cue::Stop]);
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+        let h = harness(engine_saying("hello"), FakeCapture { pcm: vec![0.0f32; 16_000], fail: false, die_after_start: false });
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(h.cues.lock().unwrap().clone(), vec![Cue::Start, Cue::Stop, Cue::NothingHeard]);
         h.tx.send(Cmd::Quit).unwrap();
         h.join.join().unwrap();
     }

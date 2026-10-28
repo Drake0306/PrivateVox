@@ -3,7 +3,8 @@
 pub mod adapters;
 pub mod benchmark;
 pub mod commands;
-pub mod discovery;
+pub mod cues;
+mod discovery;
 mod frontmost;
 pub mod host;
 mod hotkeys;
@@ -258,6 +259,14 @@ pub fn run() {
                     })
                 },
                 audio_dir: paths.data_dir.join("audio"),
+                cue: {
+                    let settings = settings.clone();
+                    Arc::new(move |c| {
+                        if settings.lock().map(|s| cues::enabled(&s, c)).unwrap_or(false) {
+                            cues::play(c);
+                        }
+                    })
+                },
             };
 
             let last_state = Arc::new(laststate::LastState::default());

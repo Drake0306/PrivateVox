@@ -129,6 +129,8 @@
               <textarea id="dictWords" aria-label="Dictionary" style="width:100%;min-height:120px;font:14px/1.4 var(--body);padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--fg)"></textarea>
               <label class="muted" style="display:flex;gap:8px;align-items:center;margin-top:6px">Fix near-misses <input type="range" id="dictStrict" min="0" max="40" step="1" style="flex:1"><span id="dictStrictVal"></span></label>
               <label class="muted" style="display:block;margin-top:8px"><input type="checkbox" id="keepAudio"> Keep audio clips (replay and re-run from history; stored under the app's data folder)</label>
+              <label class="muted" style="display:block;margin-top:6px"><input type="checkbox" id="soundCues"> Sound cues on start, stop and "nothing heard"</label>
+              <label class="muted" style="display:block;margin-top:6px">Toggle mode stops by itself after <input type="number" id="autoStop" min="0" max="30" style="width:60px"> s of silence (0 = never)</label>
             </div>
           </div>
           <div class="inline" style="margin-top:8px"><button class="btn primary" id="dictationSave">Save dictation settings</button><span id="dictationMsg" class="muted"></span></div>
@@ -427,13 +429,15 @@
     $('langFilter').oninput = () => renderLangs($('langFilter').value);
     $('dictWords').value = (s.dictionary || []).join('\n');
     $('keepAudio').checked = !!s.keep_audio;
+    $('soundCues').checked = !!s.sound_cues;
+    $('autoStop').value = s.auto_stop_silence_secs == null ? 0 : s.auto_stop_silence_secs;
     $('dictStrict').value = Math.round((s.dictionary_strictness || 0) * 100); $('dictStrictVal').textContent = $('dictStrict').value === '0' ? 'off' : ($('dictStrict').value + '%');
     $('dictStrict').oninput = () => { $('dictStrictVal').textContent = $('dictStrict').value === '0' ? 'off' : ($('dictStrict').value + '%'); };
   }
   $('dictationSave').onclick = async () => {
     const live = await inv('get_settings');
     const selected = [...selectedLangs];
-    const n = { ...live, spoken_languages: selected.length ? selected : live.spoken_languages, dictionary: $('dictWords').value.split('\n').map(w => w.trim()).filter(Boolean), dictionary_strictness: (+$('dictStrict').value) / 100, keep_audio: $('keepAudio').checked };
+    const n = { ...live, spoken_languages: selected.length ? selected : live.spoken_languages, dictionary: $('dictWords').value.split('\n').map(w => w.trim()).filter(Boolean), dictionary_strictness: (+$('dictStrict').value) / 100, keep_audio: $('keepAudio').checked, sound_cues: $('soundCues').checked, auto_stop_silence_secs: (+$('autoStop').value) > 0 ? +$('autoStop').value : null };
     try { await inv('set_settings', { settings: n }); $('dictationMsg').textContent = 'Saved'; flash('Dictation settings saved'); } catch (e) { $('dictationMsg').textContent = String(e); }
   };
 

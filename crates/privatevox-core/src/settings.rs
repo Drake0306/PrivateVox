@@ -123,6 +123,8 @@ pub struct Settings {
     pub auto_stop_silence_secs: Option<u32>,
     /// Per-app default modes, first match wins (phase 5, A4).
     pub app_modes: Vec<crate::appmodes::AppMode>,
+    /// Soft sounds on start, stop and "nothing heard" (phase 5, A5).
+    pub sound_cues: bool,
 }
 
 impl Default for Settings {
@@ -158,6 +160,7 @@ impl Default for Settings {
             keep_audio: false,
             auto_stop_silence_secs: Some(2),
             app_modes: Vec::new(),
+            sound_cues: true,
         }
     }
 }
