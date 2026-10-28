@@ -333,6 +333,12 @@ pub fn build_memory_input(store: &privatevox_core::store::Store, selected: &str,
 
 #[tauri::command]
 pub fn memory_report(state: State<'_, AppState>) -> Result<privatevox_core::memory::MemoryReport, String> {
+    // While a host is in use the strip describes the host, not this machine (§8.6).
+    if state.remote.in_use() {
+        if let Some(st) = state.remote.last_status.lock().ok().and_then(|s| s.clone()) {
+            return Ok(privatevox_core::memory::budget_from_host(&st, &state.remote.label()));
+        }
+    }
     let selected = state.settings.lock().map(|s| s.model_id.clone()).map_err(|e| e.to_string())?;
     let ours = match state.engine.try_lock() {
         Ok(e) => e.resident_bytes(),

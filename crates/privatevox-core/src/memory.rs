@@ -60,6 +60,10 @@ pub struct MemoryReport {
     pub free_after: u64,
     /// Footprint used for each tier (measured or estimate), for the tiles.
     pub tier_bytes: HashMap<String, u64>,
+    /// Set when the figures describe a host on the LAN rather than this machine ("On PC").
+    pub source_label: Option<String>,
+    /// The host's adapter name, when the figures come from a host.
+    pub adapter: Option<String>,
 }
 
 fn footprint(input: &MemoryInput, id: &str) -> u64 {
@@ -69,6 +73,26 @@ fn footprint(input: &MemoryInput, id: &str) -> u64 {
 fn fits(input: &MemoryInput, id: &str) -> bool {
     let projected = input.used_by_others + footprint(input, id) + input.llm_bytes;
     projected as f64 <= input.total as f64 * 0.8
+}
+
+/// The strip's numbers for a host on the LAN, from its `/v1/status` (design §8.6, §9): the host's Whisper and
+/// polish models are "ours", everything else it uses is "other apps".
+pub fn budget_from_host(status: &crate::net::StatusReply, label: &str) -> MemoryReport {
+    let mut footprints = HashMap::new();
+    if status.whisper.resident_bytes > 0 {
+        footprints.insert(status.whisper.model.clone(), status.whisper.resident_bytes);
+    }
+    let input = MemoryInput {
+        total: status.gpu.total_bytes,
+        used_by_others: status.gpu.used_bytes.saturating_sub(status.whisper.resident_bytes).saturating_sub(status.polish.resident_bytes),
+        footprints,
+        llm_bytes: status.polish.resident_bytes,
+        selected: status.whisper.model.clone(),
+    };
+    let mut report = budget(&input);
+    report.source_label = Some(label.to_string());
+    report.adapter = Some(status.gpu.name.clone());
+    report
 }
 
 /// The strip's numbers and verdicts (design §9).
@@ -103,6 +127,8 @@ pub fn budget(input: &MemoryInput) -> MemoryReport {
         best,
         free_after: input.total.saturating_sub(projected),
         tier_bytes,
+        source_label: None,
+        adapter: None,
     }
 }
 
@@ -232,5 +258,31 @@ mod tests {
         let mut sys = sysinfo::System::new();
         sys.refresh_memory();
         println!("SYSMEM total={} used={} free={} available={}", total, used, sys.free_memory(), sys.available_memory());
+    }
+
+    #[test]
+    fn budget_from_host_maps_status() {
+        use crate::net::{GpuInfo, PolishInfo, StatusReply, WhisperInfo};
+        let st = StatusReply {
+            name: "PC".into(),
+            version: "0.3.0".into(),
+            platform: "windows".into(),
+            gpu: GpuInfo { name: "RX 9070".into(), total_bytes: 16_000_000_000, used_bytes: 5_000_000_000 },
+            whisper: WhisperInfo { model: "large-v3-turbo".into(), loaded: true, resident_bytes: 1_300_000_000 },
+            polish: PolishInfo { enabled: true, endpoint_label: Some("LM Studio".into()), model: Some("qwen".into()), resident_bytes: 2_000_000_000 },
+            clients: 1,
+        };
+        let r = budget_from_host(&st, "PC");
+        assert_eq!(r.total, 16_000_000_000);
+        assert_eq!(r.used_by_others, 1_700_000_000);
+        assert_eq!(r.selected, "large-v3-turbo");
+        assert_eq!(r.selected_bytes, 1_300_000_000);
+        assert_eq!(r.llm_bytes, 2_000_000_000);
+        assert_eq!(r.projected, 5_000_000_000);
+        assert_eq!(r.percent, 31);
+        assert_eq!(r.verdict, Verdict::Good);
+        assert_eq!(r.source_label.as_deref(), Some("PC"));
+        assert_eq!(r.adapter.as_deref(), Some("RX 9070"));
+        assert!(budget(&MemoryInput { total: 8, used_by_others: 1, footprints: Default::default(), llm_bytes: 0, selected: "large-v3-turbo".into() }).source_label.is_none());
     }
 }

@@ -13,6 +13,7 @@ mod llm_commands;
 pub mod models;
 pub mod paste;
 pub mod pipeline;
+mod net_commands;
 mod remote;
 pub mod state;
 pub mod tray;
@@ -117,6 +118,14 @@ pub fn run() {
             llm_commands::set_llm_timeout,
             llm_commands::set_remove_fillers,
             llm_commands::repolish_history,
+            net_commands::network_status,
+            net_commands::test_host,
+            net_commands::set_remote,
+            net_commands::set_host,
+            net_commands::set_machine_name,
+            net_commands::remote_history,
+            net_commands::remote_models,
+            net_commands::select_remote_model,
         ])
         .setup(move |app| {
             log::info!("PrivateVox {} starting", privatevox_core::version());
