@@ -127,6 +127,8 @@ pub struct Settings {
     pub sound_cues: bool,
     /// Words in the pill while you speak (phase 5, A1).
     pub live_preview: crate::preview::Preview,
+    /// "new line", "delete that", "cancel" at the end of a dictation (phase 5, A3).
+    pub spoken_commands: bool,
 }
 
 impl Default for Settings {
@@ -164,6 +166,7 @@ impl Default for Settings {
             app_modes: Vec::new(),
             sound_cues: true,
             live_preview: crate::preview::Preview::Auto,
+            spoken_commands: true,
         }
     }
 }

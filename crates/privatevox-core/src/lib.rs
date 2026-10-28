@@ -3,6 +3,7 @@
 pub mod appmodes;
 pub mod audio;
 pub mod chunking;
+pub mod commands;
 pub mod dictionary;
 pub mod download;
 pub mod export;

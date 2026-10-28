@@ -5,6 +5,7 @@ use crate::paste::PasteOutcome;
 use privatevox_core::appmodes::resolve as resolve_app_mode;
 use privatevox_core::audio::{level_db, ClipBuffer, SAMPLE_RATE};
 use privatevox_core::chunking::{Chunker, MAX_CHUNK};
+use privatevox_core::commands::{strip_trailing, SpokenCommand};
 use privatevox_core::dictionary::{correct, initial_prompt};
 use privatevox_core::language::{decode_language, settle, LanguageSource};
 use privatevox_core::hotkeys::{Effect, Input, Machine};
@@ -1152,6 +1153,33 @@ impl Coordinator {
     fn paste_and_store(&mut self, raw: String, duration_ms: u32, mut timing: serde_json::Value, audio: Option<Vec<f32>>, tx: &Sender<Cmd>) {
         let settings = self.settings();
         let mode = self.dictation_mode;
+        // Spoken commands: only the trailing phrase is looked at (A3).
+        let raw = if settings.spoken_commands {
+            let (rest, cmd) = strip_trailing(&raw);
+            match cmd {
+                Some(SpokenCommand::Cancel) => {
+                    (self.emit)(PillState::Pasted { preview: "Cancelled (nothing pasted)".into() });
+                    self.schedule_idle(tx);
+                    return;
+                }
+                Some(SpokenCommand::DeleteThat) | Some(SpokenCommand::Undo) => {
+                    let _ = tx.send(Cmd::Undo);
+                    (self.emit)(PillState::Pasted { preview: "Undoing the last paste".into() });
+                    self.schedule_idle(tx);
+                    return;
+                }
+                Some(SpokenCommand::NewLine) => format!("{rest}\n"),
+                Some(SpokenCommand::NewParagraph) => format!("{rest}\n\n"),
+                None => raw,
+            }
+        } else {
+            raw
+        };
+        if raw.trim().is_empty() {
+            self.error("Nothing heard");
+            self.schedule_idle(tx);
+            return;
+        }
         let t_polish = Instant::now();
         let engine_notice = self.deps.remote.take_notice();
         let outcome = if settings.polish_enabled && mode.uses_llm() {
@@ -2803,6 +2831,54 @@ use privatevox_core::preview::{partial_text, preview_enabled};
         std::thread::sleep(Duration::from_millis(3600));
         assert_eq!(decodes.lock().unwrap().len(), 0);
         h.tx.send(Cmd::Cancel).unwrap();
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn cancel_alone_pastes_and_stores_nothing() {
+        let h = harness(engine_saying("cancel"), capture_ok());
+        h.settings.lock().unwrap().mode = Mode::Raw;
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(400));
+        assert!(h.pasted.lock().unwrap().is_empty());
+        assert_eq!(h.store.lock().unwrap().count().unwrap(), 0);
+        let states = h.states.lock().unwrap().clone();
+        assert!(states.iter().any(|s| matches!(s, PillState::Pasted { preview } if preview.contains("Cancelled"))), "{:?}", kinds(&states));
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn new_line_appends_a_break_and_commands_can_be_switched_off() {
+        let h = harness(engine_saying("first line new line"), capture_ok());
+        h.settings.lock().unwrap().mode = Mode::Raw;
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(h.pasted.lock().unwrap().clone(), vec!["first line\n".to_string()]);
+        assert_eq!(last_row(&h).raw_text, "first line\n");
+        h.settings.lock().unwrap().spoken_commands = false;
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(h.pasted.lock().unwrap()[1], "first line new line");
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn delete_that_undoes_the_last_paste() {
+        let h = harness(engine_saying("delete that"), capture_ok());
+        h.settings.lock().unwrap().mode = Mode::Raw;
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(400));
+        assert!(h.pasted.lock().unwrap().is_empty(), "the command itself is never pasted");
+        assert_eq!(h.store.lock().unwrap().count().unwrap(), 0, "and never stored");
+        let states = h.states.lock().unwrap().clone();
+        assert!(states.iter().any(|s| matches!(s, PillState::Pasted { preview } if preview.contains("Undoing"))), "{:?}", kinds(&states));
         h.tx.send(Cmd::Quit).unwrap();
         h.join.join().unwrap();
     }
