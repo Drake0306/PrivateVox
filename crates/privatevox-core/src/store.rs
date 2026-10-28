@@ -41,6 +41,8 @@ pub struct Dictation {
     pub timing_json: Option<String>,
     pub pinned: bool,
     pub engine_kind: String,
+    /// Kept audio clip (16 kHz WAV), when keep-audio was on.
+    pub audio_path: Option<String>,
 }
 
 pub struct Store {
@@ -107,7 +109,7 @@ fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
-const COLUMNS: &str = "id, created_at_ms, app_name, mode, model, language, duration_ms, raw_text, polished_text, status, timing_json, pinned, polished_by, polish_status, engine_kind";
+const COLUMNS: &str = "id, created_at_ms, app_name, mode, model, language, duration_ms, raw_text, polished_text, status, timing_json, pinned, polished_by, polish_status, engine_kind, audio_path";
 /// Current schema version; `open` migrates older files forward.
 pub const SCHEMA_VERSION: i64 = 2;
 
@@ -128,6 +130,7 @@ fn map_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Dictation> {
         polished_by: r.get(12)?,
         polish_status: r.get(13)?,
         engine_kind: r.get(14)?,
+        audio_path: r.get(15)?,
     })
 }
 
@@ -201,6 +204,17 @@ impl Store {
             "UPDATE dictations SET mode = ?1, polished_text = ?2, polished_by = ?3, polish_status = ?4 WHERE id = ?5",
             params![mode, polished_text, polished_by, polish_status, id],
         )?;
+        Ok(())
+    }
+
+    pub fn set_audio_path(&mut self, id: i64, path: Option<&str>) -> Result<()> {
+        self.conn.execute("UPDATE dictations SET audio_path = ?1 WHERE id = ?2", params![path, id])?;
+        Ok(())
+    }
+
+    /// A re-run from the kept clip replaces Whisper's text.
+    pub fn update_raw(&mut self, id: i64, raw_text: &str) -> Result<()> {
+        self.conn.execute("UPDATE dictations SET raw_text = ?1 WHERE id = ?2", params![raw_text, id])?;
         Ok(())
     }
 
@@ -445,5 +459,18 @@ INSERT INTO dictations(created_at_ms, mode, model, duration_ms, raw_text, status
         assert_eq!(d.polished_by.as_deref(), Some("ep-1"));
         assert_eq!(d.polish_status, "ok");
         assert_eq!(d.raw_text, "raw");
+    }
+
+    #[test]
+    fn audio_path_round_trip_and_update_raw() {
+        let (_d, mut s) = fresh();
+        let id = s.insert(&row("raw")).unwrap();
+        assert!(s.get(id).unwrap().unwrap().audio_path.is_none());
+        s.set_audio_path(id, Some("/tmp/clips/1.wav")).unwrap();
+        assert_eq!(s.get(id).unwrap().unwrap().audio_path.as_deref(), Some("/tmp/clips/1.wav"));
+        s.update_raw(id, "second pass").unwrap();
+        assert_eq!(s.get(id).unwrap().unwrap().raw_text, "second pass");
+        s.set_audio_path(id, None).unwrap();
+        assert!(s.list(10, 0).unwrap()[0].audio_path.is_none());
     }
 }

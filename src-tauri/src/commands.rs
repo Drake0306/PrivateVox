@@ -91,7 +91,37 @@ pub fn search_history(state: State<'_, AppState>, query: String) -> Result<Vec<D
 
 #[tauri::command]
 pub fn delete_history(state: State<'_, AppState>, id: i64) -> Result<(), String> {
-    state.store.lock().map_err(|e| e.to_string())?.delete(id).map_err(|e| e.to_string())
+    let mut store = state.store.lock().map_err(|e| e.to_string())?;
+    delete_row_and_clip(&mut store, id)
+}
+
+/// Soft-delete the row and remove its kept clip, if any.
+pub fn delete_row_and_clip(store: &mut privatevox_core::store::Store, id: i64) -> Result<(), String> {
+    if let Ok(Some(row)) = store.get(id) {
+        if let Some(p) = row.audio_path {
+            let _ = std::fs::remove_file(&p);
+            let _ = store.set_audio_path(id, None);
+        }
+    }
+    store.delete(id).map_err(|e| e.to_string())
+}
+
+/// The kept clip as base64 WAV for the panel's player.
+#[tauri::command]
+pub fn read_audio(state: State<'_, AppState>, id: i64) -> Result<String, String> {
+    use base64::Engine as _;
+    let path = state.store.lock().map_err(|e| e.to_string())?.get(id).map_err(|e| e.to_string())?.and_then(|r| r.audio_path).ok_or("No audio kept for this row")?;
+    let bytes = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+#[tauri::command]
+pub fn rerun_history(state: State<'_, AppState>, id: i64, model: String) -> Result<(), String> {
+    if !privatevox_core::models::catalog().iter().any(|m| m.id == model) {
+        return Err(format!("Unknown model {model:?}"));
+    }
+    state.send(Cmd::Rerun { id, model });
+    Ok(())
 }
 
 #[tauri::command]
@@ -507,3 +537,23 @@ mod hotkey_tests {
         assert_eq!(validate_combo("CmdOrCtrl+Shift+Z").unwrap(), "CmdOrCtrl+Shift+Z");
     }
 }
+
+#[cfg(test)]
+mod clip_tests {
+    use super::*;
+    use privatevox_core::store::{NewDictation, Store};
+
+    #[test]
+    fn delete_removes_the_clip() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("privatevox.sqlite")).unwrap();
+        let id = store.insert(&NewDictation { app_name: None, mode: "raw".into(), model: "large-v3-turbo".into(), language: None, duration_ms: 1000, raw_text: "x".into(), polished_text: None, polished_by: None, polish_status: "none".into(), status: "ok".into(), timing_json: None, engine_kind: "local".into() }).unwrap();
+        let clip = dir.path().join("audio").join(format!("{id}.wav"));
+        privatevox_core::audio::write_wav_16k(&clip, &[0.0; 1600]).unwrap();
+        store.set_audio_path(id, Some(&clip.to_string_lossy())).unwrap();
+        delete_row_and_clip(&mut store, id).unwrap();
+        assert!(!clip.exists());
+        assert!(store.get(id).unwrap().is_none(), "soft-deleted rows are hidden");
+    }
+}
+

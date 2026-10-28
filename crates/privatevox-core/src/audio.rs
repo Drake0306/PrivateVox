@@ -131,6 +131,25 @@ pub fn stream_error_is_fatal(kind: cpal::ErrorKind) -> bool {
 }
 
 /// Reads a 16 kHz mono 16-bit WAV (the benchmark clip and test fixtures) into f32 samples.
+/// Write 16 kHz mono f32 samples as a 16-bit PCM WAV (the kept-audio format, design §4.5).
+pub fn write_wav_16k(path: &std::path::Path, pcm: &[f32]) -> Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let spec = hound::WavSpec { channels: 1, sample_rate: SAMPLE_RATE, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+    let file = std::io::BufWriter::new(std::fs::File::create(path)?);
+    let mut w = hound::WavWriter::new(file, spec)?;
+    {
+        let mut i16s = w.get_i16_writer(pcm.len() as u32);
+        for s in pcm {
+            i16s.write_sample((s.clamp(-1.0, 1.0) * 32767.0) as i16);
+        }
+        i16s.flush()?;
+    }
+    w.finalize()?;
+    Ok(())
+}
+
 pub fn load_wav_16k(path: &std::path::Path) -> Result<Vec<f32>> {
     let mut reader = hound::WavReader::open(path).with_context(|| format!("open {}", path.display()))?;
     let spec = reader.spec();
@@ -284,5 +303,28 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(500));
         cap.stop();
         assert!(*got.lock().unwrap() >= 6_000, "got {}", got.lock().unwrap());
+    }
+
+    #[test]
+    fn wav_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("clip.wav");
+        let pcm: Vec<f32> = (0..16_000).map(|i| ((i as f32) * 0.01).sin() * 0.5).collect();
+        write_wav_16k(&p, &pcm).unwrap();
+        let back = load_wav_16k(&p).unwrap();
+        assert_eq!(back.len(), pcm.len());
+        let max_err = pcm.iter().zip(&back).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
+        assert!(max_err < 1.0 / 16_000.0, "16-bit quantisation only: {max_err}");
+    }
+
+    #[test]
+    fn wav_write_is_fast() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("five-minutes.wav");
+        let pcm = vec![0.0f32; 16_000 * 300];
+        let t = std::time::Instant::now();
+        write_wav_16k(&p, &pcm).unwrap();
+        assert!(t.elapsed() < std::time::Duration::from_millis(1500), "5 min of audio took {:?}", t.elapsed());
+        assert_eq!(std::fs::metadata(&p).unwrap().len(), 44 + 16_000 * 300 * 2);
     }
 }

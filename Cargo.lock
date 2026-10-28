@@ -3850,6 +3850,7 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "arboard",
+ "base64 0.22.1",
  "ctrlc",
  "enigo",
  "hound",

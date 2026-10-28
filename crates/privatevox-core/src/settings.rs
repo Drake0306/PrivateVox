@@ -117,6 +117,8 @@ pub struct Settings {
     pub dictionary: Vec<String>,
     /// Fuzzy-correction threshold (normalised edit distance); 0 switches the safety net off.
     pub dictionary_strictness: f32,
+    /// Keep the trimmed audio of every dictation next to its row (off by default, design §4.5).
+    pub keep_audio: bool,
 }
 
 impl Default for Settings {
@@ -149,6 +151,7 @@ impl Default for Settings {
             machine_name: None,
             dictionary: Vec::new(),
             dictionary_strictness: 0.18,
+            keep_audio: false,
         }
     }
 }
@@ -292,6 +295,11 @@ mod tests {
         assert!(s.remote.base_url.is_none());
         assert_eq!(s.remote.label, "PC");
         assert!(s.machine_name.is_none());
+    }
+
+    #[test]
+    fn keep_audio_is_off_by_default() {
+        assert!(!Settings::default().keep_audio);
     }
 
     #[test]

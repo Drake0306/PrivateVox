@@ -81,6 +81,8 @@ pub fn run() {
             commands::list_history,
             commands::search_history,
             commands::delete_history,
+            commands::read_audio,
+            commands::rerun_history,
             commands::history_count,
             commands::history_stats,
             commands::machine_label,
@@ -251,6 +253,7 @@ pub fn run() {
                         let _ = app.emit("history-changed", ());
                     })
                 },
+                audio_dir: paths.data_dir.join("audio"),
             };
 
             let last_state = Arc::new(laststate::LastState::default());

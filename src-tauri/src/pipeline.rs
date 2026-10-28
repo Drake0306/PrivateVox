@@ -84,6 +84,8 @@ pub enum Cmd {
     SetMode(Mode),
     /// Run the LLM again over a history row's raw text with another mode (panel "Re-polish").
     Repolish { id: i64, mode: Mode },
+    /// Decode a row's kept clip again, with the given model (panel "Re-run").
+    Rerun { id: i64, model: String },
     /// A short message for the pill from a helper thread (shown as an error, then back to idle).
     Notice(String),
     Quit,
@@ -128,6 +130,8 @@ pub struct Deps {
     pub llm_unload: Arc<dyn Fn() + Send + Sync>,
     /// The panel reloads its rows (after a re-polish).
     pub on_history_changed: Arc<dyn Fn() + Send + Sync>,
+    /// Where kept audio clips go (`<data>/audio/<row id>.wav`).
+    pub audio_dir: PathBuf,
 }
 
 /// One chunk's decode request for the per-recording decode worker.
@@ -448,6 +452,7 @@ impl Coordinator {
                     }
                 }
                 Cmd::Repolish { id, mode } => self.repolish(id, mode, &tx),
+                Cmd::Rerun { id, model } => self.rerun(id, &model, &tx),
                 Cmd::Notice(message) => {
                     if self.recording.is_none() {
                         self.error(&message);
@@ -864,6 +869,78 @@ impl Coordinator {
         }
     }
 
+    /// Decode a row's kept clip again (optionally with another model), then polish it the way the row was polished.
+    fn rerun(&mut self, id: i64, model: &str, tx: &Sender<Cmd>) {
+        let row = match self.store.lock().map_err(|e| e.to_string()).and_then(|s| s.get(id).map_err(|e| e.to_string())) {
+            Ok(Some(r)) => r,
+            Ok(None) => return,
+            Err(e) => {
+                self.error(&format!("Re-run failed: {e}"));
+                self.schedule_idle(tx);
+                return;
+            }
+        };
+        let Some(path) = row.audio_path.as_deref().filter(|p| std::path::Path::new(p).exists()) else {
+            self.error("No audio kept for this row (switch on Keep audio clips in Settings)");
+            self.schedule_idle(tx);
+            return;
+        };
+        let pcm = match privatevox_core::audio::load_wav_16k(std::path::Path::new(path)) {
+            Ok(p) => p,
+            Err(e) => {
+                self.error(&format!("Re-run failed: {e}"));
+                self.schedule_idle(tx);
+                return;
+            }
+        };
+        let settings = self.settings();
+        if model != settings.model_id {
+            self.switch_model(model);
+            if self.settings().model_id != model {
+                return; // switch_model reported the problem
+            }
+        }
+        (self.emit)(PillState::Transcribing);
+        let settings = self.settings();
+        let language = row.language.clone().or_else(|| decode_language(&settings.spoken_languages));
+        let mode = Mode::parse(&row.mode).unwrap_or(settings.mode);
+        let opts = DecodeOptions { language, translate: mode.whisper_translate(), initial_prompt: initial_prompt(&settings.dictionary), n_threads: 4, final_chunk: true };
+        let fell_back = Arc::new(AtomicBool::new(false));
+        let text = match transcribe_routed(&self.deps.remote, &self.deps.engine, &pcm, &opts, false, &fell_back, self.deps.model_path.as_ref(), settings.flash_attention) {
+            Ok(t) => {
+                let english = t.language.as_deref().map(|l| l == "en").unwrap_or(true);
+                correct(&normalize_with(&t.text, english, settings.remove_fillers), &settings.dictionary, settings.dictionary_strictness)
+            }
+            Err(e) => {
+                self.error(&format!("Re-run failed: {e}"));
+                self.schedule_idle(tx);
+                return;
+            }
+        };
+        if text.is_empty() {
+            self.error("Nothing heard in the kept clip");
+            self.schedule_idle(tx);
+            return;
+        }
+        let polish = if settings.polish_enabled && mode.uses_llm() {
+            (self.emit)(PillState::Polishing { on: None });
+            Some((self.deps.polish)(mode, &text))
+        } else {
+            None
+        };
+        if let Ok(mut st) = self.store.lock() {
+            let _ = st.update_raw(id, &text);
+            let _ = match polish.as_ref().map(|o| &o.status) {
+                Some(PolishStatus::Polished { endpoint_id, .. }) => st.update_polish(id, mode.id(), polish.as_ref().map(|o| o.text.as_str()), Some(endpoint_id), "ok"),
+                Some(PolishStatus::Unpolished { .. }) => st.update_polish(id, mode.id(), None, None, "unpolished"),
+                _ => st.update_polish(id, mode.id(), None, None, "none"),
+            };
+        }
+        (self.deps.on_history_changed)();
+        (self.emit)(PillState::Pasted { preview: format!("Re-run done: {}", first_chars(polish.as_ref().map(|o| o.text.as_str()).unwrap_or(&text), 50)) });
+        self.schedule_idle(tx);
+    }
+
     fn schedule_idle(&mut self, tx: &Sender<Cmd>) {
         self.generation += 1;
         schedule(tx, Cmd::Tick(self.generation), Duration::from_millis(2000));
@@ -978,11 +1055,11 @@ impl Coordinator {
             idle.touch(Instant::now());
         }
         let decode_ms = t_total.elapsed().as_millis() as u64;
-        self.paste_and_store(text, (total as f32 / SAMPLE_RATE as f32 * 1000.0) as u32, serde_json::json!({ "chunks": chunks, "tail_ms": decode_ms, "total_ms": decode_ms }), tx);
+        self.paste_and_store(text, (total as f32 / SAMPLE_RATE as f32 * 1000.0) as u32, serde_json::json!({ "chunks": chunks, "tail_ms": decode_ms, "total_ms": decode_ms }), Some(pcm), tx);
     }
 
     /// Shared tail of both decode paths: polish (when the mode asks for it), paste, store.
-    fn paste_and_store(&mut self, raw: String, duration_ms: u32, mut timing: serde_json::Value, tx: &Sender<Cmd>) {
+    fn paste_and_store(&mut self, raw: String, duration_ms: u32, mut timing: serde_json::Value, audio: Option<Vec<f32>>, tx: &Sender<Cmd>) {
         let settings = self.settings();
         let mode = settings.mode;
         let t_polish = Instant::now();
@@ -1062,10 +1139,28 @@ impl Coordinator {
             engine_kind,
             timing_json: Some(timing.to_string()),
         };
-        if let Ok(mut store) = self.store.lock() {
-            if let Err(e) = store.insert(&row) {
+        let inserted = self.store.lock().ok().and_then(|mut store| match store.insert(&row) {
+            Ok(id) => Some(id),
+            Err(e) => {
                 log::error!("history insert failed: {e}");
+                None
             }
+        });
+        if let (true, Some(id), Some(pcm)) = (settings.keep_audio, inserted, audio) {
+            // Off the pipeline thread: a 5-minute WAV must never delay the next dictation.
+            let path = self.deps.audio_dir.join(format!("{id}.wav"));
+            let store = self.store.clone();
+            std::thread::Builder::new()
+                .name("privatevox-keep-audio".into())
+                .spawn(move || match privatevox_core::audio::write_wav_16k(&path, &pcm) {
+                    Ok(()) => {
+                        if let Ok(mut st) = store.lock() {
+                            let _ = st.set_audio_path(id, Some(&path.to_string_lossy()));
+                        }
+                    }
+                    Err(e) => log::warn!("keep audio: {e}"),
+                })
+                .ok();
         }
         (self.emit)(PillState::Pasted { preview });
         self.schedule_idle(tx);
@@ -1159,7 +1254,7 @@ impl Coordinator {
             "total_ms": t_total.elapsed().as_millis() as u64, "audio_ctx": transcript.audio_ctx, "reran": transcript.reran,
             "language": transcript.language, "language_source": language_source.id(),
         });
-        self.paste_and_store(text, duration_ms, timing, tx);
+        self.paste_and_store(text, duration_ms, timing, Some(speech), tx);
     }
 }
 
@@ -1363,6 +1458,7 @@ mod tests {
             llm_warm: Arc::new(move || *w.lock().unwrap() += 1),
             llm_unload: Arc::new(move || *u.lock().unwrap() += 1),
             on_history_changed: Arc::new(move || *hc.lock().unwrap() += 1),
+            audio_dir: dir.path().join("audio"),
         };
         let st = states.clone();
         let coord = Coordinator::new(deps, settings.clone(), store.clone(), vad, Box::new(move |s| st.lock().unwrap().push(s)));
@@ -2249,6 +2345,72 @@ mod tests {
         std::thread::sleep(Duration::from_millis(300));
         assert_eq!(langs.lock().unwrap().clone(), vec![Some("en".to_string())]);
         assert!(last_row(&h).timing_json.as_deref().unwrap_or("").contains("\"language_source\":\"fixed\""));
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    fn wait_for_clip(h: &Harness, id: i64) -> Option<String> {
+        for _ in 0..40 {
+            if let Some(p) = h.store.lock().unwrap().get(id).unwrap().unwrap().audio_path {
+                return Some(p);
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        None
+    }
+
+    #[test]
+    fn keep_audio_saves_a_clip_next_to_the_row() {
+        let h = harness(engine_saying("hello"), capture_ok());
+        {
+            let mut s = h.settings.lock().unwrap();
+            s.mode = Mode::Raw;
+            s.keep_audio = true;
+        }
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        let id = last_row(&h).id;
+        let path = wait_for_clip(&h, id).expect("audio_path set");
+        assert!(path.ends_with(&format!("{id}.wav")), "{path}");
+        let pcm = privatevox_core::audio::load_wav_16k(std::path::Path::new(&path)).unwrap();
+        assert!(pcm.len() > 16_000, "the trimmed clip is longer than a second: {}", pcm.len());
+        // Off by default: no clip.
+        h.settings.lock().unwrap().keep_audio = false;
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(400));
+        assert!(last_row(&h).audio_path.is_none());
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn rerun_updates_raw_text_from_the_clip() {
+        let h = harness(engine_saying("{n}"), capture_ok());
+        {
+            let mut s = h.settings.lock().unwrap();
+            s.mode = Mode::Raw;
+            s.keep_audio = true;
+        }
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        let id = last_row(&h).id;
+        assert_eq!(last_row(&h).raw_text, "1");
+        wait_for_clip(&h, id).expect("clip saved");
+        h.tx.send(Cmd::Rerun { id, model: "large-v3-turbo".into() }).unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        let row = h.store.lock().unwrap().get(id).unwrap().unwrap();
+        assert_eq!(row.raw_text, "2", "decoded again from the kept clip");
+        assert_eq!(*h.history_changed.lock().unwrap(), 1);
+        // No clip: a notice, nothing changed.
+        h.store.lock().unwrap().set_audio_path(id, None).unwrap();
+        h.tx.send(Cmd::Rerun { id, model: "large-v3-turbo".into() }).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(h.store.lock().unwrap().get(id).unwrap().unwrap().raw_text, "2");
+        let states = h.states.lock().unwrap().clone();
+        assert!(states.iter().any(|s| matches!(s, PillState::Error { message } if message.contains("No audio kept"))), "{:?}", kinds(&states));
         h.tx.send(Cmd::Quit).unwrap();
         h.join.join().unwrap();
     }

@@ -79,6 +79,7 @@ mod tests {
             polish_status: "none".into(),
             status: "ok".into(),
             engine_kind: "local".into(),
+            audio_path: None,
             timing_json: None,
             pinned: id == 2,
         }

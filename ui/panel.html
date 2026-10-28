@@ -60,6 +60,7 @@
               <div class="muted" style="margin-bottom:4px">Personal dictionary <span style="font-weight:400">· names and jargon, one per line; Whisper is told to expect them</span></div>
               <textarea id="dictWords" aria-label="Dictionary" style="width:100%;min-height:120px;font:14px/1.4 var(--body);padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--fg)"></textarea>
               <label class="muted" style="display:flex;gap:8px;align-items:center;margin-top:6px">Fix near-misses <input type="range" id="dictStrict" min="0" max="40" step="1" style="flex:1"><span id="dictStrictVal"></span></label>
+              <label class="muted" style="display:block;margin-top:8px"><input type="checkbox" id="keepAudio"> Keep audio clips (replay and re-run from history; stored under the app's data folder)</label>
             </div>
           </div>
           <div class="inline" style="margin-top:8px"><button class="btn primary" id="dictationSave">Save dictation settings</button><span id="dictationMsg" class="muted"></span></div>
@@ -179,9 +180,11 @@
       rows.appendChild(el);
     }
   }
+  let models = [];
   async function loadHistory() {
     if (historySource === 'remote') return loadRemoteHistory();
-    const list = $('q').value ? await inv('search_history', { query: $('q').value }) : await inv('list_history', { limit: 200, offset: 0 });
+    const [list, ms] = await Promise.all([$('q').value ? inv('search_history', { query: $('q').value }) : inv('list_history', { limit: 200, offset: 0 }), inv('list_models')]);
+    models = ms;
     const st = await inv('history_stats');
     $('stats').textContent = `${st.count} dictations · ${st.words} words`;
     const rows = $('rows'); rows.innerHTML = list.length ? '' : '<p class="empty">Nothing dictated yet. Hold the dictation key and speak.</p>';
@@ -193,11 +196,21 @@
       el.classList.toggle('pinned', !!d.pinned);
       el.innerHTML = `<div class="meta">${d.pinned ? '<span class="pinbadge" title="Pinned: stays at the top">📌 pinned</span>' : ''}${kindChip(d.engine_kind)}<span>${esc(ago(d.created_at_ms))}</span><span>${esc(d.app_name || 'unknown app')}</span><span>${esc(modeLabel(d.mode))}</span><span>${esc(short(d.model))}</span><span>${dur(d.duration_ms)}</span>${d.status !== 'ok' ? `<span>${esc(d.status.replace('_', ' '))}</span>` : ''}${d.polish_status === 'unpolished' ? '<span class="unp" title="No LLM answered; this is Whisper\'s text">unpolished</span>' : ''}</div>
         <div class="txt" tabindex="0">${esc(text)}</div>
-        <div class="acts"><button class="btn" data-copy>Copy</button><button class="btn" data-edit>Edit</button><button class="btn" data-raw ${hasRaw ? '' : 'disabled title="Same as Whisper\'s text"'}>Raw</button><span class="repol"><select data-mode aria-label="Mode for re-polish" title="Mode to re-polish this row with">${rowModes.map(m => `<option value="${m.id}" ${m.id === d.mode ? 'selected' : ''}>${esc(m.label)}</option>`).join('')}</select><button class="btn" data-repolish title="Run this row through the LLM again with the chosen mode">Re-polish</button></span><button class="btn ${d.pinned ? 'active' : ''}" data-pin title="${d.pinned ? 'Unpin: back to its place in time' : 'Pin: keep at the top'}">${d.pinned ? 'Pinned' : 'Pin'}</button><button class="btn" data-del>Delete</button></div>`;
+        <div class="acts"><button class="btn" data-copy>Copy</button><button class="btn" data-edit>Edit</button><button class="btn" data-raw ${hasRaw ? '' : 'disabled title="Same as Whisper\'s text"'}>Raw</button><span class="repol"><select data-mode aria-label="Mode for re-polish" title="Mode to re-polish this row with">${rowModes.map(m => `<option value="${m.id}" ${m.id === d.mode ? 'selected' : ''}>${esc(m.label)}</option>`).join('')}</select><button class="btn" data-repolish title="Run this row through the LLM again with the chosen mode">Re-polish</button></span>${d.audio_path ? '<button class="btn" data-play title="Play the kept clip">▶ Play</button><span class="repol"><select data-rerun-model aria-label="Model for re-run">' + models.filter(m => m.downloaded).map(m => `<option value="${m.id}" ${m.id === d.model ? 'selected' : ''}>${esc(short(m.id))}</option>`).join('') + '</select><button class="btn" data-rerun title="Decode the kept clip again with this model">Re-run</button></span>' : ''}<button class="btn ${d.pinned ? 'active' : ''}" data-pin title="${d.pinned ? 'Unpin: back to its place in time' : 'Pin: keep at the top'}">${d.pinned ? 'Pinned' : 'Pin'}</button><button class="btn" data-del>Delete</button></div>`;
       const txt = el.querySelector('.txt');
       el.querySelector('[data-copy]').onclick = async () => { try { await navigator.clipboard.writeText(txt.innerText); flash('Copied'); } catch { flash('Copy blocked'); } };
       el.querySelector('[data-del]').onclick = async () => { await inv('delete_history', { id: d.id }); loadHistory(); };
       el.querySelector('[data-pin]').onclick = async () => { await inv('pin_history', { id: d.id, pinned: !d.pinned }); flash(d.pinned ? 'Unpinned' : 'Pinned to the top'); loadHistory(); };
+      const playBtn = el.querySelector('[data-play]');
+      if (playBtn) playBtn.onclick = async () => {
+        try {
+          const b64 = await inv('read_audio', { id: d.id });
+          let a = el.querySelector('audio'); if (!a) { a = document.createElement('audio'); a.controls = true; a.style.cssText = 'grid-column:1/-1;width:100%;max-width:520px'; el.appendChild(a); }
+          a.src = 'data:audio/wav;base64,' + b64; a.play().catch(() => {});
+        } catch (e) { flash(String(e)); }
+      };
+      const rerunBtn = el.querySelector('[data-rerun]');
+      if (rerunBtn) rerunBtn.onclick = async () => { const m = el.querySelector('[data-rerun-model]').value; try { await inv('rerun_history', { id: d.id, model: m }); flash('Re-running with ' + short(m) + '…'); } catch (e) { flash(String(e)); } };
       el.querySelector('[data-repolish]').onclick = async () => {
         const m = el.querySelector('[data-mode]').value;
         if (m === d.mode && d.polish_status !== 'unpolished' && m !== 'raw') { flash('Already ' + modeLabel(m) + '; pick another mode to re-polish'); return; }
@@ -332,13 +345,14 @@
     renderLangs(s.spoken_languages, $('langFilter').value);
     $('langFilter').oninput = () => { const sel = [...$('langList').querySelectorAll('input:checked')].map(i => i.value); renderLangs(sel.length ? sel : s.spoken_languages, $('langFilter').value); };
     $('dictWords').value = (s.dictionary || []).join('\n');
+    $('keepAudio').checked = !!s.keep_audio;
     $('dictStrict').value = Math.round((s.dictionary_strictness || 0) * 100); $('dictStrictVal').textContent = $('dictStrict').value === '0' ? 'off' : ($('dictStrict').value + '%');
     $('dictStrict').oninput = () => { $('dictStrictVal').textContent = $('dictStrict').value === '0' ? 'off' : ($('dictStrict').value + '%'); };
   }
   $('dictationSave').onclick = async () => {
     const live = await inv('get_settings');
     const selected = [...$('langList').querySelectorAll('input:checked')].map(i => i.value);
-    const n = { ...live, spoken_languages: selected.length ? selected : live.spoken_languages, dictionary: $('dictWords').value.split('\n').map(w => w.trim()).filter(Boolean), dictionary_strictness: (+$('dictStrict').value) / 100 };
+    const n = { ...live, spoken_languages: selected.length ? selected : live.spoken_languages, dictionary: $('dictWords').value.split('\n').map(w => w.trim()).filter(Boolean), dictionary_strictness: (+$('dictStrict').value) / 100, keep_audio: $('keepAudio').checked };
     try { await inv('set_settings', { settings: n }); $('dictationMsg').textContent = 'Saved'; flash('Dictation settings saved'); } catch (e) { $('dictationMsg').textContent = String(e); }
   };
 
