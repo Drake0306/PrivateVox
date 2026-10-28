@@ -51,7 +51,7 @@ footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--line);font-si
   <p class="lede">What the design promised, what is built, what is next. Three of four plans are done: the Mac build dictates, switches models, shows its memory, and cleans up the text with a local or LAN LLM that fails over on its own. The extras, the Windows pass on the RX 9070 and the release polish are what is left.</p>
   <div class="summary">
     <div class="sum done"><div class="n">3 / 4</div><div class="k">plans complete</div></div>
-    <div class="sum next"><div class="n">1</div><div class="k">plan up next: extras + Windows + release</div></div>
+    <div class="sum next"><div class="n">4a</div><div class="k">up next: PC as host, Mac as interface</div></div>
     <div class="sum later"><div class="n">6</div><div class="k">installers on the alpha release</div></div>
     <div class="sum you"><div class="n">2</div><div class="k">things only you can do</div></div>
   </div>
@@ -101,22 +101,32 @@ footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--line);font-si
 </section>
 
 <section class="wrap">
-  <h2>Phase 4 · Extras, Windows, release <span class="chip next">next</span></h2>
+  <h2>Phase 4a · PC as host, Mac as interface <span class="chip next">next</span></h2>
+  <div class="phase"><ul class="list">
+    <li><span class="mark next"></span><div><b>Host mode</b><small>The same app on the PC serves transcription and polish on port 8765: status with GPU and memory, dictations in, history out, model pick. LAN only, optional token.</small></div></li>
+    <li><span class="mark next"></span><div><b>Use a host (Mac side)</b><small>Toggle plus ip:port. Capture, VAD and the pill stay local; every chunk goes to the PC; the local Whisper is never loaded while the host is in use. Falls back to local when the PC is unreachable and back again when it returns.</small></div></li>
+    <li><span class="mark next"></span><div><b>PC specs in the strip</b><small>While the host is in use the memory strip shows the PC's adapter, totals and loaded models, labelled "On PC".</small></div></li>
+    <li><span class="mark next"></span><div><b>Two histories, one marker</b><small>The PC stores what it processed; the Mac stores its copy marked "via PC". A toggle in the history header shows the PC's list live.</small></div></li>
+    <li><span class="mark next"></span><div><b>Discovery</b><small>Manual ip:port first; mDNS advertising and an "Add" button once that works.</small></div></li>
+  </ul></div>
+</section>
+
+<section class="wrap">
+  <h2>Phase 4b · Extras, Windows, release <span class="chip later">after</span></h2>
   <div class="phase"><ul class="list">
     <li><span class="mark todo"></span><div><b>Personal dictionary</b><small>Names and jargon fed to Whisper as its prompt, fuzzy safety net when the prompt was not applied.</small></div></li>
     <li><span class="mark todo"></span><div><b>Spoken languages</b><small>Multi-select with the language identifier; translate mode. Today only the first language is used.</small></div></li>
     <li><span class="mark todo"></span><div><b>Keep audio clips</b><small>Off by default; replay next to the transcript; re-run with a bigger model.</small></div></li>
     <li><span class="mark todo"></span><div><b>Receipt-sequenced paste and secure-input detection</b><small>Restore the clipboard only after the target app actually read it; keep hotkeys alive next to password fields.</small></div></li>
-    <li><span class="mark todo"></span><div><b>Share the engine on the LAN</b><small>The PC serves Whisper to the Mac; discovery over mDNS; remote engine client behind the same trait.</small></div></li>
     <li><span class="mark todo"></span><div><b>Long-form document view</b><small>Chunking exists; the multi-minute transcript as a document to copy or export does not yet.</small></div></li>
-    <li><span class="mark todo"></span><div><b>Windows on the RX 9070</b><small>Vulkan build, ROCm benchmark, Windows paste and hotkey specifics, installer. Runs when you are at the PC.</small></div></li>
-    <li><span class="mark todo"></span><div><b>Open-source release pass</b><small>Notarised .dmg, CI on macOS and Windows runners, README for strangers, icon. Sponsor button already on.</small></div></li>
-    <li><span class="mark todo"></span><div><b>Sixteen small deferred items</b><small>From the two code reviews, listed in the ledgers under <code>docs/superpowers/plans/</code>: tray Resume item, casing of recorded keys, delete-while-downloading guard, and similar.</small></div></li>
+    <li><span class="mark todo"></span><div><b>Windows on the RX 9070</b><small>Run the CI installer, hold key and paste checks, Vulkan versus ROCm timing, which LLM runtime serves the 7B model fastest. Runs when you are at the PC.</small></div></li>
+    <li><span class="mark todo"></span><div><b>Open-source release pass</b><small>Notarised .dmg (needs an Apple Developer account), README for strangers, CI badges.</small></div></li>
+    <li><span class="mark todo"></span><div><b>Deferred review minors</b><small>From the phase 2 and 3 reviews, listed in the ledgers under <code>docs/superpowers/plans/</code>.</small></div></li>
   </ul></div>
 </section>
 
 <section class="wrap">
-  <div class="note">Measured on the M1 with qwen2.5:3b through Ollama: a warm polish takes about one second; the warm-up on key press is under 100 ms once the model is resident; with Ollama stopped a dictation pastes the raw text and the row is marked unpolished. Phase 4 order suggestion: dictionary and spoken languages first, then keep-audio and receipt-sequenced paste, then the Windows pass when you are at the PC.</div>
+  <div class="note">Measured on the M1 with qwen2.5:3b through Ollama: a warm polish takes about one second; the warm-up on key press is under 100 ms once the model is resident; with Ollama stopped a dictation pastes the raw text and the row is marked unpolished. Phase 4a is built and tested on the Mac against a host on localhost (the same app in host mode); the first real PC-to-Mac run is a five-minute check when you are at the PC. Phase 4b follows.</div>
 </section>
 
 <footer class="wrap">Source of truth: <code>docs/superpowers/specs/2026-10-28-whisper-harness-design.md</code> and the plan files beside it. Repo: github.com/Drake0306/PrivateVox.</footer>
