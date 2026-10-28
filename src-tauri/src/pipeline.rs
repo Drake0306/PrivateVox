@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum PillState {
-    Idle { hotkey_hint: String },
+    Idle { hotkey_hint: String, warning: Option<String> },
     Listening { seconds: f32, level_db: f32, countdown: Option<u32>, loading: bool, mode: String, stop_hint: Option<String> },
     Transcribing,
     /// Waiting on the LLM (design §4.1); `on` names the host when the polish runs there.
@@ -88,6 +88,8 @@ pub enum Cmd {
     Rerun { id: i64, model: String },
     /// A short message for the pill from a helper thread (shown as an error, then back to idle).
     Notice(String),
+    /// macOS Secure Event Input went on or off (design §18.12).
+    SecureInput(bool),
     Quit,
 }
 
@@ -229,6 +231,8 @@ pub struct Coordinator {
     last_used_remote: bool,
     /// Shared with the recording's chunk worker: a host failure during this dictation.
     fell_back: Arc<AtomicBool>,
+    /// macOS Secure Event Input is on: the pill warns that the hold key may not fire.
+    secure_input: bool,
 }
 
 /// The hold key as the pill names it ("right ⌥", or a combination), if one is set.
@@ -325,7 +329,7 @@ impl Coordinator {
             let s = settings.lock().map(|s| s.clone()).unwrap_or_default();
             Machine::new(s.activation, Duration::from_millis(s.hold_threshold_ms))
         };
-        Coordinator { deps, settings, store, vad, emit, recording: None, queued: None, generation: 0, machine, pending_switch: None, last_paste: None, idle_tx: None, last_used_remote: false, fell_back: Arc::new(AtomicBool::new(false)) }
+        Coordinator { deps, settings, store, vad, emit, recording: None, queued: None, generation: 0, machine, pending_switch: None, last_paste: None, idle_tx: None, last_used_remote: false, fell_back: Arc::new(AtomicBool::new(false)), secure_input: false }
     }
 
     /// Unloads the current model and loads `id` from the models directory. Refused if the file is missing.
@@ -384,7 +388,8 @@ impl Coordinator {
     }
 
     fn idle(&self) {
-        (self.emit)(PillState::Idle { hotkey_hint: hotkey_hint(&self.settings()) });
+        let warning = self.secure_input.then(|| "Secure input is on (a password field?). The hold key may not fire; use Ctrl+Shift+Space".to_string());
+        (self.emit)(PillState::Idle { hotkey_hint: hotkey_hint(&self.settings()), warning });
     }
 
     fn error(&self, message: &str) {
@@ -453,6 +458,12 @@ impl Coordinator {
                 }
                 Cmd::Repolish { id, mode } => self.repolish(id, mode, &tx),
                 Cmd::Rerun { id, model } => self.rerun(id, &model, &tx),
+                Cmd::SecureInput(on) => {
+                    self.secure_input = on;
+                    if self.recording.is_none() {
+                        self.idle();
+                    }
+                }
                 Cmd::Notice(message) => {
                     if self.recording.is_none() {
                         self.error(&message);
@@ -2411,6 +2422,22 @@ mod tests {
         assert_eq!(h.store.lock().unwrap().get(id).unwrap().unwrap().raw_text, "2");
         let states = h.states.lock().unwrap().clone();
         assert!(states.iter().any(|s| matches!(s, PillState::Error { message } if message.contains("No audio kept"))), "{:?}", kinds(&states));
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn idle_warning_follows_secure_input_cmd() {
+        let h = harness(engine_saying("x"), capture_ok());
+        h.tx.send(Cmd::SecureInput(true)).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        let states = h.states.lock().unwrap().clone();
+        let last = states.last().unwrap();
+        assert!(matches!(last, PillState::Idle { warning: Some(w), .. } if w.contains("Secure input")), "{last:?}");
+        h.tx.send(Cmd::SecureInput(false)).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        let states = h.states.lock().unwrap().clone();
+        assert!(matches!(states.last().unwrap(), PillState::Idle { warning: None, .. }));
         h.tx.send(Cmd::Quit).unwrap();
         h.join.join().unwrap();
     }

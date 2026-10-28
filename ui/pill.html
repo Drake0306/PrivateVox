@@ -22,7 +22,7 @@
       spin.hidden = !(s.state === 'transcribing' || s.state === 'loading_model' || s.state === 'polishing');
       dot.hidden = !(s.state === 'idle' || s.state === 'listening' || s.state === 'error' || s.state === 'pasted');
       switch (s.state) {
-        case 'idle': label.textContent = s.hotkey_hint; break;
+        case 'idle': label.textContent = s.warning || s.hotkey_hint; if (s.warning) pill.classList.add('error'); break;
         case 'listening': {
           // One message at a time, most urgent first: model loading, then the auto-stop countdown, then how to stop a latched recording.
           const secs = s.seconds >= 60 ? Math.floor(s.seconds / 60) + ':' + String(Math.floor(s.seconds % 60)).padStart(2, '0') : s.seconds.toFixed(0) + 's';
