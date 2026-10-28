@@ -133,6 +133,35 @@ pub fn history_count(state: State<'_, AppState>) -> Result<u32, String> {
     state.store.lock().map_err(|e| e.to_string())?.count().map_err(|e| e.to_string())
 }
 
+#[derive(serde::Serialize)]
+pub struct HistoryStats {
+    pub count: u32,
+    pub words: u64,
+}
+
+#[tauri::command]
+pub fn history_stats(state: State<'_, AppState>) -> Result<HistoryStats, String> {
+    let store = state.store.lock().map_err(|e| e.to_string())?;
+    let rows = store.list(100_000, 0).map_err(|e| e.to_string())?;
+    let words = rows.iter().map(|r| r.polished_text.as_deref().unwrap_or(&r.raw_text).split_whitespace().count() as u64).sum();
+    Ok(HistoryStats { count: rows.len() as u32, words })
+}
+
+/// "Apple M1 · 8 GB unified" style label for the memory strip.
+#[tauri::command]
+pub fn machine_label() -> String {
+    let (total, _) = privatevox_core::memory::system_memory();
+    let gb = (total as f64 / 1_073_741_824.0).round() as u64;
+    #[cfg(target_os = "macos")]
+    {
+        let chip = std::process::Command::new("sysctl").args(["-n", "machdep.cpu.brand_string"]).output().ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| "Mac".into());
+        return format!("{chip} · {gb} GB unified");
+    }
+    #[allow(unreachable_code)]
+    format!("This machine · {gb} GB")
+}
+
 #[tauri::command]
 pub fn list_input_devices() -> Vec<String> {
     privatevox_core::audio::input_devices()

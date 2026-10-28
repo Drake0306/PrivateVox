@@ -4,222 +4,212 @@
 <meta charset="utf-8">
 <title>PrivateVox</title>
 <link rel="stylesheet" href="privatevox.css">
-<style>
-  h2 { font-size: 15px; margin: 18px 0 8px; }
-  .row { padding: 10px 0; border-bottom: 1px solid var(--line); }
-  .row .meta { font-size: 12px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
-  .row .txt { white-space: pre-wrap; margin: 4px 0; }
-  button { font: inherit; font-size: 12px; padding: 4px 9px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); border-radius: 5px; cursor: pointer; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .bar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
-  .bar input[type=search] { font: inherit; flex: 1; min-width: 160px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--fg); }
-  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
-  .check { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; gap: 10px; }
-  .ok { color: var(--ok); } .no { color: var(--warn); }
-  .progress { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; } .progress i { display: block; height: 100%; background: var(--accent); width: 0; }
-  form.settings { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
-  form.settings label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
-  form.settings input, form.settings select { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--fg); }
-  .err { color: var(--warn); font-size: 12px; }
-  .muted { color: var(--muted); font-size: 12px; }
-  .meter { height: 10px; border-radius: 5px; background: var(--line); display: flex; gap: 2px; overflow: hidden; margin: 8px 0 6px; }
-  .meter i { display: block; height: 100%; flex: 0 0 0%; transition: flex-basis .25s; }
-  .meter .o { background: #8069b8; } .meter .w { background: #0d9488; } .meter .l { background: #c47f17; }
-  .meter.over { outline: 2px solid var(--warn); outline-offset: 1px; }
-  .leg { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); }
-  .leg span::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; background: var(--sw); }
-  .verdict { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px; margin-top: 8px; }
-  .verdict div { background: var(--bg); border-radius: 6px; padding: 6px 8px; font-size: 12px; }
-  .verdict .k { display: block; font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
-  .verdict .v { font-weight: 600; font-size: 13px; }
-  .verdict .good .v { color: var(--ok); } .verdict .bad .v { color: var(--warn); }
-  .mcard { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; }
-  .mcard .st { font-size: 12px; color: var(--muted); }
-  .mcard .acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; align-items: start; }
-  .badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 4px; background: var(--line); margin-left: 6px; vertical-align: 1px; }
-  .badge.active { background: var(--accent); color: #fff; }
-  nav { display: flex; gap: 6px; margin-bottom: 10px; } nav button[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: #fff; }
-</style>
 </head>
 <body class="panel-body">
-  <nav><button data-tab="history" aria-pressed="true">History</button><button data-tab="models" aria-pressed="false">Models</button><button data-tab="settings" aria-pressed="false">Settings</button><button data-tab="setup" aria-pressed="false">Setup</button></nav>
+<div class="panel">
+  <header class="hdr">
+    <h1>History</h1>
+    <input id="q" type="search" placeholder="Search dictations…" aria-label="Search dictations">
+    <select id="modelPick" title="Whisper model in use" aria-label="Whisper model"></select>
+    <span class="stats" id="stats"></span>
+  </header>
+  <nav class="tabs"><button data-tab="history" aria-pressed="true">History</button><button data-tab="models" aria-pressed="false">Models</button><button data-tab="settings" aria-pressed="false">Settings</button><button data-tab="setup" aria-pressed="false">Setup</button></nav>
 
-  <section id="tab-history">
-    <div class="bar"><input id="q" type="search" placeholder="Search dictations…"><select id="modelPick" title="Whisper model"></select><span id="count" class="muted"></span><button id="exportMd" title="Export all as Markdown to Downloads">Export .md</button><button id="exportJson" title="Export all as JSON to Downloads">Export .json</button><button id="dbgStart" title="Record without the hotkey">● Rec</button><button id="dbgStop" title="Stop recording">■ Stop</button></div>
-    <div id="rows"></div>
-  </section>
+  <div class="scroll">
+    <section class="tab" id="tab-history">
+      <div class="gpu" id="gpu">
+        <div class="head"><h2>GPU memory</h2><span class="lab">Detected</span><span class="box" id="machine">…</span><span class="lab">Polish LLM</span><select class="box" id="llmPick" disabled title="Arrives with the polish update"><option>Off (coming next)</option></select></div>
+        <div class="meter" id="meter" role="img" aria-label="Memory usage"><i class="o"></i><i class="w"></i><i class="l"></i></div>
+        <div class="ticks"><span>0</span><span id="tickMid"></span><span id="tickMax"></span></div>
+        <div class="leg" id="memLeg"></div>
+        <div class="tiles" id="memVerdict"></div>
+      </div>
+      <div id="rows"></div>
+    </section>
 
-  <section id="tab-models" hidden>
-    <div class="card" id="memCard">
-      <div class="check"><strong>GPU memory</strong><span class="muted" id="memTotal"></span></div>
-      <div class="meter" id="meter"><i class="o"></i><i class="w"></i><i class="l"></i></div>
-      <div class="leg" id="memLeg"></div>
-      <div class="verdict" id="memVerdict"></div>
-    </div>
-    <div id="modelCards"></div>
-  </section>
+    <section class="tab" id="tab-models" hidden><div class="pad" id="modelCards"></div></section>
 
-  <section id="tab-settings" hidden>
-    <form class="settings" id="settings">
-      <label>Activation <select name="activation"><option value="push_to_talk">Push to talk (hold)</option><option value="toggle">Toggle (tap to start, tap to stop)</option><option value="hold_or_toggle">Hold or toggle (tap locks on)</option></select></label>
-      <label>Hold threshold (ms) <input name="hold_threshold_ms" type="number" min="100" max="2000"></label>
-      <label>Hold key (push to talk) <select name="ptt_modifier"><option value="right_option">Right ⌥ Option</option><option value="left_option">Left ⌥ Option</option><option value="right_command">Right ⌘ Command</option><option value="right_control">Right ⌃ Control</option><option value="">Use a key combination instead</option></select><input name="ptt_combo" placeholder="e.g. Ctrl+Alt+Space" hidden><button type="button" data-rec="ptt_combo" hidden>Record key</button></label>
-      <label>Toggle key <span style="display:flex;gap:6px"><input name="toggle_combo" placeholder="Ctrl+Shift+Space" style="flex:1"><button type="button" data-rec="toggle_combo">Record key</button></span></label>
-      <label>Undo last paste <span style="display:flex;gap:6px"><input name="undo_combo" placeholder="Ctrl+Shift+Z" style="flex:1"><button type="button" data-rec="undo_combo">Record key</button></span></label>
-      <label>Microphone <select name="microphone"><option value="">System default</option></select></label>
-      <label>Paste method <select name="paste_method"><option value="clipboard">Clipboard + ⌘V</option><option value="type">Type the text</option></select></label>
-      <label>Unload model after idle (minutes, 1–240) <input name="idle_unload_minutes" type="number" min="1" max="240"></label>
-      <label><span><input name="idle_never" type="checkbox"> Never unload</span></label>
-      <label>Keep recording after key-up (ms) <input name="post_release_ms" type="number" min="0" max="2000"></label>
-      <label>Maximum clip (seconds) <input name="max_clip_seconds" type="number" min="10" max="600"></label>
-      <div style="grid-column:1/-1;display:flex;gap:8px;align-items:center"><button class="primary" type="submit">Save</button><span id="settingsErr" class="err"></span><span id="settingsOk" class="muted"></span></div>
-    </form>
-    <p class="muted">Changes apply on Save without a restart. "Record key" captures the next combination you press.</p>
-  </section>
+    <section class="tab" id="tab-settings" hidden>
+      <div class="pad">
+        <form class="settings card" id="settings">
+          <label>Activation <select name="activation"><option value="push_to_talk">Push to talk (hold)</option><option value="toggle">Toggle (tap to start, tap to stop)</option><option value="hold_or_toggle">Hold or toggle (tap locks on)</option></select></label>
+          <label>Hold threshold (ms) <input name="hold_threshold_ms" type="number" min="100" max="2000"></label>
+          <label>Hold key (push to talk) <select name="ptt_modifier"><option value="right_option">Right ⌥ Option</option><option value="left_option">Left ⌥ Option</option><option value="right_command">Right ⌘ Command</option><option value="right_control">Right ⌃ Control</option><option value="">Use a key combination instead</option></select><input name="ptt_combo" placeholder="e.g. Ctrl+Alt+Space" hidden><button type="button" class="btn sm" data-rec="ptt_combo" hidden>Record key</button></label>
+          <label>Toggle key <span style="display:flex;gap:6px"><input name="toggle_combo" placeholder="Ctrl+Shift+Space" style="flex:1"><button type="button" class="btn sm" data-rec="toggle_combo">Record key</button></span></label>
+          <label>Undo last paste <span style="display:flex;gap:6px"><input name="undo_combo" placeholder="Ctrl+Shift+Z" style="flex:1"><button type="button" class="btn sm" data-rec="undo_combo">Record key</button></span></label>
+          <label>Microphone <select name="microphone"><option value="">System default</option></select></label>
+          <label>Paste method <select name="paste_method"><option value="clipboard">Clipboard + ⌘V</option><option value="type">Type the text</option></select></label>
+          <label>Unload model after idle (minutes, 1–240) <input name="idle_unload_minutes" type="number" min="1" max="240"></label>
+          <label><span><input name="idle_never" type="checkbox"> Never unload</span></label>
+          <label>Keep recording after key-up (ms) <input name="post_release_ms" type="number" min="0" max="2000"></label>
+          <label>Maximum clip (seconds) <input name="max_clip_seconds" type="number" min="10" max="600"></label>
+          <div style="grid-column:1/-1;display:flex;gap:10px;align-items:center"><button class="btn primary" type="submit">Save</button><span id="settingsErr" class="err"></span><span id="settingsOk" class="muted"></span></div>
+        </form>
+        <p class="muted">Changes apply on Save without a restart. "Record key" captures the next combination you press.</p>
+      </div>
+    </section>
 
-  <section id="tab-setup" hidden>
-    <div class="card">
-      <div class="check"><span>Whisper model (large-v3-turbo, 574 MB)</span><span id="pModel"></span></div>
-      <div class="progress" id="dl" hidden><i id="dlBar"></i></div>
-      <div class="check"><span>Microphone</span><span><button data-priv="microphone">Open setting</button></span></div>
-      <div class="check"><span>Accessibility (needed to paste)</span><span><span id="pAcc"></span> <button data-priv="accessibility">Open setting</button></span></div>
-      <div class="check"><span>Input Monitoring (needed for the hold key)</span><span><span id="pIm"></span> <button data-priv="input_monitoring">Open setting</button></span></div>
-      <p class="muted">After granting Accessibility or Input Monitoring, quit PrivateVox from the menu bar and start it again.</p>
-      <p id="stale" class="err" hidden>The last session ended unexpectedly. Nothing was lost; history is saved after every dictation.</p>
-    </div>
-  </section>
+    <section class="tab" id="tab-setup" hidden>
+      <div class="pad">
+        <div class="card">
+          <h3>First-run checklist</h3>
+          <div class="check"><span>Whisper model (large-v3-turbo, 574 MB)</span><span id="pModel"></span></div>
+          <div class="progress" id="dl" hidden><i id="dlBar"></i></div>
+          <div class="check"><span>Microphone</span><span><button class="btn sm" data-priv="microphone">Open setting</button></span></div>
+          <div class="check"><span>Accessibility (needed to paste)</span><span><span id="pAcc"></span> <button class="btn sm" data-priv="accessibility">Open setting</button></span></div>
+          <div class="check"><span>Input Monitoring (needed for the hold key)</span><span><span id="pIm"></span> <button class="btn sm" data-priv="input_monitoring">Open setting</button></span></div>
+          <p class="muted">After granting Accessibility or Input Monitoring, quit PrivateVox from the menu bar and start it again.</p>
+          <p id="stale" class="err" hidden>The last session ended unexpectedly. Nothing was lost; history is saved after every dictation.</p>
+        </div>
+        <div class="card"><h3>Tools</h3><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="exportMd">Export history as Markdown</button><button class="btn" id="exportJson">Export history as JSON</button><button class="btn" id="dbgStart" title="Record without the hotkey">● Record</button><button class="btn" id="dbgStop" title="Stop recording">■ Stop</button></div></div>
+      </div>
+    </section>
+  </div>
+  <div class="status" id="status"></div>
+</div>
 
-  <p id="status" class="muted"></p>
-  <script src="privatevox.js"></script>
-  <script>
-    const $ = (id) => document.getElementById(id);
-    const inv = (c, a) => window.pvx.invoke(c, a);
-    function esc(s) { return String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
-    document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
-      document.querySelectorAll('nav button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
-      for (const t of ['history', 'settings', 'setup']) $('tab-' + t).hidden = t !== b.dataset.tab;
-      if (b.dataset.tab === 'settings') loadSettings(); if (b.dataset.tab === 'setup') loadSetup(); if (b.dataset.tab === 'models') loadModels();
-    });
+<script src="privatevox.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const inv = (c, a) => window.pvx.invoke(c, a);
+  const esc = (s) => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const fmtGB = (b) => (b / 1e9).toFixed(1) + ' GB', fmtMB = (b) => Math.round(b / 1e6) + ' MB';
+  const short = (m) => ({ 'large-v3-turbo': 'turbo', 'large-v3': 'large-v3', 'distil-large-v3': 'distil' })[m] || m;
+  const dur = (ms) => { const s = Math.round(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+  const ago = (ms) => { const d = (Date.now() - ms) / 1000; if (d < 60) return 'just now'; if (d < 3600) return Math.floor(d / 60) + ' min ago'; if (d < 86400) return Math.floor(d / 3600) + ' h ago'; if (d < 172800) return 'Yesterday'; return new Date(ms).toLocaleDateString(); };
+  function flash(m) { $('status').textContent = m; clearTimeout(flash.t); flash.t = setTimeout(() => $('status').textContent = '', 2500); }
 
-    const fmtGB = (b) => (b / 1e9).toFixed(1) + ' GB';
-    const fmtMB = (b) => Math.round(b / 1e6) + ' MB';
-    let modelsTimer = null;
-    async function loadModels() {
-      const [models, mem] = await Promise.all([inv('list_models'), inv('memory_report')]);
-      // header dropdown
-      const pick = $('modelPick');
-      pick.innerHTML = models.map(m => `<option value="${m.id}" ${m.active ? 'selected' : ''} ${m.downloaded ? '' : 'disabled'}>${esc(m.label)}${m.downloaded ? '' : ' (not downloaded)'}</option>`).join('');
-      // strip
-      const seg = $('meter').children, T = Math.max(1, mem.total);
-      seg[0].style.flexBasis = (mem.used_by_others / T * 100) + '%';
-      seg[1].style.flexBasis = (mem.selected_bytes / T * 100) + '%';
-      seg[2].style.flexBasis = (mem.llm_bytes / T * 100) + '%';
-      $('meter').classList.toggle('over', mem.verdict === 'wont_fit');
-      $('memTotal').textContent = fmtGB(mem.total) + ' unified memory';
-      $('memLeg').innerHTML = `<span style="--sw:#8069b8">Other apps + system <b>${fmtGB(mem.used_by_others)}</b></span><span style="--sw:#0d9488">Whisper ${esc(mem.selected)} <b>${fmtMB(mem.selected_bytes)}</b></span><span style="--sw:#c47f17">Polish LLM <b>${fmtMB(mem.llm_bytes)}</b></span><span style="--sw:var(--line)">Free after load <b>${fmtGB(mem.free_after)}</b></span>`;
-      const verdictText = { good: 'Fits with headroom', tight: 'Fits, but leaves little room for other apps', wont_fit: 'Will not fit comfortably: pick a smaller model' }[mem.verdict];
-      const cls = { good: 'good', tight: '', wont_fit: 'bad' }[mem.verdict];
-      const label = (id) => (models.find(m => m.id === id) || {}).label || id;
-      $('memVerdict').innerHTML = `<div class="${cls}"><span class="k">Selected · ${esc(mem.selected)}</span><span class="v">${fmtGB(mem.projected)} of ${fmtGB(mem.total)} · ${mem.percent}%</span><br><span class="muted">${verdictText}</span></div>
-        <div><span class="k">Recommended</span><span class="v">${mem.recommended ? esc(label(mem.recommended)) : 'Nothing fits'}</span><br><span class="muted">Fastest that stays under 80%</span></div>
-        <div><span class="k">Best accuracy that fits</span><span class="v">${mem.best ? esc(label(mem.best)) : 'Nothing fits'}</span><br><span class="muted">Most accurate under 80%</span></div>`;
-      // cards
-      const cards = $('modelCards'); cards.innerHTML = '';
-      for (const m of models) {
-        const el = document.createElement('div'); el.className = 'card mcard';
-        const st = m.stats || {};
-        const measured = [st.mem_bytes ? fmtMB(st.mem_bytes) + ' resident' : fmtMB(mem.tier_bytes[m.id]) + ' est.', st.load_ms ? st.load_ms + ' ms load' : null, st.speed_x ? st.speed_x.toFixed(1) + '× realtime' : null].filter(Boolean).join(' · ');
-        el.innerHTML = `<div><strong>${esc(m.label)}</strong>${m.active ? '<span class="badge active">in use</span>' : ''}${m.english_only ? '<span class="badge">English only</span>' : ''}<div class="st">${esc(m.quant)} · ${fmtMB(m.bytes)} on disk · ${m.downloaded ? 'downloaded' : (m.downloading ? 'downloading…' : 'not downloaded')}</div><div class="st">${measured}</div></div>
-          <div class="acts">${m.downloaded ? (m.active ? '' : `<button data-use>Use</button>`) + `<button data-bench>Benchmark</button>` + (m.active ? '' : `<button data-del>Delete</button>`) : (m.downloading ? '' : `<button data-dl>Download</button>`)}</div>`;
-        const on = (sel, cmd, args) => { const b = el.querySelector(sel); if (b) b.onclick = async () => { try { await inv(cmd, args); flash(cmd.replace('_', ' ') + ' started'); } catch (e) { flash(String(e)); } setTimeout(loadModels, 300); }; };
-        on('[data-use]', 'switch_model', { id: m.id }); on('[data-bench]', 'benchmark_model', { id: m.id }); on('[data-del]', 'delete_model', { id: m.id }); on('[data-dl]', 'download_model_by_id', { id: m.id });
-        cards.appendChild(el);
-      }
-      clearTimeout(modelsTimer);
-      if (!$('tab-models').hidden) modelsTimer = setTimeout(loadModels, 5000);
-    }
-    $('modelPick').onchange = async (e) => { try { await inv('switch_model', { id: e.target.value }); } catch (err) { flash(String(err)); } };
-    window.pvx.listen('models-changed', () => { if (!$('tab-models').hidden) loadModels(); else inv('list_models').then(ms => { $('modelPick').innerHTML = ms.map(m => `<option value="${m.id}" ${m.active ? 'selected' : ''} ${m.downloaded ? '' : 'disabled'}>${esc(m.label)}</option>`).join(''); }); });
+  document.querySelectorAll('nav.tabs button').forEach(b => b.onclick = () => {
+    document.querySelectorAll('nav.tabs button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    for (const t of ['history', 'models', 'settings', 'setup']) $('tab-' + t).hidden = t !== b.dataset.tab;
+    if (b.dataset.tab === 'settings') loadSettings(); if (b.dataset.tab === 'setup') loadSetup(); if (b.dataset.tab === 'models') loadModels(); if (b.dataset.tab === 'history') loadMemory();
+  });
 
-    async function loadHistory() {
-      const list = $('q').value ? await inv('search_history', { query: $('q').value }) : await inv('list_history', { limit: 100, offset: 0 });
-      $('count').textContent = (await inv('history_count')) + ' dictations';
-      const rows = $('rows'); rows.innerHTML = list.length ? '' : '<p class="muted">Nothing dictated yet. Hold the dictation key and speak.</p>';
-      for (const d of list) {
-        const el = document.createElement('div'); el.className = 'row';
-        const t = d.polished_text || d.raw_text;
-        el.innerHTML = `<div class="meta"><span>${new Date(d.created_at_ms).toLocaleString()}</span><span>${esc(d.app_name || '')}</span><span>${esc(d.model)}</span><span>${(d.duration_ms/1000).toFixed(1)}s</span><span>${esc(d.status)}</span>${d.pinned ? '<span>📌 pinned</span>' : ''}</div><div class="txt" tabindex="0">${esc(t)}</div><button data-copy>Copy</button> <button data-edit>Edit</button> <button data-again title="Paste into the app in front">Paste again</button> <button data-pin>${d.pinned ? 'Unpin' : 'Pin'}</button> <button data-del>Delete</button>`;
-        const txt = el.querySelector('.txt');
-        el.querySelector('[data-copy]').onclick = async () => { try { await navigator.clipboard.writeText(txt.innerText); flash('Copied'); } catch { flash('Copy blocked'); } };
-        el.querySelector('[data-del]').onclick = async () => { await inv('delete_history', { id: d.id }); loadHistory(); };
-        el.querySelector('[data-pin]').onclick = async () => { await inv('pin_history', { id: d.id, pinned: !d.pinned }); loadHistory(); };
-        el.querySelector('[data-again]').onclick = async () => { await inv('paste_text', { text: txt.innerText }); flash('Pasting into the app in front…'); };
-        const editBtn = el.querySelector('[data-edit]');
-        editBtn.onclick = () => {
-          if (txt.isContentEditable) { commit(); return; }
-          const original = txt.innerText; txt.contentEditable = 'true'; txt.style.outline = '2px dashed var(--accent)'; txt.focus(); editBtn.textContent = 'Save';
-          const done = () => { txt.contentEditable = 'false'; txt.style.outline = ''; editBtn.textContent = 'Edit'; txt.onkeydown = null; };
-          async function commit() { const v = txt.innerText.trim(); done(); if (v && v !== original) { await inv('update_history_text', { id: d.id, text: v }); flash('Saved'); } loadHistory(); }
-          txt.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commit(); } if (e.key === 'Escape') { txt.innerText = original; done(); } };
-        };
-        rows.appendChild(el);
-      }
-    }
-    function flash(m) { $('status').textContent = m; setTimeout(() => $('status').textContent = '', 1500); }
-    $('q').addEventListener('input', loadHistory);
-    $('dbgStart').onclick = () => inv('debug_start'); $('dbgStop').onclick = () => inv('debug_stop');
-    $('exportMd').onclick = async () => { try { flash('Saved ' + await inv('export_history', { format: 'md' })); } catch (e) { flash(String(e)); } };
-    $('exportJson').onclick = async () => { try { flash('Saved ' + await inv('export_history', { format: 'json' })); } catch (e) { flash(String(e)); } };
-
-    function hint(b) { return b.modifier ? ({right_option:'Right ⌥', left_option:'Left ⌥', right_command:'Right ⌘', right_control:'Right ⌃'})[b.modifier] : (b.combo || 'none'); }
-    async function loadSettings() {
-      const s = await inv('get_settings'); const f = $('settings');
-      f.activation.value = s.activation; f.hold_threshold_ms.value = s.hold_threshold_ms;
-      f.ptt_modifier.value = s.ptt.modifier || ''; f.ptt_combo.value = s.ptt.combo || '';
-      const pttMode = () => { const combo = !f.ptt_modifier.value; f.ptt_combo.hidden = !combo; f.querySelector('[data-rec=ptt_combo]').hidden = !combo; };
-      f.ptt_modifier.onchange = pttMode; pttMode();
-      f.toggle_combo.value = s.toggle.combo || ''; f.undo_combo.value = (s.undo && s.undo.combo) || '';
-      f.querySelectorAll('[data-rec]').forEach(b => b.onclick = () => {
-        const input = f[b.dataset.rec]; const old = b.textContent; b.textContent = 'Press keys…';
-        const onKey = (e) => {
-          e.preventDefault();
-          if (['Control','Shift','Alt','Meta'].includes(e.key)) return; // wait for the non-modifier
-          const parts = []; if (e.ctrlKey) parts.push('Ctrl'); if (e.altKey) parts.push('Alt'); if (e.shiftKey) parts.push('Shift'); if (e.metaKey) parts.push('Cmd');
-          let k = e.code.replace(/^Key/, '').replace(/^Digit/, ''); if (k === 'Space') k = 'Space';
-          parts.push(k);
-          window.removeEventListener('keydown', onKey, true); b.textContent = old;
-          inv('check_combo', { combo: parts.join('+') }).then(v => { input.value = v; $('settingsErr').textContent = ''; }).catch(err => { $('settingsErr').textContent = String(err); });
-        };
-        window.addEventListener('keydown', onKey, true);
-      });
-      const mics = await inv('list_input_devices'); f.microphone.innerHTML = '<option value="">System default</option>' + mics.map(m => `<option>${esc(m)}</option>`).join('');
-      f.microphone.value = s.microphone || ''; f.paste_method.value = s.paste_method;
-      f.idle_never.checked = s.idle_unload_minutes == null; f.idle_unload_minutes.value = s.idle_unload_minutes ?? 10; f.idle_unload_minutes.disabled = f.idle_never.checked;
-      f.post_release_ms.value = s.post_release_ms; f.max_clip_seconds.value = s.max_clip_seconds;
-      f.idle_never.onchange = () => f.idle_unload_minutes.disabled = f.idle_never.checked;
-      f.onsubmit = async (e) => {
-        e.preventDefault(); $('settingsErr').textContent = ''; $('settingsOk').textContent = '';
-        const n = { ...s, activation: f.activation.value, hold_threshold_ms: +f.hold_threshold_ms.value, microphone: f.microphone.value || null, paste_method: f.paste_method.value,
-          ptt: f.ptt_modifier.value ? { modifier: f.ptt_modifier.value, combo: null } : { modifier: null, combo: f.ptt_combo.value || null },
-          toggle: { modifier: null, combo: f.toggle_combo.value || null }, undo: { modifier: null, combo: f.undo_combo.value || null },
-          idle_unload_minutes: f.idle_never.checked ? null : +f.idle_unload_minutes.value, post_release_ms: +f.post_release_ms.value, max_clip_seconds: +f.max_clip_seconds.value };
-        try { await inv('set_settings', { settings: n }); $('settingsOk').textContent = 'Saved'; } catch (err) { $('settingsErr').textContent = String(err); }
+  // ---------- history ----------
+  async function loadHistory() {
+    const list = $('q').value ? await inv('search_history', { query: $('q').value }) : await inv('list_history', { limit: 200, offset: 0 });
+    const st = await inv('history_stats');
+    $('stats').textContent = `${st.count} dictations · ${st.words} words`;
+    const rows = $('rows'); rows.innerHTML = list.length ? '' : '<p class="empty">Nothing dictated yet. Hold the dictation key and speak.</p>';
+    for (const d of list) {
+      const el = document.createElement('div'); el.className = 'row';
+      const text = d.polished_text || d.raw_text;
+      el.innerHTML = `<div class="meta"><span>${esc(ago(d.created_at_ms))}</span><span>${esc(d.app_name || 'unknown app')}</span><span>${esc(d.mode)}</span><span>${esc(short(d.model))}</span><span>${dur(d.duration_ms)}</span>${d.status !== 'ok' ? `<span>${esc(d.status.replace('_', ' '))}</span>` : ''}${d.pinned ? '<span>pinned</span>' : ''}</div>
+        <div class="txt" tabindex="0">${esc(text)}</div>
+        <div class="acts"><button class="btn" data-copy>Copy</button><button class="btn" data-edit>Edit</button><button class="btn" data-raw ${d.polished_text ? '' : 'disabled title="No polished version yet"'}>Raw</button><button class="btn" data-again title="Paste into the app in front">Paste again</button><button class="btn" data-pin>${d.pinned ? 'Unpin' : 'Pin'}</button><button class="btn" data-del>Delete</button></div>`;
+      const txt = el.querySelector('.txt');
+      el.querySelector('[data-copy]').onclick = async () => { try { await navigator.clipboard.writeText(txt.innerText); flash('Copied'); } catch { flash('Copy blocked'); } };
+      el.querySelector('[data-del]').onclick = async () => { await inv('delete_history', { id: d.id }); loadHistory(); };
+      el.querySelector('[data-pin]').onclick = async () => { await inv('pin_history', { id: d.id, pinned: !d.pinned }); loadHistory(); };
+      el.querySelector('[data-again]').onclick = async () => { await inv('paste_text', { text: txt.innerText }); flash('Pasting into the app in front…'); };
+      const rawBtn = el.querySelector('[data-raw]');
+      rawBtn.onclick = () => { const ex = el.querySelector('.raw'); if (ex) { ex.remove(); rawBtn.textContent = 'Raw'; } else { const p = document.createElement('div'); p.className = 'raw'; p.textContent = 'Whisper heard: “' + d.raw_text + '”'; el.appendChild(p); rawBtn.textContent = 'Hide raw'; } };
+      const editBtn = el.querySelector('[data-edit]');
+      editBtn.onclick = () => {
+        if (txt.isContentEditable) { commit(); return; }
+        const original = txt.innerText; txt.contentEditable = 'true'; txt.focus(); editBtn.textContent = 'Save';
+        const done = () => { txt.contentEditable = 'false'; editBtn.textContent = 'Edit'; txt.onkeydown = null; };
+        async function commit() { const v = txt.innerText.trim(); done(); if (v && v !== original) { await inv('update_history_text', { id: d.id, text: v }); flash('Saved'); } loadHistory(); }
+        txt.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commit(); } if (e.key === 'Escape') { txt.innerText = original; done(); } };
       };
+      rows.appendChild(el);
     }
-    async function loadSetup() {
-      const p = await inv('permissions');
-      $('pModel').innerHTML = p.model_present ? '<span class="ok">ready</span>' : '<button id="dlBtn">Download</button>';
-      if (!p.model_present) $('dlBtn').onclick = () => { inv('download_model'); $('dl').hidden = false; };
-      $('pAcc').innerHTML = p.accessibility ? '<span class="ok">granted</span>' : '<span class="no">not granted</span>';
-      $('pIm').innerHTML = p.input_monitoring ? '<span class="ok">granted</span>' : '<span class="no">not granted</span>';
-      $('stale').hidden = !p.stale_lock;
-      document.querySelectorAll('[data-priv]').forEach(b => b.onclick = () => inv('open_privacy', { pane: b.dataset.priv }));
+  }
+  $('q').addEventListener('input', loadHistory);
+
+  // ---------- memory strip + models ----------
+  let memTimer = null;
+  async function loadMemory() {
+    const [models, mem, machine] = await Promise.all([inv('list_models'), inv('memory_report'), inv('machine_label')]);
+    $('machine').textContent = machine;
+    $('modelPick').innerHTML = models.map(m => `<option value="${m.id}" ${m.active ? 'selected' : ''} ${m.downloaded ? '' : 'disabled'}>${esc(m.id)} · ${esc(m.label.split(' · ')[0].toLowerCase())}${m.downloaded ? '' : ' (not downloaded)'}</option>`).join('');
+    const seg = $('meter').children, T = Math.max(1, mem.total);
+    seg[0].style.flexBasis = (mem.used_by_others / T * 100) + '%'; seg[1].style.flexBasis = (mem.selected_bytes / T * 100) + '%'; seg[2].style.flexBasis = (mem.llm_bytes / T * 100) + '%';
+    $('meter').classList.toggle('over', mem.verdict === 'wont_fit');
+    $('tickMid').textContent = fmtGB(mem.total / 2).replace('.0', ''); $('tickMax').textContent = fmtGB(mem.total).replace('.0', '');
+    $('memLeg').innerHTML = `<span style="--sw:var(--m-other)">Other apps <b>${fmtGB(mem.used_by_others)}</b></span><span style="--sw:var(--m-whisper)">Whisper ${esc(mem.selected)} <b>${fmtMB(mem.selected_bytes)}</b></span><span style="--sw:var(--m-llm)">Polish LLM <b>${fmtMB(mem.llm_bytes)}</b></span><span style="--sw:var(--surface-2)">Free after load <b>${fmtGB(mem.free_after)}</b></span>`;
+    const verdictText = { good: 'Fits with headroom.', tight: 'Fits, but leaves little room for other apps.', wont_fit: 'Will not fit comfortably. Pick a smaller model.' }[mem.verdict];
+    const cls = { good: 'good', tight: '', wont_fit: 'bad' }[mem.verdict];
+    $('memVerdict').innerHTML = `<div class="tile ${cls}"><span class="k">Selected: ${esc(mem.selected)}</span><span class="v">${fmtGB(mem.projected)} of ${fmtGB(mem.total)} · ${mem.percent}%</span><span class="s">${verdictText}</span></div>
+      <div class="tile"><span class="k">Recommended</span><span class="v">${mem.recommended ? esc(mem.recommended) : 'Nothing fits'}</span><span class="s">Fastest that fits with 20% spare</span></div>
+      <div class="tile"><span class="k">Best accuracy that fits</span><span class="v">${mem.best ? esc(mem.best) : 'Nothing fits'}</span><span class="s">${mem.best === 'large-v3' ? 'Full large-v3, 100 languages' : mem.best ? 'large-v3 would exceed 80%' : 'Reduce what else is running'}</span></div>`;
+    clearTimeout(memTimer);
+    if (!$('tab-history').hidden && !document.hidden) memTimer = setTimeout(loadMemory, 5000);
+    return { models, mem };
+  }
+  async function loadModels() {
+    const { models, mem } = await loadMemory();
+    const cards = $('modelCards'); cards.innerHTML = '';
+    for (const m of models) {
+      const el = document.createElement('div'); el.className = 'card mcard';
+      const st = m.stats || {};
+      const measured = [st.mem_bytes ? fmtMB(st.mem_bytes) + ' resident' : fmtMB(mem.tier_bytes[m.id]) + ' estimated', st.load_ms ? st.load_ms + ' ms load' : null, st.speed_x ? st.speed_x.toFixed(1) + '× realtime' : null].filter(Boolean).join(' · ');
+      el.innerHTML = `<div><strong style="font:600 17px var(--display)">${esc(m.label)}</strong>${m.active ? '<span class="badge active">in use</span>' : ''}${m.english_only ? '<span class="badge">English only</span>' : ''}<div class="st">${esc(m.quant)} · ${fmtMB(m.bytes)} on disk · ${m.downloaded ? 'downloaded' : (m.downloading ? 'downloading…' : 'not downloaded')}</div><div class="st">${measured}</div></div>
+        <div class="acts">${m.downloaded ? (m.active ? '' : `<button class="btn" data-use>Use</button>`) + `<button class="btn" data-bench title="Measures speed on a 30 s clip; the current model stays selected">Benchmark</button>` + (m.active ? '' : `<button class="btn" data-del>Delete</button>`) : (m.downloading ? '' : `<button class="btn primary" data-dl>Download</button>`)}</div>`;
+      const on = (sel, cmd, args) => { const b = el.querySelector(sel); if (b) b.onclick = async () => { try { await inv(cmd, args); flash(cmd.replace(/_/g, ' ') + ' started'); } catch (e) { flash(String(e)); } setTimeout(loadModels, 400); }; };
+      on('[data-use]', 'switch_model', { id: m.id }); on('[data-bench]', 'benchmark_model', { id: m.id }); on('[data-del]', 'delete_model', { id: m.id }); on('[data-dl]', 'download_model_by_id', { id: m.id });
+      cards.appendChild(el);
     }
-    window.pvx.listen('model-download', (d) => { $('dl').hidden = d.done; $('dlBar').style.width = Math.round(100 * d.received / Math.max(1, d.total)) + '%'; if (d.done) { loadSetup(); if (!$('tab-models').hidden) loadModels(); } if (d.error) flash('Download failed: ' + d.error); $('status').textContent = d.done ? '' : `Downloading ${d.model}: ${Math.round(100 * d.received / Math.max(1, d.total))}%`; });
-    window.pvx.listen('pill-state', (s) => { $('status').textContent = s.state + (s.message ? ': ' + s.message : ''); if (s.state === 'pasted') loadHistory(); });
-    loadHistory();
-    inv('list_models').then(ms => { $('modelPick').innerHTML = ms.map(m => `<option value="${m.id}" ${m.active ? 'selected' : ''} ${m.downloaded ? '' : 'disabled'}>${esc(m.label)}</option>`).join(''); }).catch(() => {});
-    inv('permissions').then(p => { if (!p.model_present || !p.accessibility) document.querySelector('[data-tab=setup]').click(); });
-  </script>
+  }
+  $('modelPick').onchange = async (e) => { try { await inv('switch_model', { id: e.target.value }); } catch (err) { flash(String(err)); } };
+  window.pvx.listen('models-changed', () => { if (!$('tab-models').hidden) loadModels(); else loadMemory(); });
+
+  // ---------- settings ----------
+  async function loadSettings() {
+    const s = await inv('get_settings'); const f = $('settings');
+    f.activation.value = s.activation; f.hold_threshold_ms.value = s.hold_threshold_ms;
+    f.ptt_modifier.value = s.ptt.modifier || ''; f.ptt_combo.value = s.ptt.combo || '';
+    const pttMode = () => { const combo = !f.ptt_modifier.value; f.ptt_combo.hidden = !combo; f.querySelector('[data-rec=ptt_combo]').hidden = !combo; };
+    f.ptt_modifier.onchange = pttMode; pttMode();
+    f.toggle_combo.value = s.toggle.combo || ''; f.undo_combo.value = (s.undo && s.undo.combo) || '';
+    f.querySelectorAll('[data-rec]').forEach(b => b.onclick = () => {
+      const input = f[b.dataset.rec]; const old = b.textContent; b.textContent = 'Press keys… (Esc cancels)';
+      const onKey = (e) => {
+        e.preventDefault();
+        if (e.key === 'Escape') { window.removeEventListener('keydown', onKey, true); b.textContent = old; return; }
+        if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
+        const parts = []; if (e.ctrlKey) parts.push('Ctrl'); if (e.altKey) parts.push('Alt'); if (e.shiftKey) parts.push('Shift'); if (e.metaKey) parts.push('Cmd');
+        parts.push(e.code.replace(/^Key/, '').replace(/^Digit/, ''));
+        window.removeEventListener('keydown', onKey, true); b.textContent = old;
+        inv('check_combo', { combo: parts.join('+') }).then(v => { input.value = v; $('settingsErr').textContent = ''; }).catch(err => { $('settingsErr').textContent = String(err); });
+      };
+      window.addEventListener('keydown', onKey, true);
+    });
+    const mics = await inv('list_input_devices'); f.microphone.innerHTML = '<option value="">System default</option>' + mics.map(m => `<option>${esc(m)}</option>`).join('');
+    f.microphone.value = s.microphone || ''; f.paste_method.value = s.paste_method;
+    f.idle_never.checked = s.idle_unload_minutes == null; f.idle_unload_minutes.value = s.idle_unload_minutes ?? 10; f.idle_unload_minutes.disabled = f.idle_never.checked;
+    f.post_release_ms.value = s.post_release_ms; f.max_clip_seconds.value = s.max_clip_seconds;
+    f.idle_never.onchange = () => f.idle_unload_minutes.disabled = f.idle_never.checked;
+    f.onsubmit = async (e) => {
+      e.preventDefault(); $('settingsErr').textContent = ''; $('settingsOk').textContent = '';
+      const live = await inv('get_settings');
+      const n = { ...live, activation: f.activation.value, hold_threshold_ms: +f.hold_threshold_ms.value, microphone: f.microphone.value || null, paste_method: f.paste_method.value,
+        ptt: f.ptt_modifier.value ? { modifier: f.ptt_modifier.value, combo: null } : { modifier: null, combo: f.ptt_combo.value || null },
+        toggle: { modifier: null, combo: f.toggle_combo.value || null }, undo: { modifier: null, combo: f.undo_combo.value || null },
+        idle_unload_minutes: f.idle_never.checked ? null : +f.idle_unload_minutes.value, post_release_ms: +f.post_release_ms.value, max_clip_seconds: +f.max_clip_seconds.value };
+      try { await inv('set_settings', { settings: n }); $('settingsOk').textContent = 'Saved'; } catch (err) { $('settingsErr').textContent = String(err); }
+    };
+  }
+
+  // ---------- setup ----------
+  async function loadSetup() {
+    const p = await inv('permissions');
+    $('pModel').innerHTML = p.model_present ? '<span class="ok">ready</span>' : '<button class="btn sm" id="dlBtn">Download</button>';
+    if (!p.model_present) $('dlBtn').onclick = () => { inv('download_model'); $('dl').hidden = false; };
+    $('pAcc').innerHTML = p.accessibility ? '<span class="ok">granted</span>' : '<span class="no">not granted</span>';
+    $('pIm').innerHTML = p.input_monitoring ? '<span class="ok">granted</span>' : '<span class="no">not granted</span>';
+    $('stale').hidden = !p.stale_lock;
+    document.querySelectorAll('[data-priv]').forEach(b => b.onclick = () => inv('open_privacy', { pane: b.dataset.priv }));
+  }
+  $('dbgStart').onclick = () => inv('debug_start'); $('dbgStop').onclick = () => inv('debug_stop');
+  $('exportMd').onclick = async () => { try { flash('Saved ' + await inv('export_history', { format: 'md' })); } catch (e) { flash(String(e)); } };
+  $('exportJson').onclick = async () => { try { flash('Saved ' + await inv('export_history', { format: 'json' })); } catch (e) { flash(String(e)); } };
+
+  window.pvx.listen('model-download', (d) => { $('dl').hidden = d.done; $('dlBar').style.width = Math.round(100 * d.received / Math.max(1, d.total)) + '%'; if (d.done) { loadSetup(); loadMemory(); } if (d.error) flash('Download failed: ' + d.error); $('status').textContent = d.done ? '' : `Downloading ${d.model}: ${Math.round(100 * d.received / Math.max(1, d.total))}%`; });
+  window.pvx.listen('pill-state', (s) => { $('status').textContent = s.state === 'idle' ? '' : s.state.replace('_', ' ') + (s.message ? ': ' + s.message : ''); if (s.state === 'pasted') loadHistory(); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && !$('tab-history').hidden) loadMemory(); });
+  loadHistory(); loadMemory();
+  inv('permissions').then(p => { if (!p.model_present || !p.accessibility) document.querySelector('[data-tab=setup]').click(); });
+</script>
 </body>
 </html>

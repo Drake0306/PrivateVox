@@ -76,6 +76,8 @@ pub fn run() {
             commands::search_history,
             commands::delete_history,
             commands::history_count,
+            commands::history_stats,
+            commands::machine_label,
             commands::update_history_text,
             commands::pin_history,
             commands::paste_text,
