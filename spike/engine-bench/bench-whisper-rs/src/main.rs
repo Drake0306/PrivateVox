@@ -22,6 +22,11 @@ const CONFIGS: &[Cfg] = &[
     Cfg { id: "beam5_en", beam: Some(5), flash: false, language: Some("en"), audio_ctx: None, short_only: false },
     Cfg { id: "greedy_auto", beam: None, flash: false, language: None, audio_ctx: None, short_only: false },
     Cfg { id: "greedy_en_ctx768", beam: None, flash: false, language: Some("en"), audio_ctx: Some(768), short_only: true },
+    Cfg { id: "greedy_en_flash_ctx768", beam: None, flash: true, language: Some("en"), audio_ctx: Some(768), short_only: true },
+    Cfg { id: "greedy_en_ctx512", beam: None, flash: false, language: Some("en"), audio_ctx: Some(512), short_only: true },
+    Cfg { id: "greedy_en_ctx384", beam: None, flash: false, language: Some("en"), audio_ctx: Some(384), short_only: true },
+    Cfg { id: "greedy_en_ctx1024", beam: None, flash: false, language: Some("en"), audio_ctx: Some(1024), short_only: true },
+    Cfg { id: "greedy_en_ctx1500", beam: None, flash: false, language: Some("en"), audio_ctx: Some(1500), short_only: true },
 ];
 
 fn load_ctx(path: &Path, flash: bool) -> Result<(WhisperContext, u128)> {
@@ -79,7 +84,8 @@ fn main() -> Result<()> {
         loaded.push((flash, ctx, ms));
     }
 
-    for cfg in CONFIGS {
+    let only_ctx = std::env::var("LVW_ONLY_CTX").is_ok();
+    for cfg in CONFIGS.iter().filter(|c| !only_ctx || c.id.contains("ctx")) {
         let (_, ctx, load_ms) = loaded.iter().find(|(f, _, _)| *f == cfg.flash).unwrap();
         for (name, pcm, reference) in &clips {
             if cfg.short_only && name == "30s" {

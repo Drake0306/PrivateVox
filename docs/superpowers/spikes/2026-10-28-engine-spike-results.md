@@ -64,7 +64,16 @@ On large-v3 transcribe-cpp is about 15% faster than whisper-rs without flash att
 
 ## large-v3-turbo with the Core ML encoder (whisper-rs, feature `coreml`)
 
-_pending: encoder download and first Neural Engine compile_
+Encoder: `ggml-large-v3-turbo-encoder.mlmodelc` (1.2 GB extracted). whisper.cpp strips the quantization suffix when it looks for the encoder, so the file keeps its original name beside `ggml-large-v3-turbo-q5_0.bin`. The log confirms "Core ML model loaded" for every context. Load with the encoder: 517 ms (first-ever load on this machine 8.7 s while the Neural Engine compiled it).
+
+| Config | 30s cold | 30s warm | 10s cold | 10s warm | short cold | short warm | WER 10s |
+|---|---|---|---|---|---|---|---|
+| greedy, en | 8665 | 6440 | 3328 | 3211 | 3048 | 3152 | 0.042 |
+| greedy, en, flash attention | 6020 | 6091 | 3472 | 3330 | 4438 | 3688 | 0.042 |
+| greedy, language auto | 7965 | 7961 | 5161 | 5183 | 5337 | 5304 | 0.042 |
+| greedy, en, audio_ctx 768 | n/a | n/a | 157 | 137 | 150 | 138 | **0.958 (garbage)** |
+
+Core ML is not faster than Metal on this M1 for the turbo encoder (3.2 vs 2.8 s on the 10 s clip, 6.4 vs 6.1 s warm on the 30 s clip), it costs a 1.2 GB download and a one-time multi-second compile, and it silently breaks the reduced audio context: the fixed-shape Core ML encoder ignores `audio_ctx` and returns nonsense in 150 ms. Part of this run overlapped an Ollama model download (network and disk only), which does not explain a slowdown of this size.
 
 ## Findings so far
 
@@ -77,6 +86,33 @@ _pending: encoder download and first Neural Engine compile_
 7. **The 30 s window boundary loses words.** On the 31.6 s clip whisper-rs dropped a whole phrase at the boundary; transcribe-cpp kept it. Chunking at pauses so every run stays under 30 s (§18.6) is an accuracy fix as well as a latency one.
 8. **Both wrote "Tori" for "Tauri".** The dictionary / initial prompt path (§18.8) is needed; transcribe-cpp's prompt run did not fix it on its own.
 
+9. **Core ML brings nothing here.** Equal or slower than Metal on an M1 base, and incompatible with reduced audio context. Not used in v1; revisit only for Intel-free machines with a stronger Neural Engine, as an opt-in.
+10. **large-v3 is 1.7× slower than turbo** on the same engine (10.6 vs 6.1 s on 30 s; 4.4 vs 2.8 s on 10 s) and was more accurate on one proper noun. It stays the "Accuracy" option, never the default.
+
 ## Decision
 
-_pending the large-v3 and Core ML numbers_
+**Engine for v1: `whisper-rs` 0.16 (whisper.cpp) with the `metal` feature on macOS and `vulkan` on Windows.** Not `transcribe-cpp`. Reasoning, in order of weight:
+
+1. On the plain GPU path the two are equal on turbo and transcribe-cpp is ~15% faster on large-v3, so the §18.2 rule would allow either.
+2. whisper-rs exposes two levers transcribe-cpp does not: flash attention (−20% on every clip) and a reduced audio context (2.6 s → 1.1 s on a one-word clip, 2.8 s → 1.3 s on a 7.5 s clip, same text). Dictation is mostly short clips, so this is a 2–2.5× win on the common case. That outweighs transcribe-cpp's bundled VAD and language ID.
+3. VAD is covered: whisper-rs 0.16 ships `WhisperVadContext` over whisper.cpp's Silero ggml models.
+4. Language ID: v1 defaults to one spoken language (no detection cost). Multi-language users get Whisper's own detection on a short head with reduced audio context, which is cheap; a separate identifier model is not needed in v1.
+5. transcribe-cpp remains documented as the alternative engine behind the `Engine` trait if Parakeet or streaming models are wanted later.
+
+**Default decode settings (turbo, "Fast" tier):** greedy, `best_of 1`, flash attention on, language fixed from the spoken-languages setting, `no_context` on, `suppress_blank` and `suppress_nst` on, timestamps off, 4 threads on the M1, `audio_ctx` chosen from clip length (policy pinned by the sweep below). **"Accuracy" tier:** large-v3, same settings, full audio context, still greedy (beam 5 cost 15–70% for no measured gain).
+
+**Core ML:** not built into v1.
+
+**Chunking:** every decode run stays under 30 s of audio (§18.6), which also fixes the boundary word loss seen on the 31.6 s clip.
+
+**Measured footprints (replace §3 estimates):** turbo q5_0 resident context ~550 MB process memory; large-v3 q5_0 ~1.0 GB. GPU buffers on unified memory are included in those numbers. Model files: 574 MB and 1081 MB.
+
+**Measured latencies (replace §11 targets on this M1 8 GB):** turbo, fast tier, one-word clip ~1.1 s, 7.5 s clip ~1.3 s, 30 s clip ~4.8 s (flash, full context). First Metal shader compile after install ~12 s, once.
+
+## Audio-context sweep (turbo, whisper-rs)
+
+_pending_
+
+## LLM polish round trip (Ollama, qwen2.5:3b, this M1)
+
+_pending_
