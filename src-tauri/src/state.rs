@@ -50,6 +50,11 @@ pub struct AppState {
     pub downloading: Mutex<std::collections::HashSet<String>>,
     pub engine: crate::lifecycle::SharedEngine,
     pub polisher: crate::llm::SharedPolisher,
+    pub remote: Arc<privatevox_engine::remote::RemoteState>,
+    pub host: Mutex<Option<crate::host::HostServer>>,
+    pub vad_path: PathBuf,
+    /// The local model the routing engine falls back to; written on every load.
+    pub model_path_slot: Arc<Mutex<Option<PathBuf>>>,
 }
 
 impl AppState {

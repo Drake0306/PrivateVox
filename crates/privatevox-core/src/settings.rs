@@ -41,6 +41,39 @@ pub enum PasteMethod {
     Type,
 }
 
+/// Serve transcription and polish to other PrivateVox instances on the LAN (design §8.6).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct HostSettings {
+    pub enabled: bool,
+    pub port: u16,
+    pub token: Option<String>,
+}
+
+impl Default for HostSettings {
+    fn default() -> Self {
+        HostSettings { enabled: false, port: crate::net::DEFAULT_HOST_PORT, token: None }
+    }
+}
+
+/// Send dictation to a host on the LAN instead of running Whisper and the LLM here (design §8.6).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct RemoteSettings {
+    pub enabled: bool,
+    /// `host:port` or `http://host:port`.
+    pub base_url: Option<String>,
+    pub token: Option<String>,
+    /// How the host is named in the pill, the strip and the history marker.
+    pub label: String,
+}
+
+impl Default for RemoteSettings {
+    fn default() -> Self {
+        RemoteSettings { enabled: false, base_url: None, token: None, label: "PC".into() }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -76,6 +109,10 @@ pub struct Settings {
     pub llm_endpoints: Vec<crate::polish::Endpoint>,
     /// Probe the localhost runtimes (Ollama, LM Studio, llama.cpp) after the user's list.
     pub auto_detect_local_llm: bool,
+    pub host: HostSettings,
+    pub remote: RemoteSettings,
+    /// How this machine introduces itself to a host; `None` means the OS hostname.
+    pub machine_name: Option<String>,
 }
 
 impl Default for Settings {
@@ -103,6 +140,9 @@ impl Default for Settings {
             polish_enabled: true,
             llm_endpoints: Vec::new(),
             auto_detect_local_llm: true,
+            host: HostSettings::default(),
+            remote: RemoteSettings::default(),
+            machine_name: None,
         }
     }
 }
@@ -143,6 +183,13 @@ impl Settings {
         }
         if self.spoken_languages.is_empty() {
             return Err("Pick at least one spoken language".into());
+        }
+        if self.remote.enabled {
+            let url = self.remote.base_url.as_deref().map(str::trim).filter(|u| !u.is_empty()).ok_or_else(|| "Enter the host's address, like 192.168.1.20:8765".to_string())?;
+            crate::polish::normalize_base_url(url).map_err(|e| format!("Host address: {e}"))?;
+        }
+        if self.host.enabled && self.host.port < 1024 {
+            return Err("Host port must be 1024 or higher".into());
         }
         Ok(())
     }
@@ -224,5 +271,31 @@ mod tests {
         s.hold_threshold_ms = 300;
         s.max_clip_seconds = 5;
         assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn host_and_remote_defaults_are_off() {
+        let s = Settings::default();
+        assert!(!s.host.enabled);
+        assert_eq!(s.host.port, 8765);
+        assert!(s.host.token.is_none());
+        assert!(!s.remote.enabled);
+        assert!(s.remote.base_url.is_none());
+        assert_eq!(s.remote.label, "PC");
+        assert!(s.machine_name.is_none());
+    }
+
+    #[test]
+    fn validate_rejects_bad_remote_url_when_enabled() {
+        let mut s = Settings::default();
+        s.remote.enabled = true;
+        assert!(s.validate().unwrap_err().contains("address"));
+        s.remote.base_url = Some("192.168.1.20:8765".into());
+        assert!(s.validate().is_ok());
+        s.host.enabled = true;
+        s.host.port = 80;
+        assert!(s.validate().unwrap_err().contains("port"));
+        s.host.port = 8765;
+        assert!(s.validate().is_ok());
     }
 }

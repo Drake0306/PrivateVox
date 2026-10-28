@@ -60,6 +60,7 @@ pub struct HostServer {
     server: Arc<Server>,
     inner: Arc<Inner>,
     port: u16,
+    token: Option<String>,
     stop: Arc<AtomicBool>,
     workers: Vec<std::thread::JoinHandle<()>>,
 }
@@ -88,7 +89,12 @@ impl HostServer {
             );
         }
         log::info!("host mode: serving on {bind} (port {port})");
-        Ok(HostServer { server, inner, port, stop, workers })
+        let token = inner.token.clone();
+        Ok(HostServer { server, inner, port, token, stop, workers })
+    }
+
+    pub fn token_matches(&self, token: Option<&str>) -> bool {
+        self.token.as_deref() == token.map(str::trim).filter(|t| !t.is_empty())
     }
 
     pub fn port(&self) -> u16 {
@@ -130,6 +136,93 @@ impl HostServer {
 impl Drop for HostServer {
     fn drop(&mut self) {
         self.shutdown();
+    }
+}
+
+/// Start or stop the host server to match the settings (called at startup and on every settings save).
+pub fn apply_settings(app: &tauri::AppHandle, state: &crate::state::AppState, s: &Settings) {
+    let mut slot = match state.host.lock() {
+        Ok(h) => h,
+        Err(e) => {
+            log::warn!("host slot poisoned: {e}");
+            return;
+        }
+    };
+    let running_port = slot.as_ref().map(|h| h.port());
+    let wanted = s.host.enabled.then_some(s.host.port);
+    if running_port == wanted && (wanted.is_none() || slot.as_ref().map(|h| h.token_matches(s.host.token.as_deref())).unwrap_or(false)) {
+        return;
+    }
+    if let Some(h) = slot.take() {
+        log::info!("host mode: stopping");
+        h.stop();
+    }
+    if let Some(port) = wanted {
+        let deps = deps_from_state(app, state);
+        match HostServer::start(&format!("0.0.0.0:{port}"), s.host.token.clone(), deps) {
+            Ok(server) => *slot = Some(server),
+            Err(e) => log::error!("host mode could not start: {e}"),
+        }
+    }
+}
+
+/// Everything the server needs, borrowed from the running app.
+pub fn deps_from_state(app: &tauri::AppHandle, state: &crate::state::AppState) -> HostDeps {
+    use tauri::Manager;
+    let vad = Vad::new(&state.vad_path).expect("host vad");
+    let (settings, store, engine, polisher) = (state.settings.clone(), state.store.clone(), state.engine.clone(), state.polisher.clone());
+    let status_app = app.clone();
+    let status: Arc<dyn Fn() -> StatusReply + Send + Sync> = Arc::new(move || {
+        let st = status_app.state::<crate::state::AppState>();
+        host_status(&st)
+    });
+    let models_app = app.clone();
+    let models: Arc<dyn Fn() -> ModelsReply + Send + Sync> = Arc::new(move || {
+        let st = models_app.state::<crate::state::AppState>();
+        let active = st.settings.lock().map(|s| s.model_id.clone()).unwrap_or_default();
+        let dir = st.paths.models_dir();
+        ModelsReply {
+            models: privatevox_core::models::catalog()
+                .into_iter()
+                .map(|m| RemoteModel { id: m.id.into(), label: m.label.into(), downloaded: privatevox_core::download::is_present(&m.spec, &dir), active: m.id == active })
+                .collect(),
+        }
+    });
+    let select_app = app.clone();
+    let select_model: Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync> = Arc::new(move |id| {
+        let st = select_app.state::<crate::state::AppState>();
+        if !privatevox_core::models::catalog().iter().any(|m| m.id == id) {
+            return Err(format!("unknown model {id:?}"));
+        }
+        st.send(crate::pipeline::Cmd::SwitchModel(id.to_string()));
+        Ok(())
+    });
+    HostDeps { engine, store, polisher, vad: Arc::new(Mutex::new(vad)), settings, model_path: state.model_path_slot.clone(), status, models, select_model }
+}
+
+/// The host's specifications as `GET /v1/status` reports them.
+pub fn host_status(state: &crate::state::AppState) -> StatusReply {
+    let s = state.settings.lock().map(|s| s.clone()).unwrap_or_default();
+    let (total, used) = privatevox_core::memory::system_memory();
+    let (loaded, resident) = match state.engine.try_lock() {
+        Ok(e) => (e.is_loaded(), e.resident_bytes()),
+        Err(_) => (true, state.store.lock().ok().and_then(|st| st.model_stats(&s.model_id).ok().flatten()).and_then(|st| st.mem_bytes).unwrap_or(0)),
+    };
+    let now = Instant::now();
+    let selected = state.polisher.selected(now);
+    StatusReply {
+        name: crate::remote::machine_name(&s),
+        version: privatevox_core::version().to_string(),
+        platform: std::env::consts::OS.into(),
+        gpu: GpuInfo { name: crate::commands::machine_label(), total_bytes: total, used_bytes: used },
+        whisper: WhisperInfo { model: s.model_id.clone(), loaded, resident_bytes: resident },
+        polish: PolishInfo {
+            enabled: state.polisher.enabled(),
+            endpoint_label: selected.as_ref().map(|e| e.label.clone()),
+            model: selected.as_ref().and_then(|e| state.polisher.active_model(e)),
+            resident_bytes: state.polisher.resident_local_bytes(now),
+        },
+        clients: state.host.try_lock().ok().and_then(|h| h.as_ref().map(|h| h.clients())).unwrap_or(0),
     }
 }
 

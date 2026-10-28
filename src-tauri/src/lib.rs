@@ -13,6 +13,7 @@ mod llm_commands;
 pub mod models;
 pub mod paste;
 pub mod pipeline;
+mod remote;
 pub mod state;
 pub mod tray;
 
@@ -29,6 +30,7 @@ use privatevox_engine::supervisor::{Engine, PidHandle, WorkerEngine};
 use std::process::Command;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager, RunEvent};
 use tauri_plugin_log::{Target, TargetKind};
@@ -162,7 +164,12 @@ pub fn run() {
             worker_cmd.arg("--engine-worker");
             let worker_engine = WorkerEngine::new(worker_cmd);
             *pid_slot.lock().unwrap() = Some(worker_engine.pid_handle());
-            let engine: SharedEngine = Arc::new(Mutex::new(Box::new(worker_engine) as Box<dyn Engine>));
+            // Local worker behind a router: when a host on the LAN is in use, chunks go there and nothing loads here.
+            let remote = privatevox_engine::remote::RemoteState::new();
+            remote::apply_settings(&remote, &current);
+            let model_path_slot: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(model_path.clone()));
+            let routing = privatevox_engine::routing::RoutingEngine::new(Box::new(worker_engine), privatevox_engine::remote::RemoteEngine::new(remote.clone(), Duration::from_secs(15)), remote.clone(), model_path_slot.clone(), current.flash_attention);
+            let engine: SharedEngine = Arc::new(Mutex::new(Box::new(routing) as Box<dyn Engine>));
             *engine_slot.lock().unwrap() = Some(engine.clone());
 
             match paste::restore_backup_on_launch(&paths.clipboard_backup()) {
@@ -337,7 +344,12 @@ pub fn run() {
                 });
             }
             llm::spawn_health_loop(polisher.clone(), app.handle().clone());
-            app.manage(AppState { paths, settings, store, tx: Mutex::new(tx), stale_lock: stale, last_state, downloading: Mutex::new(Default::default()), engine: engine.clone(), polisher });
+            remote::spawn_health_loop(remote.clone(), app.handle().clone());
+            app.manage(AppState { paths, settings, store, tx: Mutex::new(tx), stale_lock: stale, last_state, downloading: Mutex::new(Default::default()), engine: engine.clone(), polisher, remote, host: Mutex::new(None), vad_path: vad_path.clone(), model_path_slot });
+            {
+                let st = app.state::<AppState>();
+                host::apply_settings(app.handle(), &st, &current);
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
