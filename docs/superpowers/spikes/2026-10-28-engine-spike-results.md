@@ -10,9 +10,11 @@ Machine: Apple M1 (7-core GPU), 8 GB unified memory, macOS 27.0.1. Clips: text-t
 
 Build: `whisper-rs` 0.16.0 (whisper.cpp, feature `metal`); `transcribe-cpp` 0.4.1 (transcribe.cpp, Metal). Both release builds. Runs were sequential on an otherwise idle machine except where marked.
 
+Fairness caveats (from review): the two engines ran different quantizations of the same weights (q5_0 vs Q5_K_M); whisper-rs was given 4 threads and explicit decode settings (greedy, no_context, no timestamps, suppress non-speech) while transcribe-cpp ran its library defaults; the first Core ML table created a fresh decode state per call, which makes every Core ML run a cold one (a retest with a reused state is below).
+
 ## large-v3-turbo, whisper-rs (ggml-large-v3-turbo-q5_0.bin, 574 MB)
 
-Load: 482 ms (no flash) / 390 ms (flash). First-ever Metal library init on this machine: 12.4 s, paid once per install.
+Load: 482 ms (no flash) / 390 ms (flash). First Metal library init for a given binary: 12.4 s (observed in the contended smoke run); it recurs after every rebuild of the binary, so for users it is once per app update.
 
 | Config | 30s cold | 30s warm | 10s cold | 10s warm | short cold | short warm | WER 30s | WER 10s |
 |---|---|---|---|---|---|---|---|---|
@@ -26,7 +28,7 @@ Unpadded 0.7 s clip: identical time and text to the padded one (whisper.cpp pads
 
 ## large-v3-turbo, transcribe-cpp (whisper-large-v3-turbo-Q5_K_M.gguf, 620 MB)
 
-Load: 633 ms. First-ever Metal library compile: 10.3 s, once per install. RSS stays ~100 MB because weights are memory-mapped; RSS is not a footprint measure for this engine.
+Load: 633 ms. First Metal library compile for this binary: 10.3 s (observed in a run whose log was later overwritten). RSS stays ~100 MB because weights are memory-mapped; RSS is not a footprint measure for this engine.
 
 | Config | 30s cold | 30s warm | 10s cold | 10s warm | short cold | short warm | WER 30s | WER 10s |
 |---|---|---|---|---|---|---|---|---|
@@ -80,11 +82,11 @@ Core ML is not faster than Metal on this M1 for the turbo encoder (3.2 vs 2.8 s 
 1. **The encoder is the floor.** A 0.7 s clip costs 2.6 s on both engines, the same as a 7.5 s clip. Whisper always encodes a 30 s window, and on this GPU that is ~2.8 s. Nothing in decode settings changes that; only a faster encoder path (Core ML on the Neural Engine) or a shorter audio context does.
 2. **whisper-rs and transcribe-cpp are equal on the GPU path.** Within noise on every clip (6.1 vs 5.7–6.6 s, 2.8 vs 2.7 s, 2.6 vs 2.6 s). The 15% rule of §18.2 is met.
 3. **Audio context 768 halves short-clip time** (2.8 s → 1.3 s on the 7.5 s clip, 2.6 s → 1.1 s on the 0.7 s clip) with identical text. Only whisper-rs exposes this. Risk: the setting is marked experimental in whisper.cpp and must never be used on clips longer than the reduced window covers (768 of 1500 ≈ 15 s).
-4. **Flash attention is worth 20%** on whisper-rs with no text change.
+4. **Flash attention is worth about 20% on turbo** (22% on the 30 s clip) and 10–12% on large-v3, with no text change.
 5. **Language auto-detect costs 2.6 s per clip on whisper-rs** (a second encoder pass) and is nearly free on transcribe-cpp. Fixing the language (§18.7) removes the cost on either.
-6. **Beam 5 is 15% slower for no accuracy gain** on these clips. Greedy is the right default.
+6. **Beam 5 is 15% slower on turbo and 30–70% slower on large-v3** for no accuracy gain on these clips. Greedy is the right default.
 7. **The 30 s window boundary loses words.** On the 31.6 s clip whisper-rs dropped a whole phrase at the boundary; transcribe-cpp kept it. Chunking at pauses so every run stays under 30 s (§18.6) is an accuracy fix as well as a latency one.
-8. **Both wrote "Tori" for "Tauri".** The dictionary / initial prompt path (§18.8) is needed; transcribe-cpp's prompt run did not fix it on its own.
+8. **Both wrote "Tori" for "Tauri" without a prompt.** With the initial prompt "Tauri, LVW." transcribe-cpp wrote "Tauri" correctly on turbo (WER 0.058 → 0.049, exactly that word) but not on large-v3. The dictionary / initial prompt path (§18.8) works and is needed.
 
 9. **Core ML brings nothing here.** Equal or slower than Metal on an M1 base, and incompatible with reduced audio context. Not used in v1; revisit only for Intel-free machines with a stronger Neural Engine, as an opt-in.
 10. **large-v3 is 1.7× slower than turbo** on the same engine (10.6 vs 6.1 s on 30 s; 4.4 vs 2.8 s on 10 s) and was more accurate on one proper noun. It stays the "Accuracy" option, never the default.
@@ -94,7 +96,7 @@ Core ML is not faster than Metal on this M1 for the turbo encoder (3.2 vs 2.8 s 
 **Engine for v1: `whisper-rs` 0.16 (whisper.cpp) with the `metal` feature on macOS and `vulkan` on Windows.** Not `transcribe-cpp`. Reasoning, in order of weight:
 
 1. On the plain GPU path the two are equal on turbo and transcribe-cpp is ~15% faster on large-v3, so the §18.2 rule would allow either.
-2. whisper-rs exposes two levers transcribe-cpp does not: flash attention (−20% on every clip) and a reduced audio context (2.6 s → 1.1 s on a one-word clip, 2.8 s → 1.3 s on a 7.5 s clip, same text). Dictation is mostly short clips, so this is a 2–2.5× win on the common case. That outweighs transcribe-cpp's bundled VAD and language ID.
+2. whisper-rs exposes two levers transcribe-cpp does not (its `WhisperRunOptions` carries only prompt, temperature fallback and thresholds; see the crate reference): flash attention (−20% on turbo) and a reduced audio context (2.6 s → 1.1 s on a one-word clip, 2.8 s → 1.3 s on a 7.5 s clip, same text). Dictation is mostly short clips, so this is a 2–2.5× win on the common case. That outweighs transcribe-cpp's bundled VAD and language ID.
 3. VAD is covered: whisper-rs 0.16 ships `WhisperVadContext` over whisper.cpp's Silero ggml models.
 4. Language ID: v1 defaults to one spoken language (no detection cost). Multi-language users get Whisper's own detection on a short head with reduced audio context, which is cheap; a separate identifier model is not needed in v1.
 5. transcribe-cpp remains documented as the alternative engine behind the `Engine` trait if Parakeet or streaming models are wanted later.
@@ -124,7 +126,7 @@ Core ML is not faster than Metal on this M1 for the turbo encoder (3.2 vs 2.8 s 
 
 Two things follow. The context can go well below the clip's duration without harming text on a 7.5 s clip (384 still correct, 4× faster than full). But a very short clip with a small context hallucinates a repetition loop and takes longer than the full context did. 768 is the lowest value that was correct on everything tested.
 
-**Policy for v1:** `audio_ctx = clamp(round_up_64(1500 × (clip_seconds + 2) / 30), 768, 1500)`. So anything under 13 s runs at 768 (about 1.0–1.3 s on this M1 with flash attention), 20 s at about 1100, 28 s and above at 1500. Plus a repetition guard: if the output contains the same word four or more times in a row, re-run once at 1500 before accepting it. The lower floor (512) is left for a later experiment with more clip lengths between 1 and 7 s.
+**Policy for v1:** `audio_ctx = clamp(round_up_64(1500 × (clip_seconds + 2) / 30), 768, 1500)`. So anything under 13 s runs at 768 (about 1.0–1.3 s on this M1 with flash attention), 20 s at 1152, 28 s and above at 1500. The 13–28 s region of the formula is an interpolation, not a measurement: every reduced-context run used the 7.5 s or 0.7 s clip. The chunked-decode plan adds a sweep on 15 s and 25 s clips before that region is trusted. Plus a repetition guard: if the output contains the same word four or more times in a row, re-run once at 1500 before accepting it. The lower floor (512) is left for a later experiment with more clip lengths between 1 and 7 s.
 
 ## LLM polish round trip (Ollama 0.40, qwen2.5:3b Q4_K_M, this M1)
 
@@ -137,4 +139,4 @@ Clean-mode system prompt, 104 prompt tokens (a 43-word filler-laden transcript),
 
 Resident size reported by Ollama: 2164 MB. Generation runs at ~27 tokens/s, so a 100-word cleaned output costs about 4–5 s on this machine and a 40-word one about 2 s. The 10.7 s cold load is the number that makes §18's LLM warm-up (fire on hotkey down, keep-alive while Whisper is warm) a requirement rather than a nicety on the 8 GB Mac.
 
-**Memory interaction on 8 GB:** with the 3B model resident (2.2 GB) the next whisper-rs context load took 8.6 s instead of 0.5 s. Turbo plus a 3B polish model fits, but the two should be loaded once and kept, not churned; the idle-unload timer must unload both together (§18.1 and §18 "Keeping the LLM warm" already say so).
+**Memory interaction on 8 GB:** none measured. The 8.6 s context load seen during the sweep (with the 3B model resident) was a Metal shader-library recompile (`ggml_metal_library_init: loaded in 8.083 sec` in the sweep log), not memory pressure: the bench binary had just been rebuilt, and macOS keys its shader cache to the binary. Decode times in the sweep match the quiet run. Correction to an earlier line in this doc: the Metal compile is paid once per *build or update of the app binary*, not once per install.

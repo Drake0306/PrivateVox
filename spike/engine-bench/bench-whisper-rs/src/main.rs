@@ -38,8 +38,8 @@ fn load_ctx(path: &Path, flash: bool) -> Result<(WhisperContext, u128)> {
     Ok((ctx, t.elapsed().as_millis()))
 }
 
-fn transcribe(ctx: &WhisperContext, cfg: &Cfg, pcm: &[f32]) -> Result<(String, u128)> {
-    let mut state = ctx.create_state()?;
+fn transcribe(ctx: &WhisperContext, state: &mut whisper_rs::WhisperState, cfg: &Cfg, pcm: &[f32]) -> Result<(String, u128)> {
+    let _ = ctx;
     let strategy = match cfg.beam {
         Some(n) => SamplingStrategy::BeamSearch { beam_size: n, patience: -1.0 },
         None => SamplingStrategy::Greedy { best_of: 1 },
@@ -55,7 +55,7 @@ fn transcribe(ctx: &WhisperContext, cfg: &Cfg, pcm: &[f32]) -> Result<(String, u
     p.set_print_special(false);
     p.set_print_realtime(false);
     p.set_print_timestamps(false);
-    p.set_no_timestamps(true);
+    p.set_no_timestamps(std::env::var("LVW_TIMESTAMPS").is_err());
     if let Some(ctx_len) = cfg.audio_ctx {
         p.set_audio_ctx(ctx_len);
     }
@@ -77,15 +77,18 @@ fn main() -> Result<()> {
     println!("{}", csv_header());
 
     // Two contexts: flash attention is a load-time parameter.
+    let reuse = std::env::var("LVW_REUSE_STATE").is_ok();
     let mut loaded: Vec<(bool, WhisperContext, u128)> = Vec::new();
     for flash in [false, true] {
         let (ctx, ms) = load_ctx(&model_path, flash)?;
         eprintln!("loaded flash={flash} in {ms} ms, rss {:.0} MB", rss_mb());
         loaded.push((flash, ctx, ms));
     }
+    let mut states: Vec<Option<whisper_rs::WhisperState>> = vec![None, None];
 
     let only_ctx = std::env::var("LVW_ONLY_CTX").is_ok();
-    for cfg in CONFIGS.iter().filter(|c| !only_ctx || c.id.contains("ctx")) {
+    let only: Vec<String> = std::env::var("LVW_ONLY").map(|v| v.split(',').map(|x| x.to_string()).collect()).unwrap_or_default();
+    for cfg in CONFIGS.iter().filter(|c| (!only_ctx || c.id.contains("ctx")) && (only.is_empty() || only.iter().any(|o| o == c.id))) {
         let (_, ctx, load_ms) = loaded.iter().find(|(f, _, _)| *f == cfg.flash).unwrap();
         for (name, pcm, reference) in &clips {
             if cfg.short_only && name == "30s" {
@@ -98,7 +101,10 @@ fn main() -> Result<()> {
             };
             for (config, audio) in variants {
                 for run in 1..=2u8 {
-                    let (text, decode_ms, notes) = match transcribe(ctx, cfg, &audio) {
+                    let idx = usize::from(cfg.flash);
+                    if !reuse || states[idx].is_none() { states[idx] = Some(ctx.create_state()?); }
+                    let st = states[idx].as_mut().unwrap();
+                    let (text, decode_ms, notes) = match transcribe(ctx, st, cfg, &audio) {
                         Ok((t, ms)) => (t, ms, String::new()),
                         Err(e) => (String::new(), 0, format!("error: {e}")),
                     };
