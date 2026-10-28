@@ -1,0 +1,122 @@
+<title>PrivateVox Roadmap</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column; four phase blocks, each a checklist with state chips. Same tokens as the other PrivateVox pages. */
+:root{
+  --bg:#f6f8f8; --surface:#ffffff; --surface-2:#eef2f2; --fg:#15201f; --muted:#5b6b69; --line:#d6dedd;
+  --accent:#0f766e; --accent-soft:#d9f0ec; --accent-fg:#0a4f4a;
+  --ok:#2f855a; --ok-soft:#dff3e6; --warn:#b7791f; --warn-soft:#fbeedb; --no:#b42329; --no-soft:#fde3e4;
+  --display:"Sora",ui-sans-serif,system-ui,sans-serif; --body:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0f1514; --surface:#161e1d; --surface-2:#1e2827; --fg:#e8eeed; --muted:#9aaba8; --line:#2b3736;
+  --accent:#3fbfb2; --accent-soft:#143732; --accent-fg:#a8e8df; --ok:#5fc48a; --ok-soft:#16382a; --warn:#e0a84a; --warn-soft:#3a2d16; --no:#ff8a8e; --no-soft:#3a1d1f; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#0f1514; --surface:#161e1d; --surface-2:#1e2827; --fg:#e8eeed; --muted:#9aaba8; --line:#2b3736;
+  --accent:#3fbfb2; --accent-soft:#143732; --accent-fg:#a8e8df; --ok:#5fc48a; --ok-soft:#16382a; --warn:#e0a84a; --warn-soft:#3a2d16; --no:#ff8a8e; --no-soft:#3a1d1f; color-scheme:dark }
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:16px;line-height:1.55;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 80px}
+.wrap{max-width:72ch;margin:0 auto}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;line-height:1.15;margin:0}
+h1{font-size:clamp(2rem,5vw,2.8rem);font-weight:700;letter-spacing:-.02em}
+h2{font-size:1.35rem;font-weight:600;margin:2.5rem 0 .4rem;display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
+p{margin:.5rem 0}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+header{padding-top:3rem}
+.lede{font-size:1.1rem;color:var(--muted);max-width:60ch}
+.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.7rem;margin:1.4rem 0}
+.sum{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:.7rem .9rem;border-top:3px solid var(--line)}
+.sum.done{border-top-color:var(--ok)}.sum.next{border-top-color:var(--accent)}.sum.later{border-top-color:var(--muted)}.sum.you{border-top-color:var(--warn)}
+.sum .n{font-family:var(--mono);font-size:1.5rem;font-weight:500;line-height:1}
+.sum .k{font-size:.8rem;color:var(--muted);margin-top:.3rem}
+.phase{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:.4rem 1rem .6rem}
+.chip{font-family:var(--mono);font-size:.68rem;letter-spacing:.04em;padding:.12rem .5rem;border-radius:4px;font-weight:500}
+.chip.done{background:var(--ok-soft);color:var(--ok)}.chip.next{background:var(--accent-soft);color:var(--accent-fg)}.chip.later{background:var(--surface-2);color:var(--muted)}.chip.you{background:var(--warn-soft);color:var(--warn)}
+ul.list{list-style:none;padding:0;margin:.4rem 0 0}
+ul.list li{display:grid;grid-template-columns:22px 1fr;gap:.6rem;padding:.5rem 0;border-top:1px solid var(--line);align-items:start}
+ul.list li:first-child{border-top:0}
+.mark{width:18px;height:18px;border-radius:50%;margin-top:.2rem;display:inline-grid;place-items:center;font-size:.7rem;font-weight:700}
+.mark.done{background:var(--ok);color:#fff}.mark.todo{border:2px solid var(--line)}.mark.next{border:2px solid var(--accent)}.mark.you{background:var(--warn);color:#fff}
+li b{font-weight:600}
+li small{display:block;color:var(--muted);font-size:.9rem;line-height:1.4}
+.note{border-left:3px solid var(--accent);padding:.5rem .9rem;background:var(--surface);margin:1rem 0;border-radius:0 6px 6px 0}
+code{font-family:var(--mono);font-size:.88em;background:var(--surface-2);padding:.08em .35em;border-radius:3px}
+footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--line);font-size:.85rem;color:var(--muted)}
+</style>
+
+<header class="wrap">
+  <div class="eyebrow">Status · 28 Oct 2026 · commit 9331e03 on main</div>
+  <h1 style="margin-top:.4rem">PrivateVox Roadmap</h1>
+  <p class="lede">What the design promised, what is built, what is next. Two of four plans are done; the Mac build dictates, switches models and shows its memory. Cleaning up the text with a local LLM and reaching your PC over the LAN are the next plan.</p>
+  <div class="summary">
+    <div class="sum done"><div class="n">2 / 4</div><div class="k">plans complete</div></div>
+    <div class="sum next"><div class="n">1</div><div class="k">plan up next: polish + LAN</div></div>
+    <div class="sum later"><div class="n">1</div><div class="k">plan after: extras + Windows + release</div></div>
+    <div class="sum you"><div class="n">2</div><div class="k">things only you can do</div></div>
+  </div>
+</header>
+
+<section class="wrap">
+  <h2>On your side <span class="chip you">needs you</span></h2>
+  <div class="phase"><ul class="list">
+    <li><span class="mark you">!</span><div><b>Grant Accessibility, then restart PrivateVox</b><small>Your last dictation transcribed fine but only reached the clipboard ("Copied, paste blocked"). Setup tab → Accessibility → Open setting, tick PrivateVox, quit from the menu bar, start again.</small></div></li>
+    <li><span class="mark you">!</span><div><b>Try the new panel and pill build</b><small><code>git pull && cargo tauri dev</code>. The panel is now the wide mockup layout; the pill sits above the Dock and shows "loading model, keep talking" on a cold press. Send a screenshot if anything looks off.</small></div></li>
+  </ul></div>
+</section>
+
+<section class="wrap">
+  <h2>Phase 1 · Core dictation <span class="chip done">done</span></h2>
+  <div class="phase"><ul class="list">
+    <li><span class="mark done">✓</span><div><b>Floating pill</b><small>Bottom-centre above the Dock, remembers where you drag it, never steals focus, states for idle / listening / loading / transcribing / pasted / error.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>Hotkeys</b><small>Right Option hold, Ctrl+Shift+Space toggle, hold-or-toggle, Ctrl+Shift+Z undo. Rebindable with a key recorder, applied without restart.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>Whisper engine in a worker process</b><small>large-v3-turbo on Metal, crash and hang recovery, worker dies with the app, model preloads the moment you press the key.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>Capture and trimming</b><small>Silero VAD, "nothing heard" vs "mic is silent", 300 ms minimum, 5 min cap with countdown, overruns ignored.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>Paste</b><small>Clipboard + ⌘V with the old clipboard restored, disk backup across a crash, typing fallback, Accessibility re-checked per paste.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>History and settings</b><small>SQLite, search, idle unload timer you set in minutes, menu bar with pause-and-unload, first-run download with resume, clean exit on quit / SIGTERM / force-kill.</small></div></li>
+  </ul></div>
+</section>
+
+<section class="wrap">
+  <h2>Phase 2 · Panel, models, memory, chunking <span class="chip done">done</span></h2>
+  <div class="phase"><ul class="list">
+    <li><span class="mark done">✓</span><div><b>Three switchable models</b><small>turbo (fast), large-v3 (accuracy), distil-large-v3 (English). Download, delete, benchmark, switch from the panel; switch waits for a recording to finish.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>GPU memory strip</b><small>Total, other apps, measured footprint of the selected model (703 MB for turbo on your M1), Recommended and Best-that-fits, red when it will not fit.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>Chunked decode while speaking</b><small>Long dictations cut at pauses and decoded in order while you keep talking; scoring cost is constant per tick.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>History workbench</b><small>Edit in place, pin, paste again, raw view, export to Markdown or JSON in Downloads, word count.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>Undo last paste</b><small>Sends ⌘Z only if the same app is still in front within 30 s; otherwise copies the text again.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>Panel to the mockup</b><small>Wide window, memory strip in the history, row layout, stats in the header.</small></div></li>
+  </ul></div>
+</section>
+
+<section class="wrap">
+  <h2>Phase 3 · LLM polish and LAN <span class="chip next">next</span></h2>
+  <div class="phase"><ul class="list">
+    <li><span class="mark next"></span><div><b>Polish modes</b><small>Raw, Clean (default), Email, Bullets, Code, Translate, Ask. Editable prompts with reset. Re-polish any history row with another mode.</small></div></li>
+    <li><span class="mark next"></span><div><b>Local LLM first</b><small>Ollama on this Mac (qwen2.5:3b already pulled), OpenAI-compatible endpoints, keep-alive while Whisper is warm, warm-up request fired on key press, unloaded by the same idle timer.</small></div></li>
+    <li><span class="mark next"></span><div><b>LAN second, seamless</b><small>Ordered endpoint list, health checks every 10 s, automatic failover to the RX 9070 PC by IP and port and back again, "PC unreachable, polished locally" in the pill. Raw text pasted if nothing is up.</small></div></li>
+    <li><span class="mark next"></span><div><b>Polish LLM in the memory strip</b><small>The disabled "Polish LLM" selector comes alive; local models count against the budget, LAN ones count as 0 GB here.</small></div></li>
+    <li><span class="mark next"></span><div><b>Filler removal and clean-up without the LLM</b><small>Language-gated filler words, so Raw mode reads clean too.</small></div></li>
+  </ul></div>
+</section>
+
+<section class="wrap">
+  <h2>Phase 4 · Extras, Windows, release <span class="chip later">after</span></h2>
+  <div class="phase"><ul class="list">
+    <li><span class="mark todo"></span><div><b>Personal dictionary</b><small>Names and jargon fed to Whisper as its prompt, fuzzy safety net when the prompt was not applied.</small></div></li>
+    <li><span class="mark todo"></span><div><b>Spoken languages</b><small>Multi-select with the language identifier; translate mode. Today only the first language is used.</small></div></li>
+    <li><span class="mark todo"></span><div><b>Keep audio clips</b><small>Off by default; replay next to the transcript; re-run with a bigger model.</small></div></li>
+    <li><span class="mark todo"></span><div><b>Receipt-sequenced paste and secure-input detection</b><small>Restore the clipboard only after the target app actually read it; keep hotkeys alive next to password fields.</small></div></li>
+    <li><span class="mark todo"></span><div><b>Share the engine on the LAN</b><small>The PC serves Whisper to the Mac; discovery over mDNS; remote engine client behind the same trait.</small></div></li>
+    <li><span class="mark todo"></span><div><b>Long-form document view</b><small>Chunking exists; the multi-minute transcript as a document to copy or export does not yet.</small></div></li>
+    <li><span class="mark todo"></span><div><b>Windows on the RX 9070</b><small>Vulkan build, ROCm benchmark, Windows paste and hotkey specifics, installer. Runs when you are at the PC.</small></div></li>
+    <li><span class="mark todo"></span><div><b>Open-source release pass</b><small>Notarised .dmg, CI on macOS and Windows runners, README for strangers, icon. Sponsor button already on.</small></div></li>
+    <li><span class="mark todo"></span><div><b>Sixteen small deferred items</b><small>From the two code reviews, listed in the ledgers under <code>docs/superpowers/plans/</code>: tray Resume item, casing of recorded keys, delete-while-downloading guard, and similar.</small></div></li>
+  </ul></div>
+</section>
+
+<section class="wrap">
+  <div class="note">Suggested order for Phase 3: polish modes with local Ollama first (one afternoon of work, immediately useful), then the LAN endpoint list with failover, then the memory strip's LLM segment. Say "go" and it runs the same way as the first two plans: a written plan, tests first, a fresh review at the end.</div>
+</section>
+
+<footer class="wrap">Source of truth: <code>docs/superpowers/specs/2026-10-28-whisper-harness-design.md</code> and the plan files beside it. Repo: github.com/Drake0306/PrivateVox.</footer>
