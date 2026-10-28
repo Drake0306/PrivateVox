@@ -33,7 +33,7 @@ On an 8 GB Mac, `ollama pull qwen2.5:3b` is the recommended local model (about 2
 
 ## Download
 
-Alpha builds for macOS (Apple Silicon), Windows and Linux are on the [Releases page](https://github.com/Drake0306/PrivateVox/releases). Read the release notes there for the one-time macOS permission steps; builds are unsigned for now.
+Alpha builds for macOS (Apple Silicon), Windows and Linux are on the [Releases page](https://github.com/Drake0306/PrivateVox/releases); 0.3.0-alpha.1 is the current one. Read the release notes there for the one-time macOS permission steps; builds are unsigned for now.
 
 ## Build and run
 

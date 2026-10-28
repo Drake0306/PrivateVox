@@ -2,7 +2,9 @@
 
 All notable changes to PrivateVox. Versions follow the plans in `docs/superpowers/plans/`.
 
-## Unreleased
+## 0.3.0-alpha.1 — 2026-10-28
+
+Second alpha: phase 3, LLM polish and LAN failover. macOS on Apple Silicon tested by hand; Windows and Linux built by CI.
 
 ### Polish (phase 3)
 - Modes: Clean (default), Email, Bullets, Code, Ask through an LLM; Raw and Translate to English without one. Mode picker in the panel header and the menu bar; prompts editable with reset.
