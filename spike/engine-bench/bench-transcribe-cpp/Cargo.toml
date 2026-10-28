@@ -1,0 +1,9 @@
+[package]
+name = "bench-transcribe-cpp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+common = { path = "../common" }
+anyhow = "1"
+transcribe-cpp = "0.4.1"

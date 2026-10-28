@@ -1,0 +1,6 @@
+[workspace]
+resolver = "2"
+members = ["common", "bench-whisper-rs", "bench-transcribe-cpp"]
+
+[profile.release]
+debug = 1
