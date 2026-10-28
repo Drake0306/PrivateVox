@@ -31,6 +31,14 @@ Every endpoint is health-checked every 10 seconds. A dictation uses the first re
 
 On an 8 GB Mac, `ollama pull qwen2.5:3b` is the recommended local model (about 2 GB resident, roughly one second per dictation once warm). The model is warmed when you press the key and unloaded on the same idle timer as Whisper. Filler words ("uh", "hmm", and "um" when the language is English) are removed before the LLM and in Raw mode too; switch that off under Settings → Polish.
 
+## While you speak
+
+- **Live preview** (Settings → Dictation): the words appear on a second line of the pill as Whisper decodes, so you can see it heard you and stop early. Auto means on when a host does the work or the machine has 16 GB or more; set it On or Off yourself.
+- **Auto-stop** in toggle mode: tap, talk, pause, and after two seconds of silence (your choice, or never) the dictation ends itself. The pill says "stopping…" in the last second.
+- **Spoken commands** at the very end of a dictation: "new line", "new paragraph", "delete that" or "undo" (undoes the last paste), "cancel" or "never mind" (drops the dictation). Only the trailing phrase is checked, so normal text is never eaten. Off-able.
+- **Modes per app** (Settings → Modes per app): "Mail" → Email, "Code" → Code, from a small table; the pill shows the mode it picked.
+- **Sound cues** on start, stop and "nothing heard", plus a short flash of the pill. Off-able.
+
 ## Dictionary, languages, kept audio
 
 - **Personal dictionary** (Settings → Dictation): names and jargon, one per line. They go to Whisper as its prompt, and a fuzzy pass fixes near-misses afterwards ("charge bee" → "ChargeBee"). The slider sets how close a word has to be; 0 switches the pass off.
@@ -47,7 +55,7 @@ Both machines keep a history: the PC stores what it processed (marked "host", wi
 
 ## Download
 
-Alpha builds for macOS (Apple Silicon), Windows and Linux are on the [Releases page](https://github.com/Drake0306/PrivateVox/releases); 0.4.0-alpha.1 is the current one. Read the release notes there for the one-time macOS permission steps; builds are unsigned for now.
+Alpha builds for macOS (Apple Silicon), Windows and Linux are on the [Releases page](https://github.com/Drake0306/PrivateVox/releases); 0.5.0-alpha.1 is the current one. Read the release notes there for the one-time macOS permission steps; builds are unsigned for now.
 
 ## Build and run
 

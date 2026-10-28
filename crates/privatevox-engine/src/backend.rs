@@ -79,3 +79,33 @@ impl WhisperBackend {
         Ok((text.trim().to_string(), language))
     }
 }
+
+#[cfg(test)]
+mod spike_tests {
+    use super::*;
+    use crate::protocol::DecodeOptions;
+    use std::time::Instant;
+
+    /// `PRIVATEVOX_TEST_MODEL=<ggml file> PRIVATEVOX_SPIKE_CLIPS=<dir with clip_*.wav> cargo test -p privatevox-engine --release --lib spike_timing -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn spike_timing_on_clips() {
+        let model = std::env::var("PRIVATEVOX_TEST_MODEL").expect("PRIVATEVOX_TEST_MODEL");
+        let dir = std::env::var("PRIVATEVOX_SPIKE_CLIPS").expect("PRIVATEVOX_SPIKE_CLIPS");
+        let (mut backend, load) = WhisperBackend::load(std::path::Path::new(&model), true, true).unwrap();
+        println!("SPIKE load_ms={}", load.as_millis());
+        for clip in ["clip_30", "clip_10", "clip_short"] {
+            let pcm = privatevox_core::audio::load_wav_16k(std::path::Path::new(&format!("{dir}/{clip}.wav"))).unwrap();
+            let opts = DecodeOptions { language: Some("en".into()), translate: false, initial_prompt: None, n_threads: 4, final_chunk: true };
+            let mut times = Vec::new();
+            let mut text = String::new();
+            for _ in 0..3 {
+                let t = Instant::now();
+                let d = backend.transcribe(&pcm, &opts).unwrap();
+                times.push(t.elapsed().as_millis());
+                text = d.text.clone();
+            }
+            println!("SPIKE {clip} secs={:.1} runs_ms={:?} text={:?}", pcm.len() as f32 / 16000.0, times, text);
+        }
+    }
+}
