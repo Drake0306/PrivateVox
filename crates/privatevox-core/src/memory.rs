@@ -22,6 +22,8 @@ pub const TIERS: [Tier; 3] = [
 pub fn estimate_footprint(model_id: &str) -> u64 {
     match model_id {
         "large-v3-turbo" => 550_000_000,
+        // 874 MB on disk; resident a little above that, between the q5_0 turbo and the f16 distil.
+        "large-v3-turbo-q8" => 900_000_000,
         "large-v3" => 1_000_000_000,
         "distil-large-v3" => 1_600_000_000,
         _ => 1_000_000_000,
@@ -174,6 +176,15 @@ mod tests {
     use std::collections::HashMap;
 
     const GB: u64 = 1_000_000_000;
+
+    #[test]
+    fn q8_footprint_is_between_q5_and_f16() {
+        let q8 = estimate_footprint("large-v3-turbo-q8");
+        assert!(q8 > estimate_footprint("large-v3-turbo"), "more than the q5_0 turbo");
+        assert!(q8 < estimate_footprint("distil-large-v3"), "less than the f16 distil");
+        assert!(q8 >= crate::download::TURBO_Q8_0.bytes, "at least the file size");
+        assert!(!TIERS.iter().any(|t| t.id == "large-v3-turbo-q8"), "never Recommended or Best-that-fits: an explicit choice only");
+    }
 
     fn input(total_gb: f64, others_gb: f64, llm_gb: f64, selected: &str) -> MemoryInput {
         MemoryInput {

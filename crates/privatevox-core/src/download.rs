@@ -24,6 +24,16 @@ pub const TURBO_Q5_0: ModelSpec = ModelSpec {
     sha256: None,
 };
 
+/// large-v3-turbo, 8-bit: closer to the f16 original than q5_0 at about 1.5× the size (design §4.6; offered on
+/// machines with 12 GB or more).
+pub const TURBO_Q8_0: ModelSpec = ModelSpec {
+    id: "large-v3-turbo-q8",
+    file: "ggml-large-v3-turbo-q8_0.bin",
+    url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q8_0.bin",
+    bytes: 874_188_075,
+    sha256: None,
+};
+
 /// large-v3, 5-bit ("Accuracy" tier; downloaded on demand in a later plan).
 pub const LARGE_V3_Q5_0: ModelSpec = ModelSpec {
     id: "large-v3",

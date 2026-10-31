@@ -35,9 +35,10 @@ pub fn model_entries(models: &[(String, String, bool)], current: &str) -> Vec<Tr
         .collect()
 }
 
-/// (id, label, downloaded) for every catalog model, plus the active id.
+/// (id, label, downloaded) for every model offered on this machine (same rule as the panel), plus the active id.
 pub fn catalog_rows_for(dir: &std::path::Path, active: &str) -> (Vec<(String, String, bool)>, String) {
-    let rows = privatevox_core::models::catalog()
+    let total = privatevox_core::memory::system_memory().0;
+    let rows = privatevox_core::models::offered_catalog(dir, total)
         .into_iter()
         .map(|m| (m.id.to_string(), m.label.to_string(), privatevox_core::download::is_present(&m.spec, dir)))
         .collect();

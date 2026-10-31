@@ -197,7 +197,7 @@
   const inv = (c, a) => window.pvx.invoke(c, a);
   const esc = (s) => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const fmtGB = (b) => (b / 1e9).toFixed(1) + ' GB', fmtMB = (b) => Math.round(b / 1e6) + ' MB';
-  const short = (m) => ({ 'large-v3-turbo': 'turbo', 'large-v3': 'large-v3', 'distil-large-v3': 'distil' })[m] || m;
+  const short = (m) => ({ 'large-v3-turbo': 'turbo', 'large-v3-turbo-q8': 'turbo q8', 'large-v3': 'large-v3', 'distil-large-v3': 'distil' })[m] || m;
   const dur = (ms) => { const s = Math.round(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
   const ago = (ms) => { const d = (Date.now() - ms) / 1000; if (d < 60) return 'just now'; if (d < 3600) return Math.floor(d / 60) + ' min ago'; if (d < 86400) return Math.floor(d / 3600) + ' h ago'; if (d < 172800) return 'Yesterday'; return new Date(ms).toLocaleDateString(); };
   function flash(m) { $('status').textContent = m; clearTimeout(flash.t); flash.t = setTimeout(() => $('status').textContent = '', 2500); }
@@ -390,8 +390,9 @@
     for (const m of models) {
       const el = document.createElement('div'); el.className = 'card mcard';
       const st = m.stats || {};
-      const measured = [st.mem_bytes ? fmtMB(st.mem_bytes) + ' resident' : fmtMB(mem.tier_bytes[m.id]) + ' estimated', st.load_ms ? st.load_ms + ' ms load' : null, st.speed_x ? st.speed_x.toFixed(1) + '× realtime' : null].filter(Boolean).join(' · ');
-      el.innerHTML = `<div><strong style="font:600 17px var(--display)">${esc(m.label)}</strong>${m.active ? '<span class="badge active">in use</span>' : ''}${m.english_only ? '<span class="badge">English only</span>' : ''}<div class="st">${esc(m.quant)} · ${fmtMB(m.bytes)} on disk · ${m.downloaded ? 'downloaded' : (m.downloading ? 'downloading…' : 'not downloaded')}</div><div class="st">${measured}</div></div>
+      const measured = [st.mem_bytes ? fmtMB(st.mem_bytes) + ' resident' : fmtMB(mem.tier_bytes[m.id] ?? m.estimated_bytes) + ' estimated', st.load_ms ? st.load_ms + ' ms load' : null, st.speed_x ? st.speed_x.toFixed(1) + '× realtime' : null].filter(Boolean).join(' · ');
+      const quantChip = m.quant === 'q8_0' ? '<span class="badge" title="8-bit weights: closer to the original than q5_0, about 1.5× the memory; offered on machines with 12 GB or more">Q8 · higher precision</span>' : '';
+      el.innerHTML = `<div><strong style="font:600 17px var(--display)">${esc(m.label)}</strong>${m.active ? '<span class="badge active">in use</span>' : ''}${m.english_only ? '<span class="badge">English only</span>' : ''}${quantChip}<div class="st">${esc(m.quant)} · ${fmtMB(m.bytes)} on disk · ${m.downloaded ? 'downloaded' : (m.downloading ? 'downloading…' : 'not downloaded')}</div><div class="st">${measured}</div></div>
         <div class="acts">${m.downloaded ? (m.active ? '' : `<button class="btn" data-use>Use</button>`) + `<button class="btn" data-bench title="Measures speed on a 30 s clip; the current model stays selected">Benchmark</button>` + (m.active ? '' : `<button class="btn" data-del>Delete</button>`) : (m.downloading ? '' : `<button class="btn primary" data-dl>Download</button>`)}</div>`;
       const on = (sel, cmd, args) => { const b = el.querySelector(sel); if (b) b.onclick = async () => { try { await inv(cmd, args); flash(cmd.replace(/_/g, ' ') + ' started'); } catch (e) { flash(String(e)); } setTimeout(loadModels, 400); }; };
       on('[data-use]', 'switch_model', { id: m.id }); on('[data-bench]', 'benchmark_model', { id: m.id }); on('[data-del]', 'delete_model', { id: m.id }); on('[data-dl]', 'download_model_by_id', { id: m.id });

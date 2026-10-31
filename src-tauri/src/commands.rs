@@ -333,15 +333,20 @@ pub struct ModelRow {
     pub downloading: bool,
     pub active: bool,
     pub stats: Option<privatevox_core::store::ModelStats>,
+    /// Planning estimate of the resident size until the model has been loaded once and measured.
+    pub estimated_bytes: u64,
 }
 
+/// The models shown on this machine: the catalog minus variants this much memory does not justify (§4.6), unless
+/// their file is already here.
 #[tauri::command]
 pub fn list_models(state: State<'_, AppState>) -> Result<Vec<ModelRow>, String> {
     let active = state.settings.lock().map(|s| s.model_id.clone()).map_err(|e| e.to_string())?;
     let store = state.store.lock().map_err(|e| e.to_string())?;
     let dir = state.paths.models_dir();
     let downloading = state.downloading.lock().map(|d| d.clone()).unwrap_or_default();
-    Ok(privatevox_core::models::catalog()
+    let total = privatevox_core::memory::system_memory().0;
+    Ok(privatevox_core::models::offered_catalog(&dir, total)
         .into_iter()
         .map(|m| ModelRow {
             id: m.id.into(),
@@ -350,6 +355,7 @@ pub fn list_models(state: State<'_, AppState>) -> Result<Vec<ModelRow>, String> 
             bytes: m.bytes,
             quant: m.quant.into(),
             english_only: m.english_only,
+            estimated_bytes: privatevox_core::memory::estimate_footprint(m.id),
             downloaded: privatevox_core::download::is_present(&m.spec, &dir),
             downloading: downloading.contains(m.id),
             active: m.id == active,
