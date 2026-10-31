@@ -75,5 +75,17 @@ if (Test-Path $vswhere) {
     Write-Warning 'win-cargo: vswhere.exe not found; building without the developer environment'
 }
 
-& cargo @args
-exit $LASTEXITCODE
+# Run cargo as a child and watch our own parent while it runs. The Tauri CLI stops a dev session by killing its runner
+# (the cmd shim); when that parent disappears this shell exits, the job closes, and cargo and the app go with it.
+$parentId = try { (Get-CimInstance Win32_Process -Filter "ProcessId = $PID" -ErrorAction Stop).ParentProcessId } catch { 0 }
+$psi = [System.Diagnostics.ProcessStartInfo]::new('cargo')
+$psi.UseShellExecute = $false
+foreach ($a in $args) { [void]$psi.ArgumentList.Add($a) }
+$cargo = [System.Diagnostics.Process]::Start($psi)
+while (-not $cargo.HasExited) {
+    Start-Sleep -Milliseconds 300
+    if ($parentId -and -not (Get-Process -Id $parentId -ErrorAction SilentlyContinue)) {
+        exit 1
+    }
+}
+exit $cargo.ExitCode
