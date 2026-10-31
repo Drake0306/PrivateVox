@@ -195,11 +195,6 @@ pub fn clear_rows_and_clips(store: &mut privatevox_core::store::Store) -> Result
 }
 
 #[tauri::command]
-pub fn search_history(state: State<'_, AppState>, query: String) -> Result<Vec<Dictation>, String> {
-    state.store.lock().map_err(|e| e.to_string())?.search(&query, 100).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub fn delete_history(state: State<'_, AppState>, id: i64) -> Result<(), String> {
     let mut store = state.store.lock().map_err(|e| e.to_string())?;
     delete_row_and_clip(&mut store, id)

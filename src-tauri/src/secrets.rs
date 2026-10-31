@@ -51,20 +51,41 @@ impl SecretStore for NoStore {
     }
 }
 
-/// The OS keychain through the `keyring` crate.
+/// The OS keychain through the `keyring` crate. Settings are saved often (every pill drag included), so the values
+/// written or read this session are remembered and an unchanged token is not written again: fewer keychain round
+/// trips, and on macOS fewer access prompts for an unsigned debug build.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub struct KeyringStore;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+static KNOWN: std::sync::Mutex<Option<std::collections::HashMap<String, String>>> = std::sync::Mutex::new(None);
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn known<R>(f: impl FnOnce(&mut std::collections::HashMap<String, String>) -> R) -> R {
+    let mut g = KNOWN.lock().unwrap_or_else(|p| p.into_inner());
+    f(g.get_or_insert_with(Default::default))
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 impl SecretStore for KeyringStore {
     fn get(&self, key: &str) -> Option<String> {
-        keyring::Entry::new(SERVICE, key).ok()?.get_password().ok()
+        if let Some(v) = known(|k| k.get(key).cloned()) {
+            return Some(v);
+        }
+        let v = keyring::Entry::new(SERVICE, key).ok()?.get_password().ok()?;
+        known(|k| k.insert(key.to_string(), v.clone()));
+        Some(v)
     }
     fn set(&self, key: &str, value: &str) -> anyhow::Result<()> {
+        if known(|k| k.get(key).map(|v| v == value).unwrap_or(false)) {
+            return Ok(());
+        }
         keyring::Entry::new(SERVICE, key)?.set_password(value)?;
+        known(|k| k.insert(key.to_string(), value.to_string()));
         Ok(())
     }
     fn delete(&self, key: &str) -> anyhow::Result<()> {
+        known(|k| k.remove(key));
         match keyring::Entry::new(SERVICE, key)?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(e) => Err(e.into()),

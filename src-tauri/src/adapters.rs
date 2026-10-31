@@ -5,7 +5,7 @@ use crate::pipeline::{CaptureSource, PasteSink};
 use privatevox_core::audio::Capture;
 use privatevox_core::settings::Settings;
 use privatevox_core::warmmic::{Start, Stop, WarmMic};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -21,7 +21,7 @@ struct MicInner {
 }
 
 /// Opens the microphone from the current settings. After a stop the stream stays open with delivery paused for
-/// `mic_lazy_close_secs` (design §18.3); a start inside that window reuses it, otherwise a timer closes it.
+/// `mic_warm_secs` (design §18.3); a start inside that window reuses it, otherwise a timer closes it.
 pub struct MicCapture {
     settings: Arc<Mutex<Settings>>,
     inner: Arc<Mutex<MicInner>>,
@@ -30,6 +30,8 @@ pub struct MicCapture {
     err: ErrSink,
     /// Bumped on every stop; a timer whose generation is stale does nothing.
     timer_gen: Arc<AtomicU64>,
+    /// Set from the stream's error callback: the open stream is dead and must not be kept warm or reused.
+    broken: Arc<AtomicBool>,
 }
 
 impl MicCapture {
@@ -40,6 +42,7 @@ impl MicCapture {
             pcm: Arc::new(Mutex::new(None)),
             err: Arc::new(Mutex::new(None)),
             timer_gen: Arc::new(AtomicU64::new(0)),
+            broken: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -59,11 +62,14 @@ impl CaptureSource for MicCapture {
         if inner.stream.is_some() && inner.device != device {
             Self::close(&mut inner, "input device changed");
         }
+        if inner.stream.is_some() && self.broken.load(Ordering::SeqCst) {
+            Self::close(&mut inner, "stream had failed");
+        }
         let reuse = matches!(inner.warm.on_start(), Start::Reuse) && inner.stream.is_some();
         if reuse {
             log::info!("mic: reused warm stream");
         } else {
-            let (pcm, err) = (self.pcm.clone(), self.err.clone());
+            let (pcm, err, broken) = (self.pcm.clone(), self.err.clone(), self.broken.clone());
             let forward_pcm: Box<dyn FnMut(&[f32]) + Send> = Box::new(move |data| {
                 if let Ok(mut sink) = pcm.lock() {
                     if let Some(f) = sink.as_mut() {
@@ -72,6 +78,8 @@ impl CaptureSource for MicCapture {
                 }
             });
             let forward_err: Box<dyn FnMut(String) + Send> = Box::new(move |msg| {
+                // A fatal stream error: whoever stops or starts next must open a fresh stream, never reuse this one.
+                broken.store(true, Ordering::SeqCst);
                 if let Ok(mut sink) = err.lock() {
                     if let Some(f) = sink.as_mut() {
                         f(msg);
@@ -80,6 +88,7 @@ impl CaptureSource for MicCapture {
             });
             match Capture::start_with_errors(device.as_deref(), forward_pcm, forward_err) {
                 Ok(c) => {
+                    self.broken.store(false, Ordering::SeqCst);
                     inner.stream = Some(c);
                     inner.device = device;
                 }
@@ -107,8 +116,13 @@ impl CaptureSource for MicCapture {
         if let Ok(mut s) = self.err.lock() {
             *s = None;
         }
-        let lazy = Duration::from_secs(self.settings.lock().map(|s| s.mic_lazy_close_secs).unwrap_or(0));
+        let lazy = Duration::from_secs(self.settings.lock().map(|s| s.mic_warm_secs).unwrap_or(0));
         let Ok(mut inner) = self.inner.lock() else { return };
+        if self.broken.load(Ordering::SeqCst) {
+            // The stream reported a fatal error during this run: close it now rather than keep a dead stream warm.
+            Self::close(&mut inner, "stream failed");
+            return;
+        }
         match inner.warm.on_stop(Instant::now(), lazy) {
             Stop::Close => Self::close(&mut inner, "lazy close off"),
             Stop::Keep => {

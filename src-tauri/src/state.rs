@@ -37,7 +37,10 @@ impl AppPaths {
     /// Model file for a catalog id, e.g. `large-v3-turbo` → `models/ggml-large-v3-turbo-q5_0.bin`. Unknown ids
     /// map to a q5_0 name so the caller sees "not present" rather than panicking.
     pub fn model_file(&self, model_id: &str) -> PathBuf {
-        privatevox_core::models::model_file(&self.models_dir(), model_id).unwrap_or_else(|| self.models_dir().join(format!("ggml-{model_id}-q5_0.bin")))
+        privatevox_core::models::model_file(&self.models_dir(), model_id).unwrap_or_else(|| {
+            log::warn!("settings name a model the catalog does not know: {model_id:?}; it will show as not downloaded");
+            self.models_dir().join(format!("ggml-{model_id}-q5_0.bin"))
+        })
     }
 }
 

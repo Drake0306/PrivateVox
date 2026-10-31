@@ -97,8 +97,9 @@ pub struct Settings {
     pub idle_unload_minutes: Option<u32>,
     pub post_release_ms: u64,
     /// Seconds the input stream stays open after a dictation so the next one starts without reopening the device
-    /// (design §18.3); 0 closes at once; validated 0..=300.
-    pub mic_lazy_close_secs: u64,
+    /// (design §18.3); 0 closes at once; validated 0..=300. Replaces the never-used `mic_lazy_close_secs` (default 60)
+    /// that every settings.json written before 0.6.0 carries: that key is ignored, so old files get the 20 s default.
+    pub mic_warm_secs: u64,
     pub max_clip_seconds: u32,
     pub paste_method: PasteMethod,
     pub flash_attention: bool,
@@ -165,7 +166,7 @@ impl Default for Settings {
             model_id: "large-v3-turbo".to_string(),
             idle_unload_minutes: Some(10),
             post_release_ms: 150,
-            mic_lazy_close_secs: 20,
+            mic_warm_secs: 20,
             max_clip_seconds: 300,
             paste_method: PasteMethod::Clipboard,
             flash_attention: true,
@@ -229,7 +230,7 @@ impl Settings {
         if !(10..=600).contains(&self.max_clip_seconds) {
             return Err("Maximum clip length must be between 10 and 600 seconds".into());
         }
-        if self.mic_lazy_close_secs > 300 {
+        if self.mic_warm_secs > 300 {
             return Err("Keep the microphone open must be between 0 and 300 seconds".into());
         }
         if self.spoken_languages.is_empty() {
@@ -283,7 +284,7 @@ mod tests {
         assert_eq!(s.model_id, "large-v3-turbo");
         assert_eq!(s.idle_unload_minutes, Some(10));
         assert_eq!(s.post_release_ms, 150);
-        assert_eq!(s.mic_lazy_close_secs, 20);
+        assert_eq!(s.mic_warm_secs, 20);
         assert_eq!(s.max_clip_seconds, 300);
         assert!(matches!(s.paste_method, PasteMethod::Clipboard));
         assert!(s.flash_attention);
@@ -318,13 +319,21 @@ mod tests {
     }
 
     #[test]
-    fn validate_bounds_mic_lazy_close() {
+    fn old_files_with_mic_lazy_close_secs_get_the_new_warm_default() {
+        let s: Settings = serde_json::from_str(r#"{"mic_lazy_close_secs":60}"#).unwrap();
+        assert_eq!(s.mic_warm_secs, 20, "the pre-0.6.0 key never had an effect; it must not become a 60 s window now");
+        let s: Settings = serde_json::from_str(r#"{"mic_warm_secs":5}"#).unwrap();
+        assert_eq!(s.mic_warm_secs, 5);
+    }
+
+    #[test]
+    fn validate_bounds_mic_warm_secs() {
         let mut s = Settings::default();
-        s.mic_lazy_close_secs = 0;
+        s.mic_warm_secs = 0;
         assert!(s.validate().is_ok(), "0 closes at once");
-        s.mic_lazy_close_secs = 300;
+        s.mic_warm_secs = 300;
         assert!(s.validate().is_ok());
-        s.mic_lazy_close_secs = 301;
+        s.mic_warm_secs = 301;
         assert!(s.validate().is_err());
     }
 

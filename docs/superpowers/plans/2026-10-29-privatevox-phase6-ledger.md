@@ -70,10 +70,20 @@ Machines: Mac M1 8 GB (tasks 1–3, 29 Oct) and the Windows PC with an AMD GPU a
 
 ### Task 10 — Keep the microphone warm (31 Oct, Windows PC)
 
-- Core: `warmmic::WarmMic` with `on_start() -> Reuse|Open`, `on_stop(now, lazy) -> Keep|Close`, `due(now)`, `mark_closed()`. `Settings.mic_lazy_close_secs` existed unused since phase 1 (default 60); the default is now 20 as the plan says and it is validated 0..=300 (0 = close at once, the old behaviour).
+- Core: `warmmic::WarmMic` with `on_start() -> Reuse|Open`, `on_stop(now, lazy) -> Keep|Close`, `due(now)`, `mark_closed()`. The setting is `Settings.mic_warm_secs` (default 20, validated 0..=300, 0 = close at once). It replaces `mic_lazy_close_secs`, which existed unused since phase 1 with default 60 and therefore sits in every settings.json written so far; the old key is ignored on load so nobody gets a 60 s window by accident (found in the review pass).
 - App: `MicCapture` keeps the cpal stream open after a stop with delivery paused (the callbacks forward into a swappable sink), reuses it on the next start (`mic: reused warm stream` in the log), and a timer thread closes it when the window passes (`mic: closed (20 s idle)`). A newer stop re-arms the window (generation counter); a changed input device forces a fresh open; the stream, the device and the timing state sit behind one lock so the timer and a start cannot race. The mic test (Task 5) goes through the same adapter and benefits too.
 - Panel: "Keep the microphone open after a dictation (s, 0–300)" in Keys and activation.
-- Tests: `warmmic::tests::stream_is_reused_within_the_window_and_closed_after`, `zero_window_closes_at_once`, `settings::tests::validate_bounds_mic_lazy_close`. Known trade-off (as in Handy): the OS microphone indicator stays on for the window after a dictation.
+- Tests: `warmmic::tests::stream_is_reused_within_the_window_and_closed_after`, `zero_window_closes_at_once`, `settings::tests::validate_bounds_mic_warm_secs`, `old_files_with_mic_lazy_close_secs_get_the_new_warm_default`. Known trade-off (as in Handy): the OS microphone indicator stays on for the window after a dictation.
+
+### Review pass (31 Oct, whole branch against `main`, high effort)
+
+Six findings, five fixed in the same session, one left as a warning:
+1. **Dead stream kept warm** (adapters): a fatal input-stream error (device unplugged) set nothing, so `stop()` kept the broken stream and the next dictation reused it and heard nothing. The error forwarder now flags the stream as broken; `stop()` closes it and `start()` never reuses it.
+2. **60 s window for every existing user** (settings): see Task 10 above; field renamed to `mic_warm_secs`.
+3. **Keychain written on every save** (secrets): `KeyringStore` remembers the values it wrote or read this session and skips unchanged writes, so a pill drag no longer touches the keychain (and cannot prompt on macOS).
+4. **Same-second crash reports** (crash): `latest()` now orders by timestamp then the `-N` suffix, so the report written second wins.
+5. **Dead `search_history` command**: removed; `list_history` with `query` replaced it (the host's `/v1/history` search still uses `Store::search`).
+6. **Unknown model id gets an invented q5_0 file name** (`AppPaths::model_file`): kept as a fallback so startup never panics, but it now logs a warning naming the id.
 
 ### Task 11 — Tokens in the OS keychain (31 Oct, Windows PC)
 

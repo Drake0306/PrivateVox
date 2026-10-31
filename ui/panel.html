@@ -134,7 +134,7 @@
           <label><span><input type="checkbox" id="launchAtLogin"> Launch at login</span></label>
           <label><span><input type="checkbox" id="showPill"> Show the pill (hotkeys work either way)</span></label>
           <label>Keep recording after key-up (ms) <input name="post_release_ms" type="number" min="0" max="2000"></label>
-          <label title="The microphone stays open this long after a dictation so the next one starts at once; 0 closes it every time">Keep the microphone open after a dictation (s, 0–300) <input name="mic_lazy_close_secs" type="number" min="0" max="300"></label>
+          <label title="The microphone stays open this long after a dictation so the next one starts at once; 0 closes it every time">Keep the microphone open after a dictation (s, 0–300) <input name="mic_warm_secs" type="number" min="0" max="300"></label>
           <label>Maximum clip (seconds) <input name="max_clip_seconds" type="number" min="10" max="600"></label>
           <div style="grid-column:1/-1;display:flex;gap:10px;align-items:center"><button class="btn primary" type="submit">Save</button><span id="settingsErr" class="err"></span><span id="settingsOk" class="muted"></span></div>
         </form>
@@ -434,7 +434,7 @@
     const mics = await inv('list_input_devices'); f.microphone.innerHTML = '<option value="">System default</option>' + mics.map(m => `<option>${esc(m)}</option>`).join('');
     f.microphone.value = s.microphone || ''; f.paste_method.value = s.paste_method;
     f.idle_never.checked = s.idle_unload_minutes == null; f.idle_unload_minutes.value = s.idle_unload_minutes ?? 10; f.idle_unload_minutes.disabled = f.idle_never.checked;
-    f.post_release_ms.value = s.post_release_ms; f.max_clip_seconds.value = s.max_clip_seconds; f.mic_lazy_close_secs.value = s.mic_lazy_close_secs;
+    f.post_release_ms.value = s.post_release_ms; f.max_clip_seconds.value = s.max_clip_seconds; f.mic_warm_secs.value = s.mic_warm_secs;
     f.idle_never.onchange = () => f.idle_unload_minutes.disabled = f.idle_never.checked;
     f.onsubmit = async (e) => {
       e.preventDefault(); $('settingsErr').textContent = ''; $('settingsOk').textContent = '';
@@ -442,7 +442,7 @@
       const n = { ...live, activation: f.activation.value, hold_threshold_ms: +f.hold_threshold_ms.value, microphone: f.microphone.value || null, paste_method: f.paste_method.value,
         ptt: f.ptt_modifier.value ? { modifier: f.ptt_modifier.value, combo: null } : { modifier: null, combo: f.ptt_combo.value || null },
         toggle: { modifier: null, combo: f.toggle_combo.value || null }, undo: { modifier: null, combo: f.undo_combo.value || null }, copy_only: { modifier: null, combo: f.copy_only_combo.value || null },
-        idle_unload_minutes: f.idle_never.checked ? null : +f.idle_unload_minutes.value, post_release_ms: +f.post_release_ms.value, max_clip_seconds: +f.max_clip_seconds.value, mic_lazy_close_secs: +f.mic_lazy_close_secs.value };
+        idle_unload_minutes: f.idle_never.checked ? null : +f.idle_unload_minutes.value, post_release_ms: +f.post_release_ms.value, max_clip_seconds: +f.max_clip_seconds.value, mic_warm_secs: +f.mic_warm_secs.value };
       try { await inv('set_settings', { settings: n }); $('settingsOk').textContent = 'Saved'; } catch (err) { $('settingsErr').textContent = String(err); }
     };
   }

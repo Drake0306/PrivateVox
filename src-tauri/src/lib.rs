@@ -90,7 +90,6 @@ pub fn run() {
             commands::list_history,
             commands::history_apps,
             commands::clear_history,
-            commands::search_history,
             commands::delete_history,
             commands::read_audio,
             commands::export_row,

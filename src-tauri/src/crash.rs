@@ -29,16 +29,18 @@ pub fn write(dir: &Path, text: &str) -> PathBuf {
     path
 }
 
-/// The newest `crash-*.txt` in `dir`, by the timestamp in its name (then by name), or `None`.
+/// The newest `crash-*.txt` in `dir`: by the timestamp in its name, then by the same-second suffix (`-1`, `-2`, …
+/// are later than the bare name), or `None`.
 pub fn latest(dir: &Path) -> Option<PathBuf> {
-    let mut reports: Vec<(u64, String, PathBuf)> = std::fs::read_dir(dir)
+    let mut reports: Vec<(u64, u64, PathBuf)> = std::fs::read_dir(dir)
         .ok()?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter_map(|p| {
             let name = p.file_name()?.to_str()?.to_string();
-            let ts = name.strip_prefix("crash-")?.strip_suffix(".txt")?.split('-').next()?.parse::<u64>().ok()?;
-            Some((ts, name, p))
+            let stem = name.strip_prefix("crash-")?.strip_suffix(".txt")?;
+            let (ts, suffix) = stem.split_once('-').unwrap_or((stem, "0"));
+            Some((ts.parse::<u64>().ok()?, suffix.parse::<u64>().ok()?, p))
         })
         .collect();
     reports.sort();
@@ -96,7 +98,10 @@ mod tests {
         assert_eq!(latest(d.path()).unwrap(), written, "the one just written is the newest");
         let second = write(d.path(), "same second");
         assert_ne!(second, written, "a second report in the same second gets its own file");
-        assert!(latest(d.path()).is_some());
+        assert_eq!(latest(d.path()).unwrap(), second, "the suffixed same-second report is the newer one");
+        std::fs::write(d.path().join("crash-1800000000.txt"), "later").unwrap();
+        std::fs::write(d.path().join("crash-1800000000-2.txt"), "later still").unwrap();
+        assert_eq!(latest(d.path()).unwrap().file_name().unwrap(), "crash-1800000000-2.txt");
         let missing = write(&d.path().join("nested").join("deeper"), "made the dir");
         assert!(missing.exists());
     }
