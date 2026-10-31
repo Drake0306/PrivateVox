@@ -3,158 +3,202 @@
 [![Release builds](https://github.com/Drake0306/PrivateVox/actions/workflows/release.yml/badge.svg)](https://github.com/Drake0306/PrivateVox/actions/workflows/release.yml)
 [![Latest release](https://img.shields.io/github/v/release/Drake0306/PrivateVox?include_prereleases&label=release)](https://github.com/Drake0306/PrivateVox/releases)
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-0f766e.svg)](LICENSE)
-![Platforms](https://img.shields.io/badge/macOS%20%7C%20Windows%20%7C%20Linux-local%20only-5b6b69)
+![Platforms](https://img.shields.io/badge/macOS%20%7C%20Windows%20%7C%20Linux-runs%20on%20your%20own%20machine-5b6b69)
 
-Hold a key, talk, let go: the words land in whatever app is in front. Whisper runs on your own GPU, nothing leaves the machine, and every dictation is kept in a local history you can search, copy and delete.
+**Talk instead of typing, in any app, without sending your voice anywhere.**
 
-## Quick start
+Hold a key, say what you want to write, let go. A second or two later the words appear where your cursor is, in your email, your chat, your editor, your browser. Everything happens on your own computer: the speech recognition runs on your graphics card, nothing is uploaded, and there is no account to create.
 
-1. Download the installer for your machine from the [Releases page](https://github.com/Drake0306/PrivateVox/releases): `.dmg` for a Mac with Apple Silicon, `.exe` or `.msi` for Windows, AppImage, `.deb` or `.rpm` for Linux. Builds are unsigned alphas: on macOS right-click → Open the first time; on Windows choose "More info → Run anyway" in SmartScreen.
-2. Start it. A small pill appears at the bottom of the screen and the Whisper model (574 MB) downloads once. On macOS, the Setup tab lists the two permissions to grant (Accessibility to paste, Input Monitoring for the hold key); Windows needs none.
-3. Put the cursor in any app, hold **Right ⌥ Option** (Mac) or **Right Alt** (Windows), speak, let go. The text is pasted where the cursor was. Click the pill for history and settings.
+## How it works, in plain words
 
-Everything stays on your machine. The optional clean-up step uses a small language model you run yourself (Ollama, LM Studio or llama.cpp, on this machine or another one on your network); there is no account and no cloud.
+- You press and hold one key (Right Option on a Mac, Right Alt on Windows) and speak.
+- When you let go, PrivateVox turns the speech into text using Whisper, the open speech model from OpenAI, running on your machine.
+- The text is pasted into whatever app is in front, as if you had typed it.
+- If you like, a small local AI tidies the text first: punctuation, capital letters, "um"s removed, or reshaped into an email or a bullet list. That step is optional and also runs on your machine.
+- Every dictation is kept in a private history on your computer, so you can find it again, copy it, fix it, or delete it.
 
-**Status:** alpha. macOS (Apple Silicon, Metal) is the platform it was built and used on. Windows builds with whisper.cpp's Vulkan backend, which runs on any recent AMD, NVIDIA or Intel GPU; the full test suites pass on a Windows PC with an AMD card, and the hold key and paste there are next to be checked by hand. See `docs/superpowers/specs/2026-10-28-whisper-harness-design.md` for the design, `docs/superpowers/plans/` for what is built when, and `docs/privatevox-roadmap.html` for the feature status table.
+A small pill at the bottom of the screen shows what is happening: listening, transcribing, pasted. Click it to open the history and settings.
 
-## What it does
+## Get started in three steps
 
-- Floating pill at the bottom of the screen above the Dock (drag it anywhere; it remembers), showing idle / listening / transcribing / pasted / error, visible on every space, never steals focus.
-- Push-to-talk on **Right Option**, toggle on **Ctrl+Shift+Space**, hold-or-toggle, and **Ctrl+Shift+Z** to undo the last paste; all rebindable from the Settings tab with a key recorder, applied without restart.
-- Three Whisper tiers switchable from the panel: large-v3-turbo (fast, default), large-v3 (accuracy), distil-large-v3 (English only). Download, delete and benchmark each from the Models tab.
-- A memory strip showing total memory, what other apps hold, what the selected model will take (measured after its first load), Recommended and Best-that-fits.
-- Whisper on Metal in a child worker process (crash and hang recovery, no stranded GPU memory on force quit); the model starts loading the moment you press the key.
-- Silence trimming, 300 ms minimum clip, 5 minute maximum with a countdown in the last 30 s; long dictations are cut at pauses and decoded while you are still speaking.
-- Reduced audio context for short clips (about 1 s per dictation on an M1).
-- Paste into the frontmost app via the clipboard with the previous clipboard restored.
-- SQLite history with search, inline edit, pin, copy, paste again, delete, and export to Markdown or JSON in ~/Downloads.
-- Idle unload of the model after any number of minutes you choose; menu bar item to pause and unload now.
-- First-run download of the model with resume and progress; Setup tab for the three macOS permissions.
+1. **Download** the installer for your computer from the [Releases page](https://github.com/Drake0306/PrivateVox/releases). Mac: the `.dmg`. Windows: the `.exe` (or `.msi`). Linux: the AppImage, `.deb` or `.rpm`.
+   These are early builds and are not yet signed, so the system will warn you the first time. On a Mac, right-click the app and choose Open. On Windows, click "More info", then "Run anyway".
+2. **Start it.** The pill appears at the bottom of the screen and the speech model (about 570 MB) downloads once. On a Mac, open the Setup tab (click the pill) and grant the two permissions it asks for, then restart the app once. Windows needs no permissions.
+3. **Dictate.** Put the cursor where you want text, hold **Right Option** (Mac) or **Right Alt** (Windows), speak, let go.
 
-## Polish: cleaning up the text with an LLM
+That is all. The rest of this page is for when you want more.
 
-Whisper's transcript goes through a small language model before it is pasted, unless the mode is Raw or Translate. Modes: **Clean** (default), **Email**, **Bullets**, **Code**, **Ask** (answers the question instead of transcribing it), plus **Raw** and **Translate to English** which skip the LLM. Pick the mode in the panel header, the menu bar, or re-polish any history row with another mode. Prompts are editable under Settings → Polish, with a reset.
+## What you can do with it
 
-Where the LLM runs, in priority order:
+**Dictating**
+- Hold to talk, or tap to start and tap again to stop; a tapped dictation also stops by itself after two seconds of silence.
+- See the words appear on the pill while you speak, so you know it heard you.
+- Say "new line", "new paragraph", "delete that" or "cancel" at the end of a sentence and it does what you said.
+- A second key copies the text to the clipboard instead of pasting it, for when you want to paste it yourself.
+- Undo the last paste with one key.
 
-1. **Machines you added** (Settings → Polish → Add endpoint, as `ip:port`). Typically the PC with the big GPU, running LM Studio with "Serve on local network" on, or Ollama with `OLLAMA_HOST=0.0.0.0`.
-2. **This machine**, found automatically: Ollama on port 11434, LM Studio on 1234, llama.cpp server on 8080.
+**Making the text read well (optional)**
+- A small AI model on your machine cleans the text before it is pasted: punctuation, capitals, filler words removed.
+- Modes: Clean, Email, Bullets, Code, Ask (answers your question instead of writing it down), Raw (exactly what you said), Translate to English.
+- Per-app defaults: Mail always in Email mode, your code editor always in Code mode.
+- Nothing is lost if the AI is slow or off: the plain transcript is pasted instead, and you can re-run the clean-up later from the history.
 
-Every endpoint is health-checked every 10 seconds. A dictation uses the first reachable one; if it fails mid-request the next one is tried and the pill says "PC unreachable, polished locally". If nothing answers within the timeout (8 s by default) the raw transcript is pasted and the history row is marked *unpolished*. When the preferred machine comes back it is used again without any action.
+**Your words, your languages**
+- A personal dictionary for names and jargon that generic speech recognition gets wrong.
+- One language fixed, or several, with the language detected per dictation and recorded next to it.
 
-On an 8 GB Mac, `ollama pull qwen2.5:3b` is the recommended local model (about 2 GB resident, roughly one second per dictation once warm). The model is warmed when you press the key and unloaded on the same idle timer as Whisper. Filler words ("uh", "hmm", and "um" when the language is English) are removed before the LLM and in Raw mode too; switch that off under Settings → Polish.
+**History**
+- Search, edit, pin, copy, paste again, delete, export to Markdown or JSON.
+- Filter by app or by mode; Clear all with a confirmation.
+- Keep the audio of each dictation if you want, and run it again later with a better model.
 
-## While you speak
+**Choosing where the work runs**
+- Three speech models: fast (default), most accurate, and an English-only one; a fourth, higher-precision fast model on machines with plenty of memory. Switch any time.
+- A memory bar shows what each model needs, what your machine has, and what fits.
+- GPU or CPU: keep the model on the graphics card, or move it to the main memory and leave the graphics card alone, with one switch.
+- Use a stronger computer on your home network to do the heavy lifting while you dictate on a laptop.
 
-- **Live preview** (Settings → Dictation): the words appear on a second line of the pill as Whisper decodes, so you can see it heard you and stop early. Auto means on when a host does the work or the machine has 16 GB or more; set it On or Off yourself.
-- **Auto-stop** in toggle mode: tap, talk, pause, and after two seconds of silence (your choice, or never) the dictation ends itself. The pill says "stopping…" in the last second.
-- **Spoken commands** at the very end of a dictation: "new line", "new paragraph", "delete that" or "undo" (undoes the last paste), "cancel" or "never mind" (drops the dictation). Only the trailing phrase is checked, and the three that drop text are taken only on their own or after a sentence break ("Send the report. Cancel."), so "tell him I will cancel" is just text. Whatever came before a cancel stays in History as a cancelled row. Off-able.
-- **Modes per app** (Settings → Modes per app): "Mail" → Email, "Code" → Code, from a small table; the pill shows the mode it picked.
-- **Sound cues** on start, stop and "nothing heard", plus a short flash of the pill. Off-able.
+**Quiet safety nets**
+- The pill tells you when a paste cannot land: a password field on a Mac, or an app running as administrator on Windows. The text is still on your clipboard.
+- A microphone test with a level meter, a numbered first-run checklist, a crash report you can open from Setup.
+- Passwords and tokens for network features are kept in the system keychain, not in a text file.
 
-## Dictionary, languages, kept audio
+## Privacy
 
-- **Personal dictionary** (Settings → Dictation): names and jargon, one per line. They go to Whisper as its prompt, and a fuzzy pass fixes near-misses afterwards ("charge bee" → "ChargeBee"). The slider sets how close a word has to be; 0 switches the pass off.
-- **Spoken languages**: one language means Whisper decodes with it fixed and never guesses. Several means Whisper detects per clip and is held to your list; a clip detected outside the list is decoded again with your first language. The history row records which language and how it was chosen.
-- **Keep audio clips** (off by default): the trimmed audio of each dictation is kept next to its row. Rows then show Play and Re-run, which decodes the clip again with any downloaded model, useful after switching to a bigger one.
-- Long dictations get an **Open as document** button: the text in paragraphs, with Copy all and a Markdown export.
-- On macOS the old clipboard comes back only after the target app has actually read the paste (no fixed delay), and the pill warns when a password field has secure input on, since the hold key may not fire then.
+Your voice never leaves your computer. The speech model and the optional clean-up model both run locally, or on another computer of yours on the same network if you set that up. There is no account, no telemetry and no cloud service behind this app. The history lives in a file on your disk; delete rows or clear it all whenever you like.
 
-## Settings, setup and safety nets
+## What you need
 
-- **Copy-only key** (default Ctrl+Shift+Alt+Space): tap, talk, tap; the text is copied, never pasted, and the undo target is left alone.
-- **History filters**: narrow the list by app and by mode together with the search box; **Clear all…** with an inline confirm deletes every local row and the kept clips (a host's history is never touched).
-- **Microphone test**: a Test button and a level meter beside the microphone picker (and in the Setup walkthrough), ending by itself after ten seconds and refused while a dictation records.
-- **Paste method per app**: terminals and remote desktops that ignore the paste keystroke get the text typed, from a small table like Modes per app; the rule is read from the app in front when the text lands. Changing the Paste method setting applies to the next paste, no restart.
-- **GPU or CPU**: a switch in the memory strip. GPU keeps Whisper in the card's memory (VRAM on a PC, unified memory on a Mac); CPU moves it into system RAM and leaves the GPU alone, unloading it from the GPU at once. The strip names the adapter or the processor and shows the memory in use, so a PC reads "AMD Radeon RX 9070 · 16 GB VRAM" in GPU mode and the processor with 32 GB RAM in CPU mode.
-- **Models**: the Q8_0 turbo (`large-v3-turbo-q8`, 874 MB, closer to the f16 original) is offered on machines with 12 GB or more; the menu bar has a Model submenu and **Load model now**.
-- **Launch at login** and **Show the pill** switches (hotkeys work with the pill hidden).
-- **Keep the microphone open** for a few seconds after a dictation (default 20 s, 0 to close at once): the next one starts without reopening the device.
-- **First-run walkthrough**: the Setup tab is a numbered list (model, microphone, the macOS grants where they exist, dictation key, polish LLM, say something) with a state for each.
-- **Crash report**: a panic writes `crash-<timestamp>.txt` next to the log with the version, OS, model and last pill state; Setup shows **Show report**.
-- **Tokens in the OS keychain**: host, remote and LLM endpoint tokens live in the macOS Keychain or the Windows Credential Manager; `settings.json` only holds `@keychain`.
-- **Windows, administrator windows**: Windows drops keystrokes sent to an app that runs as administrator. The pill warns while such a window is in front, and a dictation into it ends as "Copied (paste blocked)" with the text on the clipboard.
+PrivateVox does real work on your machine, so the hardware matters more than for most apps. These are the comfortable minimums.
 
-## Use your PC as the host
+**Mac**
+- A Mac with Apple Silicon (M1 or newer) running macOS 12 or later. Intel Macs are not supported.
+- 8 GB of memory works with the fast model. 16 GB is better, especially if you also run the clean-up AI.
+- About 1 GB of free disk space for the speech model, more if you keep audio clips.
 
-Any PrivateVox can do the work for another one on the same network. On the machine with the big GPU, open Settings → Network and switch on **Act as host for other machines** (port 8765, optional token); the card shows the address to type elsewhere. On the Mac, switch on **Use a host on this network**, enter that `ip:port`, press Test, then Apply, or press **Find hosts on this network** and Add the one it lists. From then on, while the host answers, what you dictate on the Mac is transcribed and polished on the PC; the memory strip shows the PC's figures; nothing is loaded on the Mac. When the PC is not reachable the Mac does the work itself and the pill says so, and it goes back to the PC as soon as it answers again.
+**Windows**
+- Windows 10 or 11, 64-bit.
+- A graphics card from the last few years with up-to-date drivers. AMD, NVIDIA and Intel all work; PrivateVox uses the Vulkan standard, so it is not tied to one brand. 4 GB of graphics memory or more is comfortable for the fast model. No suitable card? Switch to CPU mode and it runs in main memory instead, more slowly.
+- 8 GB of main memory, 16 GB if you run the clean-up AI on the same machine.
+- About 1 GB of free disk space.
 
-Both machines keep a history: the PC stores what it processed (marked "host", with the client's name), the Mac stores its copy (marked "via PC"). The toggle in the History header shows the PC's list from the Mac.
+**Linux**
+- A desktop on X11 with Vulkan drivers installed. Builds exist but no one has run them by hand yet; expect rough edges, and tell us what you find.
 
-## Download
+**Any computer**
+- A microphone. The built-in one is fine; a headset is better in a noisy room.
+- For the optional clean-up: [Ollama](https://ollama.com) installed, with one small model pulled (see below).
 
-Alpha builds for macOS (Apple Silicon), Windows and Linux are on the [Releases page](https://github.com/Drake0306/PrivateVox/releases); 0.6.0-alpha.1 is the current one. Read the release notes there for the one-time macOS permission steps; builds are unsigned for now.
+### For the smoothest experience
 
-## Build and run
+- Keep your graphics drivers current. Most "it runs on the CPU and is slow" reports on Windows come down to old drivers.
+- Give it memory. Close memory-hungry apps if the memory bar in the panel turns red; or pick a smaller model there.
+- Grant the Mac permissions once and restart the app. Without Accessibility, the text is copied to the clipboard but cannot be pasted for you.
+- Leave the app running in the menu bar or tray. The first dictation after a long pause takes a little longer while the model loads; turn on "Launch at login" in Settings and forget about it.
+- Use a key combination instead of the lone Right Alt if your keyboard layout uses Right Alt to type accented letters (Settings → Keys).
 
-Requirements: Rust 1.90+, Xcode Command Line Tools, `cmake`, and the Tauri CLI (`cargo install tauri-cli --version "^2" --locked`).
+## Running it
 
-```bash
-git clone https://github.com/Drake0306/PrivateVox.git
-cd PrivateVox
-cargo tauri dev            # from the repo root, or `cd src-tauri && cargo tauri dev`
-```
+### Mac
 
-The first build compiles whisper.cpp and the Tauri stack (several minutes). The first launch of a freshly built binary also compiles Metal shaders once (about 10 s before the pill goes idle).
+1. Open the `.dmg`, drag PrivateVox into Applications, right-click it and choose Open the first time.
+2. Click the pill, open **Setup**, and use the buttons to grant:
+
+| Permission | Why it is needed |
+|---|---|
+| Microphone | to hear you |
+| Accessibility | to paste the text into the app in front |
+| Input Monitoring | to notice the Right Option key while another app is in front |
+
+3. Quit PrivateVox from the menu bar and start it again. The Setup tab shows green when everything is in place.
 
 ### Windows
 
-Needs Visual Studio 2022 Build Tools with the C++ workload, CMake, Ninja, the Vulkan SDK (`winget install KhronosGroup.VulkanSDK`, for the shader compiler; open a new terminal afterwards so `VULKAN_SDK` is set), LLVM (`winget install LLVM.LLVM`, bindgen needs `libclang.dll`), PowerShell 7 and the Tauri CLI. Then a plain `cargo tauri dev` from the repo root works: on Windows the Tauri CLI runs cargo through `scripts/win-cargo.cmd` (set as `build.runner` in `src-tauri/tauri.windows.conf.json`), a shim for `scripts/win-cargo.ps1`, which imports the MSVC developer environment, uses Ninja, builds into a short target directory (`D:\t` when a D: drive exists, else `%LOCALAPPDATA%\pvx-target`), and puts itself, cargo and the app into one Windows job that it closes when the shim is killed, so that stopping the dev session (Ctrl+C, or a rebuild on a file change) also stops the app. If a build ever says `failed to remove privatevox.exe: Access is denied`, an instance is still running: quit it from the tray. Without that, whisper.cpp's nested shader project fails: MSVC's build tracker cannot write under the long default `target\…` path and `cl.exe` is not on a plain terminal's PATH. `.cargo/config.toml` also points the build at `cmake` on PATH, because the CMake installer's "add to environment" option sets a `CMAKE` variable to a *folder*, which fails with "Access is denied".
+1. Run the `.exe` installer. If SmartScreen appears, choose "More info", then "Run anyway".
+2. Start PrivateVox. It needs no special permissions. The first start downloads the speech model.
+3. Hold Right Alt and talk. If an app runs as administrator (some system tools), Windows does not let other programs type into it; the pill will say so, and the text waits on your clipboard.
 
-For cargo commands other than `tauri dev` / `tauri build`, call the wrapper yourself:
+### Linux
 
-```powershell
-pwsh scripts/win-cargo.ps1 test -p privatevox --lib -- --test-threads=1
-pwsh scripts/win-cargo.ps1 tauri build
-```
+Run the AppImage (make it executable first) or install the `.deb` / `.rpm`. The hold key needs X11; on Wayland set a key combination in Settings instead.
 
-Whisper runs through Vulkan, so any recent AMD, NVIDIA or Intel GPU with a current driver works; nothing is tied to one card.
+### The optional clean-up AI
 
-### Permissions (one time)
+1. Install [Ollama](https://ollama.com).
+2. In a terminal, run `ollama pull qwen2.5:3b`. It is about 2 GB and good enough for punctuation and tidying.
+3. Start PrivateVox. It finds Ollama by itself; the "Polish LLM" box in the panel shows it. Pick a mode in the panel header.
 
-macOS asks for three things. PrivateVox's **Setup** tab (click the pill, then Setup) has buttons that open each pane.
+Have a bigger computer on your network? Run Ollama or LM Studio there, allow network access in its settings, and add its address under Settings → Polish. PrivateVox uses it when it answers and falls back to local when it does not.
 
-| Permission | Why | Where |
-|---|---|---|
-| Microphone | to record | prompt on first dictation |
-| Accessibility | to send ⌘V into the front app | System Settings → Privacy & Security → Accessibility |
-| Input Monitoring | to see the Right Option key | System Settings → Privacy & Security → Input Monitoring |
+### Using a stronger computer for everything
 
-After granting Accessibility or Input Monitoring, quit PrivateVox from the menu bar and start it again. See `docs/dev/permissions.md` to reset grants while developing.
+On the strong machine, turn on **Act as host for other machines** under Settings → Network. On the laptop, turn on **Use a host on this network**, enter the address the host shows (or press Find hosts), Test, Apply. From then on the laptop records and the host does the recognition and the clean-up. When the host is away, the laptop quietly does the work itself.
 
-Host, remote and LLM endpoint tokens are kept in the macOS Keychain (Windows: Credential Manager); `settings.json` only holds `@keychain` in their place. A debug binary is not signed, so macOS asks for keychain access again after every rebuild; the bundled app (`cargo tauri build --debug`) is asked once. Grants and Keychain entries both key on the binary's identity, which is why developing from the bundled app is less noisy.
+### If something looks wrong
+
+- **"Copied, paste blocked"** on a Mac: Accessibility is not granted yet, or the app was rebuilt since you granted it. Setup → Accessibility.
+- **Nothing heard**: Settings → Microphone → Test and watch the meter while you speak; pick another input if it stays flat.
+- **The model does not fit**: the memory bar turns red. Pick a smaller model, close other apps, or switch to CPU mode on a PC.
+- **It crashed**: the Setup tab offers "Show report". Attach that file to an issue.
+- **Where files are**: on a Mac, `~/Library/Application Support/com.drake0306.privatevox/` (settings, history, models) and `~/Library/Logs/com.drake0306.privatevox/privatevox.log`; on Windows, `%APPDATA%\com.drake0306.privatevox\` and `%LOCALAPPDATA%\com.drake0306.privatevox\logs\privatevox.log`.
+
+## Where the project stands
+
+This is an alpha. macOS on Apple Silicon is where it has been used every day; Windows works and all its tests pass, with the first real use by a person on 31 October 2026; Linux is built but untested. What is built, what is left and what is not planned: open `docs/privatevox-roadmap.html` in a browser.
+
+## For developers
+
+### Building
+
+You need Rust 1.90 or newer, CMake, and the Tauri CLI (`cargo install tauri-cli --version "^2" --locked`).
+
+- **Mac**: Xcode Command Line Tools. Then:
+
+  ```bash
+  git clone https://github.com/Drake0306/PrivateVox.git
+  cd PrivateVox
+  cargo tauri dev
+  ```
+
+  The first build compiles whisper.cpp and Tauri (several minutes). A freshly built binary compiles Metal shaders once at first launch (about ten seconds before the pill goes idle). Debug builds lose the macOS Accessibility grant on every rebuild; develop from the bundled app (`cargo tauri build --debug`) when you need pasting to work.
+
+- **Windows**: Visual Studio 2022 Build Tools with the C++ workload, CMake, Ninja, the Vulkan SDK (`winget install KhronosGroup.VulkanSDK`; open a new terminal afterwards), LLVM (`winget install LLVM.LLVM`, for the C bindings generator) and PowerShell 7. Then the same `cargo tauri dev` from the repo root works. Under the hood the Tauri CLI runs cargo through `scripts/win-cargo.cmd`, which sets up the MSVC environment, uses Ninja and builds into a short directory (`D:\t` if you have a D: drive, otherwise under `%LOCALAPPDATA%`), because whisper.cpp's shader step breaks on Windows' path length limit. For other cargo commands use the wrapper directly:
+
+  ```powershell
+  pwsh scripts/win-cargo.ps1 test -p privatevox --lib -- --test-threads=1
+  pwsh scripts/win-cargo.ps1 tauri build
+  ```
+
+  If a build says `failed to remove privatevox.exe: Access is denied`, a PrivateVox is still running; quit it from the tray (the wrapper also clears leftovers from earlier dev sessions by itself).
+
+- **Linux**: the packages the release workflow installs are the list to copy: WebKitGTK 4.1, libayatana-appindicator, librsvg, ALSA, libxdo, libxi, libxtst, libx11, libxkbcommon, Vulkan headers, cmake and pkg-config, plus the Vulkan SDK for the shader compiler.
 
 ### Tests
 
 ```bash
-cargo test -p privatevox-core                          # settings, audio, VAD, hotkey machine, store, lifecycle, download
-cargo test -p privatevox-engine -- --test-threads=1    # protocol, policy, worker supervisor (counts worker processes)
-cargo test -p privatevox                               # pipeline coordinator, paste, exit path
-cargo test -p privatevox-core -- --ignored             # microphone capture (asks for the mic)
-PRIVATEVOX_TEST_MODEL=~/path/to/ggml-large-v3-turbo-q5_0.bin cargo test -p privatevox-engine --test worker_integration -- --ignored
+cargo test -p privatevox-core                          # settings, audio, VAD, hotkeys, history store, downloads
+cargo test -p privatevox-engine -- --test-threads=1    # protocol, worker supervisor (counts worker processes)
+cargo test -p privatevox --lib -- --test-threads=1     # the app: pipeline, paste, setup, memory, secrets
+node scripts/check-panel-js.mjs ui/panel.html ui/pill.html   # panel JavaScript lint
 ```
 
-## Where things live
+Two more need hardware or files: `cargo test -p privatevox-core -- --ignored` uses the microphone, and the worker integration test needs `PRIVATEVOX_TEST_MODEL` pointing at a model file.
 
-`~/Library/Application Support/com.drake0306.privatevox/`: `settings.json`, `privatevox.sqlite` (history), `models/`, `privatevox.lock`, `clipboard.bak`. Logs: `~/Library/Logs/com.drake0306.privatevox/privatevox.log`.
+### Layout
 
-## Layout
+- `crates/privatevox-core`: pure logic, no UI. Settings, audio conversion, voice activity detection, the hotkey state machine, text clean-up, the history database, memory figures, downloads.
+- `crates/privatevox-engine`: the speech engine. The whisper.cpp backend, the worker process that runs it, and the supervisor that restarts it if it crashes or hangs.
+- `src-tauri`: the app. Pill and panel windows, tray, hotkeys, paste, the pipeline that ties it together, host mode, keychain, crash reports.
+- `ui/`: the pill and the panel, plain HTML, CSS and JavaScript.
+- `docs/`: the design document, the plan and ledger for each phase, release notes and the roadmap page.
 
-- `crates/privatevox-core` — pure logic, no Tauri: settings, audio conversion, VAD, activation state machine, text clean-up, SQLite store, lock file and idle timer, downloads.
-- `crates/privatevox-engine` — the `Engine` trait, the whisper-rs backend, the pipe protocol, the worker loop and the `WorkerEngine` supervisor.
-- `src-tauri` — the app: pill and panel windows, tray, hotkeys, paste, pipeline coordinator, lifecycle.
-- `ui/` — plain HTML/CSS/JS, no bundler.
-- `spike/` — the throwaway engine benchmark; results in `docs/superpowers/spikes/`.
+### Contributing
 
-## Feedback and contributing
-
-- Bugs and ideas: [GitHub issues](https://github.com/Drake0306/PrivateVox/issues). Say which OS and GPU, what you expected, and attach the log (`~/Library/Logs/com.drake0306.privatevox/privatevox.log` on macOS, `%LOCALAPPDATA%\com.drake0306.privatevox\logs\privatevox.log` on Windows). A crash leaves a `crash-<timestamp>.txt` next to the log; the Setup tab's "Show report" opens it.
-- Pull requests are welcome. Keep the three test suites green (`cargo test` per crate as above, the app crate with `--test-threads=1`), run `node scripts/check-panel-js.mjs ui/panel.html ui/pill.html` for the panel, and add a test with each change; the design document in `docs/superpowers/specs/` says why things are the way they are.
-- Where the project is and what is left: `docs/privatevox-roadmap.html` (open it in a browser).
+Issues and pull requests are welcome at [github.com/Drake0306/PrivateVox](https://github.com/Drake0306/PrivateVox). For a bug, say which OS and graphics card you have, what you expected, and attach the log file named above. For a change, keep the three test suites and the panel lint green and add a test with it; the design document in `docs/superpowers/specs/` explains why things are the way they are.
 
 ## Credits
 
-Several techniques are adopted from [Handy](https://github.com/cjpais/Handy) (MIT): the worker-process engine, VAD timing, chunking at pauses, the activation state machine and the receipt-sequenced paste design. Whisper by OpenAI, whisper.cpp by Georgi Gerganov and contributors, Silero VAD by the Silero team.
+Several techniques are adopted from [Handy](https://github.com/cjpais/Handy) (MIT): the worker-process engine, the voice-activity timing, chunking at pauses, the activation state machine and the paste design. Whisper is by OpenAI, whisper.cpp by Georgi Gerganov and contributors, Silero VAD by the Silero team.
 
 ## Licence
 
