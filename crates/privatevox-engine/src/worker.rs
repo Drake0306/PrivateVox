@@ -100,7 +100,8 @@ pub fn resident_bytes() -> u64 {
 }
 
 /// Exits the worker as soon as the parent is gone, even in the middle of a decode (the stdin EOF is only
-/// noticed between frames). On Unix a reparented child sees `getppid() == 1`.
+/// noticed between frames). On Unix a reparented child sees `getppid() == 1`. On Windows the supervisor passes its
+/// pid in `PRIVATEVOX_PARENT_PID`; the worker opens that process while it is still alive and waits on the handle.
 fn spawn_parent_watch() {
     #[cfg(unix)]
     {
@@ -114,6 +115,36 @@ fn spawn_parent_watch() {
                     log::warn!("worker: parent gone, exiting");
                     std::process::exit(0);
                 }
+            })
+            .ok();
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+        use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject, INFINITE, PROCESS_SYNCHRONIZE};
+        let Some(parent) = std::env::var("PRIVATEVOX_PARENT_PID").ok().and_then(|v| v.parse::<u32>().ok()) else {
+            log::info!("worker: no PRIVATEVOX_PARENT_PID, relying on stdin EOF only");
+            return;
+        };
+        // SAFETY: plain Win32 calls with valid arguments; the handle is closed on the watcher thread.
+        let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, parent) };
+        if handle.is_null() {
+            log::warn!("worker: cannot open parent {parent} to watch it, relying on stdin EOF only");
+            return;
+        }
+        let handle = handle as usize; // raw handles are not Send; the thread owns it from here on
+        std::thread::Builder::new()
+            .name("privatevox-parent-watch".into())
+            .spawn(move || {
+                let handle = handle as windows_sys::Win32::Foundation::HANDLE;
+                let waited = unsafe { WaitForSingleObject(handle, INFINITE) };
+                unsafe { CloseHandle(handle) };
+                if waited == WAIT_OBJECT_0 {
+                    log::warn!("worker: parent gone, exiting");
+                } else {
+                    log::warn!("worker: parent wait failed ({waited}), exiting");
+                }
+                std::process::exit(0);
             })
             .ok();
     }

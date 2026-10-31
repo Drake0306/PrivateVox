@@ -37,9 +37,33 @@ pub fn ensure_benchmark_clip(dir: &Path) -> Result<PathBuf> {
         }
         Ok(wav)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
     {
-        bail!("benchmark clip generation is macOS-only for now")
+        // Windows Speech (SAPI, always present) writes 16 kHz mono 16-bit WAV directly; Windows PowerShell 5.1 loads
+        // System.Speech from the .NET Framework, which the newer pwsh does not ship.
+        use std::os::windows::process::CommandExt as _;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let script = format!(
+            "Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; \
+             $fmt = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(16000, [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen, [System.Speech.AudioFormat.AudioChannel]::Mono); \
+             $s.SetOutputToWaveFile('{}', $fmt); $s.Speak('{}'); $s.Dispose()",
+            wav.display().to_string().replace('\'', "''"),
+            SCRIPT.replace('\'', "''")
+        );
+        let status = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status()
+            .context("run Windows PowerShell for speech synthesis")?;
+        if !status.success() || !wav.exists() {
+            let _ = std::fs::remove_file(&wav);
+            bail!("Windows speech synthesis failed with {status}");
+        }
+        Ok(wav)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        bail!("benchmark clip generation needs macOS or Windows for now")
     }
 }
 

@@ -2348,7 +2348,11 @@ mod tests {
         std::thread::sleep(Duration::from_millis(150));
         drop(host);
         h.tx.send(Cmd::Stop).unwrap();
-        std::thread::sleep(Duration::from_millis(800));
+        // The fallback waits for the connect timeout (1 s) when the OS does not refuse at once; Windows takes ~2 s.
+        let deadline = Instant::now() + Duration::from_secs(4);
+        while h.pasted.lock().unwrap().is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
         assert_eq!(h.pasted.lock().unwrap().clone(), vec!["local words".to_string()]);
         let row = last_row(&h);
         assert_eq!(row.engine_kind, "local");

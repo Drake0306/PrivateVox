@@ -173,7 +173,16 @@ mod tests {
     fn hang_times_out_and_refused_is_unreachable() {
         let h = FakeHost::start(HostBehaviour::Hang);
         assert_eq!(HostClient::new(&h.base_url, None).status(Duration::from_millis(300)).unwrap_err(), ClientError::Timeout);
-        assert!(matches!(HostClient::new("http://127.0.0.1:1", None).status(Duration::from_secs(1)).unwrap_err(), ClientError::Unreachable(_)));
+        // A port that was bound a moment ago and released again is closed on every OS. macOS and Linux refuse it at
+        // once (Unreachable). Windows retries the SYN for about two seconds even on loopback, which is longer than
+        // the one-second connect timeout, so there the same closed port surfaces as Timeout; both mean "host down".
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let refused = HostClient::new(&format!("http://127.0.0.1:{port}"), None).status(Duration::from_secs(1)).unwrap_err();
+        if cfg!(windows) {
+            assert!(matches!(refused, ClientError::Unreachable(_) | ClientError::Timeout), "{refused:?}");
+        } else {
+            assert!(matches!(refused, ClientError::Unreachable(_)), "{refused:?}");
+        }
     }
 
     #[test]

@@ -142,6 +142,8 @@ impl WorkerEngine {
     fn spawn(&mut self) -> Result<()> {
         let mut child = self
             .cmd
+            // The worker waits on this process and exits when it is gone (Windows has no getppid-style reparenting).
+            .env("PRIVATEVOX_PARENT_PID", std::process::id().to_string())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

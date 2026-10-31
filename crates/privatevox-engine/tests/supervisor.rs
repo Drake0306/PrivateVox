@@ -1,5 +1,6 @@
 //! Supervisor tests against the fake worker. Run with `--test-threads=1`: they count live worker processes
-//! by exact process name (`pgrep -x`), so other tests must not have workers alive at the same time.
+//! by exact process name (`pgrep -x` on Unix, `tasklist` on Windows), so other tests must not have workers alive
+//! at the same time.
 use privatevox_engine::protocol::DecodeOptions;
 use privatevox_engine::supervisor::{Engine, WorkerEngine};
 use std::process::Command;
@@ -11,13 +12,31 @@ fn fake_worker(sleep_ms: u64) -> Command {
     c
 }
 
+#[cfg(unix)]
 fn alive(pid: u32) -> bool {
     Command::new("kill").args(["-0", &pid.to_string()]).status().map(|s| s.success()).unwrap_or(false)
 }
 
+#[cfg(windows)]
+fn alive(pid: u32) -> bool {
+    let out = Command::new("tasklist").args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"]).output().unwrap();
+    String::from_utf8_lossy(&out.stdout).contains(&format!("\"{pid}\""))
+}
+
+/// SIGKILL / `taskkill /F`: the same thing a crash or a force-quit does to the process.
+fn kill(pid: u32) {
+    #[cfg(unix)]
+    Command::new("kill").args(["-9", &pid.to_string()]).status().unwrap();
+    #[cfg(windows)]
+    Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).output().unwrap();
+}
+
 fn workers() -> Vec<String> {
+    #[cfg(unix)]
     let out = Command::new("pgrep").args(["-xl", "privatevox-worker"]).output().unwrap();
-    String::from_utf8_lossy(&out.stdout).lines().filter(|l| !l.trim().is_empty()).map(|l| l.to_string()).collect()
+    #[cfg(windows)]
+    let out = Command::new("tasklist").args(["/FI", "IMAGENAME eq privatevox-worker.exe", "/NH", "/FO", "CSV"]).output().unwrap();
+    String::from_utf8_lossy(&out.stdout).lines().filter(|l| l.contains("privatevox-worker")).map(|l| l.to_string()).collect()
 }
 
 fn worker_count() -> usize {
@@ -59,7 +78,7 @@ fn supervisor_respawns_after_worker_killed() {
     let mut e = WorkerEngine::new(fake_worker(0));
     e.load(std::path::Path::new("/nonexistent/model.bin"), true).unwrap();
     let pid = e.child_pid().unwrap();
-    Command::new("kill").args(["-9", &pid.to_string()]).status().unwrap();
+    kill(pid);
     std::thread::sleep(Duration::from_millis(200));
     let first = e.transcribe(&vec![0.0; 16_000], &DecodeOptions::default());
     let second = e.transcribe(&vec![0.0; 16_000], &DecodeOptions::default()).unwrap();
@@ -106,22 +125,44 @@ fn pid_handle_kills_a_busy_worker_without_the_lock() {
     assert!(result.is_err(), "the in-flight decode must fail, not hang");
 }
 
+/// Starts the fake worker under a throwaway parent process with a slow decode queued and returns (parent, worker pid).
+/// The parent keeps the worker's stdin open, so once the parent dies only the worker's parent watch can end it.
+fn worker_under_throwaway_parent() -> (std::process::Child, u32) {
+    use std::io::BufRead;
+    let worker = env!("CARGO_BIN_EXE_privatevox-worker");
+    #[cfg(unix)]
+    let mut parent = {
+        // A shell: the worker is reparented to init when the shell is killed and sees getppid() change.
+        let script = format!("exec 3< <(sleep 60); PRIVATEVOX_WORKER_FAKE=1 PRIVATEVOX_WORKER_SLEEP_MS=20000 {worker} <&3 >/dev/null 2>&1 & echo $!; wait");
+        Command::new("bash").arg("-c").arg(&script).stdout(std::process::Stdio::piped()).spawn().unwrap()
+    };
+    #[cfg(windows)]
+    let mut parent = {
+        // Windows PowerShell as the parent: it hands the worker its own pid in PRIVATEVOX_PARENT_PID (what the
+        // supervisor does), starts the worker with a stdin pipe it never writes to, prints the worker's pid and sleeps.
+        let script = format!(
+            "$env:PRIVATEVOX_WORKER_FAKE='1'; $env:PRIVATEVOX_WORKER_SLEEP_MS='20000'; $env:PRIVATEVOX_PARENT_PID=\"$PID\"; \
+             $psi = New-Object System.Diagnostics.ProcessStartInfo; $psi.FileName = '{}'; $psi.UseShellExecute = $false; \
+             $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; \
+             $p = [System.Diagnostics.Process]::Start($psi); [Console]::Out.WriteLine($p.Id); [Console]::Out.Flush(); Start-Sleep -Seconds 60",
+            worker.replace('\'', "''")
+        );
+        Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &script]).stdout(std::process::Stdio::piped()).spawn().unwrap()
+    };
+    let mut line = String::new();
+    std::io::BufReader::new(parent.stdout.take().unwrap()).read_line(&mut line).unwrap();
+    let worker_pid: u32 = line.trim().parse().unwrap_or_else(|e| panic!("worker pid line {line:?}: {e}"));
+    (parent, worker_pid)
+}
+
 #[test]
 fn worker_exits_when_its_parent_dies_mid_decode() {
-    // A throwaway parent shell starts the fake worker with a slow decode queued through a pipe, then the
-    // shell is killed; the worker must notice the reparenting and exit on its own.
-    let worker = env!("CARGO_BIN_EXE_privatevox-worker");
-    let script = format!(
-        "exec 3< <(sleep 60); PRIVATEVOX_WORKER_FAKE=1 PRIVATEVOX_WORKER_SLEEP_MS=20000 {worker} <&3 >/dev/null 2>&1 & echo $!; wait"
-    );
-    let mut parent = Command::new("bash").arg("-c").arg(&script).stdout(std::process::Stdio::piped()).spawn().unwrap();
-    let mut line = String::new();
-    use std::io::BufRead;
-    std::io::BufReader::new(parent.stdout.take().unwrap()).read_line(&mut line).unwrap();
-    let worker_pid: u32 = line.trim().parse().unwrap();
+    // A throwaway parent starts the fake worker with a slow decode queued through a pipe, then the parent is
+    // killed; the worker must notice on its own (reparenting on Unix, the parent handle signalling on Windows).
+    let (mut parent, worker_pid) = worker_under_throwaway_parent();
     std::thread::sleep(Duration::from_millis(300));
     assert!(alive(worker_pid));
-    Command::new("kill").args(["-9", &parent.id().to_string()]).status().unwrap();
+    kill(parent.id());
     let _ = parent.wait();
     let deadline = std::time::Instant::now() + Duration::from_secs(3);
     while alive(worker_pid) && std::time::Instant::now() < deadline {
