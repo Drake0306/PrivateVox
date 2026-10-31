@@ -1,0 +1,8 @@
+# Workspace-wide cargo settings.
+#
+# whisper-rs-sys builds whisper.cpp through the `cmake` crate, which takes the CMAKE environment variable as the path
+# of the cmake *executable*. Some machines set CMAKE to CMake's bin *directory* (the CMake installer's "add to
+# environment" option does that), and the build then fails with "failed to execute command: Access is denied".
+# Resolving `cmake` on PATH works everywhere, so the variable is overridden here for build scripts.
+[env]
+CMAKE = { value = "cmake", force = true }

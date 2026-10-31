@@ -84,7 +84,9 @@ The first build compiles whisper.cpp and the Tauri stack (several minutes). The 
 
 ### Windows
 
-Needs Visual Studio 2022 Build Tools with the C++ workload, CMake, Ninja, the Vulkan SDK (`winget install KhronosGroup.VulkanSDK`, for the shader compiler), LLVM (`winget install LLVM.LLVM`, bindgen needs `libclang.dll`) and the Tauri CLI. The build must run inside the MSVC developer environment with Ninja as the CMake generator and a short target directory (MSVC refuses long object paths); `scripts/win-cargo.ps1` sets all of that up and forwards to cargo:
+Needs Visual Studio 2022 Build Tools with the C++ workload, CMake, the Vulkan SDK (`winget install KhronosGroup.VulkanSDK`, for the shader compiler; open a new terminal afterwards so `VULKAN_SDK` is set), LLVM (`winget install LLVM.LLVM`, bindgen needs `libclang.dll`) and the Tauri CLI. With those in place a plain `cargo tauri dev` from the repo root works: `.cargo/config.toml` points the build at `cmake` on PATH, because the CMake installer's "add to environment" option sets a `CMAKE` variable to a *folder*, which otherwise fails with "Access is denied".
+
+If the build still fails inside whisper.cpp's shader step (it needs `cl.exe` on PATH, which a plain terminal does not have) or with a long-path error, use the wrapper, which mirrors CI: MSVC developer environment, Ninja, and a short target directory:
 
 ```powershell
 pwsh scripts/win-cargo.ps1 tauri dev

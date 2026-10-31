@@ -67,7 +67,7 @@ table.status td:last-child{white-space:nowrap}
 <section class="wrap">
   <h2>On your side <span class="chip you">needs you</span></h2>
   <div class="phase"><ul class="list">
-    <li><span class="mark you">!</span><div><b>Merge the phase 6 branch and tag <code>v0.6.0-alpha.1</code></b><small>Branch <code>claude/new-session-114a90</code> holds tasks 4–12, the Windows fixes, the docs and the version bump. The tag starts the release workflow, which now builds the dmg too.</small></div></li>
+    <li><span class="mark you">!</span><div><b>Tag <code>v0.6.0-alpha.1</code> on <code>main</code></b><small>Phase 6 (tasks 4–12, the Windows fixes, the docs and the version bump) is merged into <code>main</code>. The tag starts the release workflow, which now builds the dmg too.</small></div></li>
     <li><span class="mark you">!</span><div><b>Run PrivateVox on the PC by hand</b><small><code>pwsh scripts/win-cargo.ps1 tauri dev</code> (or the installer from the release). Check: Right Alt hold and paste into a few apps, the Q8 model card, the mic meter, Clear all, host mode PC→Mac, and <code>PRIVATEVOX_DEBUG_SCRIPT=panic</code> for a crash report. Then the Vulkan timing test from the resume notes.</small></div></li>
     <li><span class="mark you">!</span><div><b>On the Mac: click the menu bar icon once</b><small>Task 3's tray items (Model submenu, Load model now, Show pill, Launch at login) were never seen open by eye because the UI scripting failed that evening.</small></div></li>
   </ul></div>
@@ -168,6 +168,20 @@ table.status td:last-child{white-space:nowrap}
     <li><span class="mark done">✓</span><div><b>11 · Tokens in the OS keychain</b><small>Keychain / Credential Manager; <code>@keychain</code> in the file; a refusing store keeps the token rather than losing it.</small></div></li>
     <li><span class="mark done">✓</span><div><b>12 · macOS in the release CI</b><small>macos-14 runner; first real run on the 0.6.0 tag.</small></div></li>
     <li><span class="mark next"></span><div><b>13 · Live check, docs, release</b><small>Docs, changelog, release notes and this table are done; the live check on the PC and the tag are yours (see "On your side").</small></div></li>
+  </ul></div>
+</section>
+
+<section class="wrap">
+  <h2>Windows status <span class="chip next">31 Oct</span></h2>
+  <p class="muted" style="margin:0 0 .6rem">First real pass on a Windows PC with an AMD GPU (Vulkan, so any recent AMD, NVIDIA or Intel card). Nothing is known to be broken; what is left is checks by a person, not fixes.</p>
+  <div class="phase"><ul class="list">
+    <li><span class="mark done">✓</span><div><b>Builds and passes every test on Windows</b><small>Core, engine and app suites green with the Vulkan engine. Run cargo through <code>pwsh scripts/win-cargo.ps1 …</code> (MSVC environment, Ninja, short target dir); a machine-wide <code>CMAKE</code> variable that points at a folder is overridden by <code>.cargo/config.toml</code>, so a plain <code>cargo tauri dev</code> no longer dies with "Access is denied".</small></div></li>
+    <li><span class="mark done">✓</span><div><b>Fixed: the engine kept running after the app died</b><small>On Windows a force-quit left the speech engine alive holding GPU memory. It now exits the moment the app is gone.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>Fixed: Benchmark had nothing to measure</b><small>The 30 s test clip was made with a Mac-only voice; Windows Speech makes it now.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>Fixed on both platforms</b><small>Paste method changes needed a restart; the English-only model looked missing after a restart (wrong file name); an unplugged microphone could be silently reused.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>Windows-aware screens</b><small>Setup skips the two Mac-only permissions and opens the Windows microphone settings page; tokens go to the Credential Manager.</small></div></li>
+    <li><span class="mark you">!</span><div><b>Not yet confirmed by a person</b><small>Right Alt hold and the text landing in another app; the pill and panel on screen; this PC as the host for the Mac; how fast the GPU transcribes.</small></div></li>
+    <li><span class="mark todo"></span><div><b>Quirk, not a bug</b><small>With a host offline the Test button says "did not answer in time" rather than "nothing answered": Windows takes two seconds to refuse a connection. The local fallback is the same.</small></div></li>
   </ul></div>
 </section>
 
