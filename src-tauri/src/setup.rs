@@ -134,7 +134,8 @@ mod tests {
         assert_eq!(state_of(&fresh, "hotkey"), StepState::Done, "a default key is always set");
         assert_eq!(state_of(&fresh, "say_something"), StepState::Todo);
         assert!(fresh.iter().find(|x| x.id == "model").unwrap().detail.contains("large-v3-turbo"), "names the configured model");
-        assert!(fresh.iter().find(|x| x.id == "hotkey").unwrap().detail.contains("right ⌥"), "shows the current key");
+        let key = privatevox_core::settings::ModifierKey::RightOption.short_label(std::env::consts::OS);
+        assert!(fresh.iter().find(|x| x.id == "hotkey").unwrap().detail.contains(key), "shows the current key, named for this keyboard");
 
         // Everything granted, model present, LLM reachable, one dictation done.
         let all = steps(&SetupInputs { model_present: true, accessibility: true, input_monitoring: true, llm_enabled: true, llm_selected: Some("Ollama · qwen2.5:3b".into()), history_count: 1, ..inputs(&s) });

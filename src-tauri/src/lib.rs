@@ -118,6 +118,7 @@ pub fn run() {
             commands::benchmark_model,
             commands::memory_report,
             commands::check_combo,
+            commands::platform_keys,
             commands::debug_start,
             commands::debug_stop,
             commands::debug_cancel,

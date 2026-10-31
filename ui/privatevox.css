@@ -125,6 +125,12 @@ ol.steps { list-style: none; counter-reset: step; margin: 0; padding: 0; display
 .card { background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
 .card h3 { font: 600 16px var(--display); margin: 0 0 8px; }
 form.settings { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 18px; }
+/* Keyboard switch at the top of the Keys card: the detected platform is lit, the other is shown but disabled. */
+.platform { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.platform .plat { display: inline-flex; align-items: center; gap: 6px; font: 500 13px var(--display); padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--muted); cursor: default; }
+.platform .plat[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.platform .plat:disabled { opacity: .45; }
+.platform #platNote { flex-basis: 100%; font-size: 12px; }
 form.settings label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; color: var(--muted); }
 form.settings input, form.settings select { font: 15px var(--body); padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--fg); }
 .check { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }

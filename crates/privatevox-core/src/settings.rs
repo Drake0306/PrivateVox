@@ -24,6 +24,72 @@ pub enum ModifierKey {
     RightControl,
 }
 
+impl ModifierKey {
+    pub const ALL: [ModifierKey; 4] = [ModifierKey::RightOption, ModifierKey::LeftOption, ModifierKey::RightCommand, ModifierKey::RightControl];
+
+    /// The settings-file id (`right_option`, …), the same string serde writes.
+    pub fn id(self) -> &'static str {
+        match self {
+            ModifierKey::RightOption => "right_option",
+            ModifierKey::LeftOption => "left_option",
+            ModifierKey::RightCommand => "right_command",
+            ModifierKey::RightControl => "right_control",
+        }
+    }
+
+    /// What the key is called on this platform's keyboard (`os` is `std::env::consts::OS`). The same physical
+    /// position is bound everywhere: Right ⌥ on a Mac is Right Alt on a PC keyboard, ⌘ is the Win / Super key.
+    pub fn label(self, os: &str) -> &'static str {
+        match (self, os) {
+            (ModifierKey::RightOption, "macos") => "Right ⌥ Option",
+            (ModifierKey::LeftOption, "macos") => "Left ⌥ Option",
+            (ModifierKey::RightCommand, "macos") => "Right ⌘ Command",
+            (ModifierKey::RightControl, "macos") => "Right ⌃ Control",
+            (ModifierKey::RightOption, "windows") => "Right Alt (AltGr)",
+            (ModifierKey::LeftOption, "windows") => "Left Alt",
+            (ModifierKey::RightCommand, "windows") => "Right Win ⊞",
+            (ModifierKey::RightControl, "windows") => "Right Ctrl",
+            (ModifierKey::RightOption, _) => "Right Alt (AltGr)",
+            (ModifierKey::LeftOption, _) => "Left Alt",
+            (ModifierKey::RightCommand, _) => "Right Super",
+            (ModifierKey::RightControl, _) => "Right Ctrl",
+        }
+    }
+
+    /// The short form the pill uses ("Hold right ⌥ to talk" / "Hold right Alt to talk").
+    pub fn short_label(self, os: &str) -> &'static str {
+        match (self, os) {
+            (ModifierKey::RightOption, "macos") => "right ⌥",
+            (ModifierKey::LeftOption, "macos") => "left ⌥",
+            (ModifierKey::RightCommand, "macos") => "right ⌘",
+            (ModifierKey::RightControl, "macos") => "right ⌃",
+            (ModifierKey::RightOption, _) => "right Alt",
+            (ModifierKey::LeftOption, _) => "left Alt",
+            (ModifierKey::RightCommand, "windows") => "right Win",
+            (ModifierKey::RightCommand, _) => "right Super",
+            (ModifierKey::RightControl, _) => "right Ctrl",
+        }
+    }
+}
+
+/// The platform's name for the modifier that `metaKey` means in a key combination (`Cmd+…` on a Mac, `Win+…` on a PC).
+pub fn meta_key_name(os: &str) -> &'static str {
+    match os {
+        "macos" => "Cmd",
+        "windows" => "Win",
+        _ => "Super",
+    }
+}
+
+/// The keystroke the clipboard paste method sends, as shown in the panel.
+pub fn paste_chord_label(os: &str) -> &'static str {
+    if os == "macos" {
+        "⌘V"
+    } else {
+        "Ctrl+V"
+    }
+}
+
 /// A hotkey: either a key combination for the global-shortcut plugin, or a lone modifier.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct HotkeyBinding {
@@ -316,6 +382,23 @@ mod tests {
         let s = Settings::load(&p).unwrap();
         assert_eq!(s.model_id, "large-v3");
         assert_eq!(s.hold_threshold_ms, 300, "missing fields take defaults");
+    }
+
+    #[test]
+    fn modifier_keys_are_named_for_the_platform() {
+        assert_eq!(ModifierKey::RightOption.label("macos"), "Right ⌥ Option");
+        assert_eq!(ModifierKey::RightOption.label("windows"), "Right Alt (AltGr)");
+        assert_eq!(ModifierKey::RightCommand.label("windows"), "Right Win ⊞");
+        assert_eq!(ModifierKey::RightCommand.label("linux"), "Right Super");
+        assert_eq!(ModifierKey::RightOption.short_label("macos"), "right ⌥");
+        assert_eq!(ModifierKey::RightOption.short_label("windows"), "right Alt");
+        assert_eq!(meta_key_name("macos"), "Cmd");
+        assert_eq!(meta_key_name("windows"), "Win");
+        assert_eq!(paste_chord_label("macos"), "⌘V");
+        assert_eq!(paste_chord_label("windows"), "Ctrl+V");
+        for m in ModifierKey::ALL {
+            assert_eq!(serde_json::to_string(&m).unwrap(), format!("\"{}\"", m.id()), "id matches what serde writes");
+        }
     }
 
     #[test]

@@ -294,12 +294,9 @@ pub struct Coordinator {
 
 /// The hold key as the pill names it ("right ⌥", or a combination), if one is set.
 fn ptt_key_label(s: &Settings) -> Option<String> {
-    use privatevox_core::settings::ModifierKey;
     match (&s.ptt.modifier, &s.ptt.combo) {
-        (Some(ModifierKey::RightOption), _) => Some("right ⌥".to_string()),
-        (Some(ModifierKey::LeftOption), _) => Some("left ⌥".to_string()),
-        (Some(ModifierKey::RightCommand), _) => Some("right ⌘".to_string()),
-        (Some(ModifierKey::RightControl), _) => Some("right ⌃".to_string()),
+        // Named for this platform's keyboard: "right ⌥" on a Mac is "right Alt" on a PC.
+        (Some(m), _) => Some(m.short_label(std::env::consts::OS).to_string()),
         (None, Some(c)) => Some(c.clone()),
         (None, None) => None,
     }
@@ -2419,11 +2416,13 @@ mod tests {
     fn hotkey_hint_reflects_the_activation_mode() {
         use privatevox_core::settings::{Activation, HotkeyBinding, ModifierKey};
         let mut s = Settings::default();
-        assert_eq!(hotkey_hint(&s), "Hold right ⌥ to talk");
+        // The key is named for this keyboard: "right ⌥" on a Mac, "right Alt" on a PC.
+        let key = ModifierKey::RightOption.short_label(std::env::consts::OS);
+        assert_eq!(hotkey_hint(&s), format!("Hold {key} to talk"));
         s.activation = Activation::Toggle;
-        assert_eq!(hotkey_hint(&s), "Tap right ⌥ to talk");
+        assert_eq!(hotkey_hint(&s), format!("Tap {key} to talk"));
         s.activation = Activation::HoldOrToggle;
-        assert_eq!(hotkey_hint(&s), "Hold or tap right ⌥ to talk");
+        assert_eq!(hotkey_hint(&s), format!("Hold or tap {key} to talk"));
         s.ptt = HotkeyBinding { combo: Some("Ctrl+Alt+Space".into()), modifier: None };
         s.activation = Activation::PushToTalk;
         assert_eq!(hotkey_hint(&s), "Hold Ctrl+Alt+Space to talk");
@@ -2433,7 +2432,7 @@ mod tests {
         assert_eq!(hotkey_hint(&s), "PrivateVox");
         s.ptt = HotkeyBinding { combo: None, modifier: Some(ModifierKey::RightCommand) };
         s.activation = Activation::Toggle;
-        assert_eq!(hotkey_hint(&s), "Tap right ⌘ to talk");
+        assert_eq!(hotkey_hint(&s), format!("Tap {} to talk", ModifierKey::RightCommand.short_label(std::env::consts::OS)));
     }
 
     #[test]
@@ -2458,7 +2457,8 @@ mod tests {
         h.tx.send(Cmd::Key(Input::Up(Binding::Ptt))).unwrap();
         std::thread::sleep(Duration::from_millis(250));
         let states = h.states.lock().unwrap().clone();
-        assert!(states.iter().any(|s| matches!(s, PillState::Listening { stop_hint: Some(t), .. } if t == "tap right ⌥ to stop")), "{:?}", states.iter().filter(|s| matches!(s, PillState::Listening { .. })).last());
+        let expected = format!("tap {} to stop", privatevox_core::settings::ModifierKey::RightOption.short_label(std::env::consts::OS));
+        assert!(states.iter().any(|s| matches!(s, PillState::Listening { stop_hint: Some(t), .. } if *t == expected)), "{:?}", states.iter().filter(|s| matches!(s, PillState::Listening { .. })).last());
         h.tx.send(Cmd::Cancel).unwrap();
         h.tx.send(Cmd::Quit).unwrap();
         h.join.join().unwrap();

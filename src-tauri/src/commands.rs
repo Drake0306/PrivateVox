@@ -77,6 +77,41 @@ pub fn open_privacy(pane: String) -> Result<(), String> {
     }
 }
 
+/// How the Keys card names things on this platform (§4.1): the same bindings exist everywhere, the keyboard differs.
+#[derive(serde::Serialize, Debug, PartialEq)]
+pub struct PlatformKeys {
+    /// `macos`, `windows` or `linux`.
+    pub os: &'static str,
+    /// Hold-key choices in menu order: settings id and the label for this keyboard.
+    pub modifiers: Vec<(&'static str, &'static str)>,
+    /// What `metaKey` is called in a recorded combination (`Cmd`, `Win`, `Super`).
+    pub meta_key: &'static str,
+    /// The paste keystroke the clipboard method sends (`⌘V` / `Ctrl+V`).
+    pub paste_chord: &'static str,
+    /// A platform note for the card, when there is one.
+    pub note: Option<&'static str>,
+}
+
+pub fn platform_keys_for(os: &'static str) -> PlatformKeys {
+    use privatevox_core::settings::{meta_key_name, paste_chord_label, ModifierKey};
+    PlatformKeys {
+        os,
+        modifiers: ModifierKey::ALL.iter().map(|m| (m.id(), m.label(os))).collect(),
+        meta_key: meta_key_name(os),
+        paste_chord: paste_chord_label(os),
+        note: match os {
+            "windows" => Some("Right Alt is AltGr on some keyboard layouts (it types accented letters with other keys); if a hold there misfires, pick Right Ctrl or a key combination."),
+            "linux" => Some("A lone modifier as the hold key needs X11; on Wayland use a key combination."),
+            _ => None,
+        },
+    }
+}
+
+#[tauri::command]
+pub fn platform_keys() -> PlatformKeys {
+    platform_keys_for(std::env::consts::OS)
+}
+
 /// The first-run walkthrough (§4.8): numbered steps with a state each; see `setup::steps`.
 #[derive(serde::Serialize)]
 pub struct SetupStatus {
@@ -573,7 +608,8 @@ pub fn validate_combo(combo: &str) -> Result<String, String> {
             "ctrl" | "control" => Some("Ctrl"),
             "shift" => Some("Shift"),
             "alt" | "option" => Some("Alt"),
-            "cmd" | "command" | "super" | "meta" => Some("Cmd"),
+            // The Windows key is the same modifier; the shortcut plugin spells it Cmd / Super.
+            "cmd" | "command" | "super" | "meta" | "win" | "windows" => Some("Cmd"),
             "cmdorctrl" | "commandorcontrol" => Some("CmdOrCtrl"),
             _ => None,
         };
@@ -695,6 +731,22 @@ mod memory_tests {
 #[cfg(test)]
 mod hotkey_tests {
     use super::*;
+
+    #[test]
+    fn platform_keys_name_the_same_bindings_per_keyboard() {
+        let mac = platform_keys_for("macos");
+        let win = platform_keys_for("windows");
+        let ids = |p: &PlatformKeys| p.modifiers.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        assert_eq!(ids(&mac), ids(&win), "the same four bindings everywhere; only the names change");
+        assert_eq!(ids(&mac), vec!["right_option", "left_option", "right_command", "right_control"]);
+        assert_eq!(mac.modifiers[0].1, "Right ⌥ Option");
+        assert_eq!(win.modifiers[0].1, "Right Alt (AltGr)");
+        assert_eq!((mac.meta_key, mac.paste_chord), ("Cmd", "⌘V"));
+        assert_eq!((win.meta_key, win.paste_chord), ("Win", "Ctrl+V"));
+        assert!(mac.note.is_none());
+        assert!(win.note.unwrap().contains("AltGr"));
+        assert_eq!(platform_keys_for("linux").meta_key, "Super");
+    }
 
     #[test]
     fn validate_combo_accepts_ctrl_shift_space_and_rejects_bare_modifier() {

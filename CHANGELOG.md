@@ -21,6 +21,7 @@ Fifth alpha: the rest of what the design doc promised, plus the first real Windo
 - The release workflow builds the macOS dmg on a macos-14 runner.
 
 ### Windows
+- The Keys card names the hold keys for the keyboard in front of you: a Mac / Windows switch at the top shows which one is detected (the other is greyed out), the hold-key list reads Right Alt (AltGr), Left Alt, Right Win, Right Ctrl on a PC, the pill says "Hold right Alt to talk", and the paste method reads "Clipboard + Ctrl+V". The bindings themselves are the same physical keys on both.
 - The engine worker exits when the app dies on Windows too (it waits on the parent's process handle); before, a force-quit left it and its GPU memory alive.
 - The benchmark clip is synthesised with Windows Speech, so Benchmark works on Windows.
 - `scripts/win-cargo.ps1` reproduces the CI build environment on a PC; README has the prerequisites.

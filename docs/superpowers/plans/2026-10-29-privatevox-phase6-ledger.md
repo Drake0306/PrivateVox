@@ -102,6 +102,12 @@ Six findings, five fixed in the same session, one left as a warning:
 - Not done here: the live check with screenshots (the panel is a Tauri window on this PC; the items need a person with the microphone and the hold key: Settings order, copy-only, tray, pill hide/show, history filters and Clear all, mic meter, per-app paste, Q8 card, crash report via `PRIVATEVOX_DEBUG_SCRIPT=panic`, Setup steps, the warm-mic log line) and the `v0.6.0-alpha.1` tag. Tagging publishes a release and starts the three CI builds, so it is left to the owner together with the merge of this branch into `main`.
 - Still open from the plan's "needs the PC" list: Windows elevated-target detection (§12), the Windows pass by hand, Vulkan timing, the real PC→Mac host run. Needs an account: notarisation / signing (C2).
 
+### Keys named per keyboard (31 Oct, evening, Roy's request)
+
+- The hold-key bindings were already the same physical keys on both platforms (`RightOption` → `AltGr`, `RightCommand` → `MetaRight`, …) but everything was worded for a Mac: "Right ⌥ Option", "Hold right ⌥ to talk", "Clipboard + ⌘V". Now `ModifierKey::label(os)` / `short_label(os)`, `meta_key_name(os)` and `paste_chord_label(os)` in core name them per keyboard; `platform_keys` serves them to the panel; the pill hint and the Setup step use them.
+- Keys card: a Mac / Windows switch at the top (inline SVG icons), the detected one lit, the other disabled with a tooltip; a platform note under it (Windows: Right Alt is AltGr on some layouts). The key recorder writes `Win+…` on a PC; `validate_combo` accepts `win`/`windows` as the Super modifier.
+- Tests: `settings::tests::modifier_keys_are_named_for_the_platform`, `commands::hotkey_tests::platform_keys_name_the_same_bindings_per_keyboard`; the three tests that spelled "right ⌥" now ask the platform.
+
 ## Windows PC notes (31 Oct)
 
 - Toolchain found: Rust 1.95, Visual Studio 2022 Build Tools, CMake 3.31, Ninja, Node 22, Ollama (AMD AI bundle). Installed this session: Vulkan SDK 1.4.363 (`winget install KhronosGroup.VulkanSDK`), LLVM (`winget install LLVM.LLVM`, bindgen needs `libclang.dll`), Tauri CLI 2.12.4. Target dir `D:\t` (short path, 140 GB free).
