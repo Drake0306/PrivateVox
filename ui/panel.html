@@ -26,6 +26,15 @@
         <div class="leg" id="memLeg"></div>
         <div class="tiles" id="memVerdict"></div>
       </div>
+      <div class="histbar" id="histbar">
+        <label class="muted">Show</label>
+        <select id="appFilter" aria-label="Filter by app" title="Only dictations made in this app"><option value="">All apps</option></select>
+        <select id="modeFilter" aria-label="Filter by mode" title="Only dictations in this mode"><option value="">All modes</option></select>
+        <span class="muted" id="filterCount"></span>
+        <span style="flex:1"></span>
+        <button class="btn" id="clearAll" title="Delete every dictation on this machine, with any kept audio">Clear all…</button>
+        <span class="confirm" id="clearConfirm" hidden><span>Delete every dictation on this machine and its kept audio?</span><button class="btn danger" id="clearYes">Delete all</button><button class="btn" id="clearNo">Cancel</button></span>
+      </div>
       <div id="rows"></div>
       <div id="doc" hidden>
         <div class="dochead"><button class="btn" id="docBack">← Back</button><span class="muted" id="docMeta"></span><span style="flex:1"></span><button class="btn" id="docCopy">Copy all</button><button class="btn" id="docExport">Export .md</button></div>
@@ -229,13 +238,41 @@
     }
   }
   let models = [];
+  // History filters (§4.4): app and mode narrow the local list together with the search box; they never apply to a host's list.
+  const filters = { app: '', mode: '' };
+  async function loadFilterOptions() {
+    const apps = await inv('history_apps');
+    const sel = $('appFilter');
+    if (filters.app && !apps.includes(filters.app)) filters.app = '';
+    sel.innerHTML = '<option value="">All apps</option>' + apps.map(a => `<option value="${esc(a)}" ${a === filters.app ? 'selected' : ''}>${esc(a)}</option>`).join('');
+    const msel = $('modeFilter');
+    msel.innerHTML = '<option value="">All modes</option>' + modes.map(m => `<option value="${m.id}" ${m.id === filters.mode ? 'selected' : ''}>${esc(m.label)}</option>`).join('');
+  }
+  $('appFilter').onchange = (e) => { filters.app = e.target.value; loadHistory(); };
+  $('modeFilter').onchange = (e) => { filters.mode = e.target.value; loadHistory(); };
+  $('clearAll').onclick = () => { $('clearAll').hidden = true; $('clearConfirm').hidden = false; $('clearYes').focus(); };
+  $('clearNo').onclick = () => { $('clearConfirm').hidden = true; $('clearAll').hidden = false; };
+  $('clearYes').onclick = async () => {
+    $('clearYes').disabled = true;
+    try { const clips = await inv('clear_history'); flash(clips ? `History cleared, ${clips} audio clip${clips === 1 ? '' : 's'} removed` : 'History cleared'); }
+    catch (e) { flash(String(e)); }
+    $('clearYes').disabled = false; $('clearConfirm').hidden = true; $('clearAll').hidden = false;
+    filters.app = ''; filters.mode = '';
+    loadHistory();
+  };
   async function loadHistory() {
+    $('histbar').hidden = historySource === 'remote';
     if (historySource === 'remote') return loadRemoteHistory();
-    const list = await ($('q').value ? inv('search_history', { query: $('q').value }) : inv('list_history', { limit: 200, offset: 0 }));
+    const q = $('q').value.trim();
+    const list = await inv('list_history', { limit: 200, offset: 0, app: filters.app || null, mode: filters.mode || null, query: q || null });
     if (!models.length) models = await inv('list_models');
     const st = await inv('history_stats');
     $('stats').textContent = `${st.count} dictations · ${st.words} words`;
-    const rows = $('rows'); rows.innerHTML = list.length ? '' : '<p class="empty">Nothing dictated yet. Hold the dictation key and speak.</p>';
+    await loadFilterOptions();
+    const narrowed = filters.app || filters.mode || q;
+    $('filterCount').textContent = narrowed ? `${list.length} of ${st.count}` : '';
+    $('clearAll').disabled = !st.count;
+    const rows = $('rows'); rows.innerHTML = list.length ? '' : (narrowed ? '<p class="empty">Nothing matches these filters.</p>' : '<p class="empty">Nothing dictated yet. Hold the dictation key and speak.</p>');
     for (const d of list) {
       const el = document.createElement('div'); el.className = 'row';
       const text = d.polished_text || d.raw_text;

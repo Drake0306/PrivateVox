@@ -83,6 +83,8 @@ pub fn run() {
             commands::set_launch_at_login, commands::set_show_pill, commands::get_settings,
             commands::set_settings,
             commands::list_history,
+            commands::history_apps,
+            commands::clear_history,
             commands::search_history,
             commands::delete_history,
             commands::read_audio,

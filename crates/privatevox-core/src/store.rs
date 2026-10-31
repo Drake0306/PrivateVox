@@ -49,6 +49,17 @@ pub struct Store {
     conn: Connection,
 }
 
+/// What the History tab narrows the list by (design §4.4). Every field `None` lists everything.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct HistoryFilter<'a> {
+    /// Exact app name as stored; `Some("")` matches rows whose app was unknown.
+    pub app: Option<&'a str>,
+    /// Mode id (`clean`, `email`, …).
+    pub mode: Option<&'a str>,
+    /// Case-insensitive substring of the raw or polished text.
+    pub query: Option<&'a str>,
+}
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS dictations (
@@ -182,6 +193,47 @@ impl Store {
         let mut st = self.conn.prepare_cached(&sql)?;
         let rows = st.query_map(params![limit as i64, offset as i64], map_row)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Newest first (pinned on top), narrowed by app name, mode and a case-insensitive text query; `None` means "any".
+    /// Rows the app name was not recorded for match `app == Some("")`.
+    pub fn list_filtered(&self, filter: &HistoryFilter<'_>, limit: u32, offset: u32) -> Result<Vec<Dictation>> {
+        let like = filter.query.filter(|q| !q.trim().is_empty()).map(|q| format!("%{}%", q.trim().to_lowercase()));
+        let sql = format!(
+            "SELECT {COLUMNS} FROM dictations WHERE deleted_at_ms IS NULL
+               AND (?1 IS NULL OR coalesce(app_name, '') = ?1)
+               AND (?2 IS NULL OR mode = ?2)
+               AND (?3 IS NULL OR lower(raw_text) LIKE ?3 OR lower(coalesce(polished_text, '')) LIKE ?3)
+             ORDER BY pinned DESC, created_at_ms DESC, id DESC LIMIT ?4 OFFSET ?5"
+        );
+        let mut st = self.conn.prepare_cached(&sql)?;
+        let rows = st.query_map(params![filter.app, filter.mode, like, limit as i64, offset as i64], map_row)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Distinct app names of the visible rows, most dictated first; rows without an app name are left out.
+    pub fn distinct_apps(&self) -> Result<Vec<String>> {
+        let mut st = self.conn.prepare_cached(
+            "SELECT app_name, count(*) AS n FROM dictations WHERE deleted_at_ms IS NULL AND app_name IS NOT NULL AND app_name <> ''
+             GROUP BY app_name ORDER BY n DESC, app_name ASC",
+        )?;
+        let rows = st.query_map([], |r| r.get::<_, String>(0))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Soft-deletes every visible row in one transaction and returns the kept clips they pointed at, so the caller can
+    /// remove the files. The rows forget their clip path first, so a crash between the two steps never leaves a row
+    /// pointing at a missing file.
+    pub fn clear_all(&mut self) -> Result<Vec<String>> {
+        let tx = self.conn.transaction()?;
+        let clips = {
+            let mut st = tx.prepare("SELECT audio_path FROM dictations WHERE deleted_at_ms IS NULL AND audio_path IS NOT NULL")?;
+            let rows = st.query_map([], |r| r.get::<_, String>(0))?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        tx.execute("UPDATE dictations SET deleted_at_ms = ?1, audio_path = NULL WHERE deleted_at_ms IS NULL", params![now_ms()])?;
+        tx.commit()?;
+        Ok(clips)
     }
 
     /// Case-insensitive substring search over raw and polished text.
@@ -459,6 +511,72 @@ INSERT INTO dictations(created_at_ms, mode, model, duration_ms, raw_text, status
         assert_eq!(d.polished_by.as_deref(), Some("ep-1"));
         assert_eq!(d.polish_status, "ok");
         assert_eq!(d.raw_text, "raw");
+    }
+
+    #[test]
+    fn list_filtered_by_app_and_mode() {
+        let (_d, mut s) = fresh();
+        let mut mail = row("send the deck");
+        mail.app_name = Some("Mail".into());
+        mail.mode = "email".into();
+        s.insert(&mail).unwrap();
+        let mut code = row("fn main");
+        code.app_name = Some("Code".into());
+        code.mode = "code".into();
+        s.insert(&code).unwrap();
+        let mut mail_clean = row("hello there");
+        mail_clean.app_name = Some("Mail".into());
+        mail_clean.mode = "clean".into();
+        mail_clean.polished_text = Some("Hello there.".into());
+        s.insert(&mail_clean).unwrap();
+        let mut unknown = row("no app recorded");
+        unknown.app_name = None;
+        unknown.mode = "clean".into();
+        s.insert(&unknown).unwrap();
+
+        let all = s.list_filtered(&HistoryFilter::default(), 10, 0).unwrap();
+        assert_eq!(all.len(), 4, "no filter lists everything");
+        let mail_rows = s.list_filtered(&HistoryFilter { app: Some("Mail"), ..Default::default() }, 10, 0).unwrap();
+        assert_eq!(mail_rows.iter().map(|r| r.raw_text.as_str()).collect::<Vec<_>>(), vec!["hello there", "send the deck"]);
+        let email = s.list_filtered(&HistoryFilter { app: Some("Mail"), mode: Some("email"), query: None }, 10, 0).unwrap();
+        assert_eq!(email.len(), 1);
+        assert_eq!(email[0].raw_text, "send the deck");
+        let clean = s.list_filtered(&HistoryFilter { mode: Some("clean"), ..Default::default() }, 10, 0).unwrap();
+        assert_eq!(clean.len(), 2);
+        let searched = s.list_filtered(&HistoryFilter { mode: Some("clean"), query: Some("HELLO"), app: None }, 10, 0).unwrap();
+        assert_eq!(searched.len(), 1, "query matches the polished text case-insensitively and composes with the mode");
+        let no_app = s.list_filtered(&HistoryFilter { app: Some(""), ..Default::default() }, 10, 0).unwrap();
+        assert_eq!(no_app.len(), 1, "an empty app name selects the rows whose app was unknown");
+        assert!(s.list_filtered(&HistoryFilter { app: Some("Slack"), ..Default::default() }, 10, 0).unwrap().is_empty());
+        assert_eq!(s.list_filtered(&HistoryFilter::default(), 1, 3).unwrap().len(), 1, "limit and offset still apply");
+
+        assert_eq!(s.distinct_apps().unwrap(), vec!["Mail".to_string(), "Code".to_string()], "most dictated first, no blank entry");
+    }
+
+    #[test]
+    fn clear_all_removes_rows_and_returns_clips() {
+        let (d, mut s) = fresh();
+        let a = s.insert(&row("one")).unwrap();
+        let b = s.insert(&row("two")).unwrap();
+        s.insert(&row("three")).unwrap();
+        let clip_a = d.path().join("a.wav").to_string_lossy().to_string();
+        let clip_b = d.path().join("b.wav").to_string_lossy().to_string();
+        s.set_audio_path(a, Some(&clip_a)).unwrap();
+        s.set_audio_path(b, Some(&clip_b)).unwrap();
+        s.set_pinned(a, true).unwrap();
+
+        let mut clips = s.clear_all().unwrap();
+        clips.sort();
+        assert_eq!(clips, vec![clip_a, clip_b], "every kept clip of a visible row is handed back for deletion");
+        assert_eq!(s.count().unwrap(), 0, "pinned rows go too: Clear all means all");
+        assert!(s.list_filtered(&HistoryFilter::default(), 10, 0).unwrap().is_empty());
+        assert!(s.distinct_apps().unwrap().is_empty());
+        assert_eq!(s.raw_row_count().unwrap(), 3, "soft delete: the rows stay for recovery");
+        assert!(s.clear_all().unwrap().is_empty(), "a second clear finds nothing");
+        // A row cleared earlier never hands its clip out twice.
+        let c = s.insert(&row("four")).unwrap();
+        s.set_audio_path(c, Some("/tmp/c.wav")).unwrap();
+        assert_eq!(s.clear_all().unwrap(), vec!["/tmp/c.wav".to_string()]);
     }
 
     #[test]

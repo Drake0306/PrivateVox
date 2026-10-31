@@ -82,9 +82,39 @@ pub fn download_model(app: AppHandle, state: State<'_, AppState>) -> Result<(), 
     download_model_by_id(app, state, model_id)
 }
 
+/// `app`, `mode` and `query` are optional filters (design §4.4); an empty `app` selects rows whose app was unknown.
 #[tauri::command]
-pub fn list_history(state: State<'_, AppState>, limit: u32, offset: u32) -> Result<Vec<Dictation>, String> {
-    state.store.lock().map_err(|e| e.to_string())?.list(limit, offset).map_err(|e| e.to_string())
+pub fn list_history(state: State<'_, AppState>, limit: u32, offset: u32, app: Option<String>, mode: Option<String>, query: Option<String>) -> Result<Vec<Dictation>, String> {
+    let filter = privatevox_core::store::HistoryFilter { app: app.as_deref(), mode: mode.as_deref(), query: query.as_deref() };
+    state.store.lock().map_err(|e| e.to_string())?.list_filtered(&filter, limit, offset).map_err(|e| e.to_string())
+}
+
+/// App names seen in the local history, most dictated first, for the History filter.
+#[tauri::command]
+pub fn history_apps(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    state.store.lock().map_err(|e| e.to_string())?.distinct_apps().map_err(|e| e.to_string())
+}
+
+/// Clears the whole local history and the kept clips with it. A host's history is never touched: this command only
+/// knows the local store, and the panel hides the button while it shows the host's list.
+#[tauri::command]
+pub fn clear_history(state: State<'_, AppState>) -> Result<u32, String> {
+    let mut store = state.store.lock().map_err(|e| e.to_string())?;
+    clear_rows_and_clips(&mut store)
+}
+
+/// Soft-deletes every row and removes the clips they kept; returns how many clip files were deleted.
+pub fn clear_rows_and_clips(store: &mut privatevox_core::store::Store) -> Result<u32, String> {
+    let clips = store.clear_all().map_err(|e| e.to_string())?;
+    let mut removed = 0;
+    for p in clips {
+        match std::fs::remove_file(&p) {
+            Ok(()) => removed += 1,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => log::warn!("clear history: could not remove clip {p}: {e}"),
+        }
+    }
+    Ok(removed)
 }
 
 #[tauri::command]
@@ -607,6 +637,28 @@ mod clip_tests {
         delete_row_and_clip(&mut store, id).unwrap();
         assert!(!clip.exists());
         assert!(store.get(id).unwrap().is_none(), "soft-deleted rows are hidden");
+    }
+
+    #[test]
+    fn clear_all_removes_rows_and_clips() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("privatevox.sqlite")).unwrap();
+        let fresh = |text: &str| NewDictation { app_name: Some("Mail".into()), mode: "clean".into(), model: "large-v3-turbo".into(), language: None, duration_ms: 1000, raw_text: text.into(), polished_text: None, polished_by: None, polish_status: "none".into(), status: "ok".into(), timing_json: None, engine_kind: "local".into() };
+        let ids: Vec<i64> = (0..3).map(|i| store.insert(&fresh(&format!("row {i}"))).unwrap()).collect();
+        let mut clips = Vec::new();
+        for id in &ids[..2] {
+            let clip = dir.path().join("audio").join(format!("{id}.wav"));
+            privatevox_core::audio::write_wav_16k(&clip, &[0.0; 1600]).unwrap();
+            store.set_audio_path(*id, Some(&clip.to_string_lossy())).unwrap();
+            clips.push(clip);
+        }
+        // A row whose clip already vanished must not make the clear fail.
+        store.set_audio_path(ids[2], Some(&dir.path().join("audio").join("gone.wav").to_string_lossy())).unwrap();
+
+        assert_eq!(clear_rows_and_clips(&mut store).unwrap(), 2, "two files existed and were removed");
+        assert!(clips.iter().all(|c| !c.exists()), "both kept clips are gone");
+        assert_eq!(store.count().unwrap(), 0);
+        assert!(store.distinct_apps().unwrap().is_empty(), "nothing left to filter by");
     }
 }
 

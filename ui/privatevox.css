@@ -73,6 +73,12 @@ section.tab { padding: 0 0 24px; }
 .tile .s { display: block; color: var(--muted); font-size: 14px; }
 .tile.good .v { color: var(--ok); } .tile.bad .v { color: var(--rec); }
 
+/* history filter bar */
+.histbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 22px; border-bottom: 1px solid var(--line); font-size: 14px; }
+.histbar select { font: 14px var(--display); padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--fg); max-width: 220px; }
+.histbar .confirm { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--fg); }
+.btn.danger { background: var(--rec); border-color: var(--rec); color: #fff; }
+
 /* history rows */
 .row { display: grid; grid-template-columns: 1fr auto; gap: 6px 18px; padding: 16px 22px; border-bottom: 1px solid var(--line); align-items: start; }
 .row .meta { grid-column: 1 / -1; font: 14px var(--mono); color: var(--muted); display: flex; gap: 16px; flex-wrap: wrap; }
