@@ -53,7 +53,7 @@ table.status td:last-child{white-space:nowrap}
 </style>
 
 <header class="wrap">
-  <div class="eyebrow">Status · 31 Oct 2026, evening · 0.6.0-alpha.1 on main, phase 6 built, Windows running</div>
+  <div class="eyebrow">Status · 31 Oct 2026, night · v0.6.0-alpha.1 tagged, phase 6 built, Windows running</div>
   <h1 style="margin-top:.4rem">PrivateVox Roadmap</h1>
   <p class="lede">What the design promised, what is built, what is next. Six phases are built: it dictates, switches models, shows its memory, cleans up the text with a local or LAN LLM, hands the work to a PC on the LAN, previews, auto-stops, takes spoken commands, and has every setting and safety net the design listed. Phase 6 was finished on the Windows PC, where all three test suites are green with the Vulkan engine and Roy has now run the app by hand: it works. What is left is short, and listed first.</p>
   <div class="summary">
@@ -67,7 +67,7 @@ table.status td:last-child{white-space:nowrap}
 <section class="wrap">
   <h2>What is left <span class="chip next">31 Oct, evening</span></h2>
   <div class="phase"><ul class="list">
-    <li><span class="mark you">!</span><div><b>Tag <code>v0.6.0-alpha.1</code> on <code>main</code></b><small>Everything from today is merged into <code>main</code>. The tag starts the release workflow: Windows, Linux and, for the first time, the macOS dmg from CI. Watch the three jobs; the dmg job is the untested one.</small></div></li>
+    <li><span class="mark you">!</span><div><b>Watch the <code>v0.6.0-alpha.1</code> release build</b><small>Tagged on 31 Oct at night. The workflow builds Windows, Linux and, for the first time, the macOS dmg: <a href="https://github.com/Drake0306/PrivateVox/actions/workflows/release.yml">Actions → Release builds</a>. The release body comes from <code>docs/releases/v0.6.0-alpha.1.md</code>. If the macOS job fails, the dmg can still be built on the Mac as before and attached by hand.</small></div></li>
     <li><span class="mark you">!</span><div><b>Host mode for real: this PC as host, the Mac as client</b><small>Settings → Network on the PC: Act as host. On the Mac: Use a host, enter the PC's address, Test, Apply, dictate. Everything so far was tested with one Mac in both roles. If it works, decide on the host extras (C3).</small></div></li>
     <li><span class="mark you">!</span><div><b>GPU timing on the RX 9070</b><small>How fast Vulkan transcribes here, so the model recommendations can be tuned for PCs: <code>cargo test -p privatevox-engine --release --lib spike_timing -- --ignored --nocapture</code> with <code>PRIVATEVOX_TEST_MODEL</code> and <code>PRIVATEVOX_SPIKE_CLIPS</code> (details in <code>resume.conversation.md</code>; the Windows benchmark clip generator makes 16 kHz clips).</small></div></li>
     <li><span class="mark you">!</span><div><b>On the Mac: click the menu bar icon once</b><small>The phase 6 tray items (Model submenu, Load model now, Show pill, Launch at login) were never seen open by eye because the UI scripting failed that evening.</small></div></li>
