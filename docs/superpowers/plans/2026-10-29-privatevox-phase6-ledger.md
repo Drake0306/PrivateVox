@@ -17,8 +17,8 @@ Machines: Mac M1 8 GB (tasks 1–3, 29 Oct) and the Windows PC with an AMD GPU a
 | 6 | Paste method per app | done (31 Oct, PC) | `249942a` | unit tests (core + app) |
 | 7 | Q8_0 turbo offered from 12 GB | done (31 Oct, PC) | `43b17ef` | unit tests; the PC (32 GB) will show it, the 8 GB Mac will not |
 | 8 | Crash report file, Show report in Setup | done (31 Oct, PC) | `ce1f6b3` | unit tests; live check with `PRIVATEVOX_DEBUG_SCRIPT=panic` pending |
-| 9 | First-run walkthrough in Setup | done (31 Oct, PC) | see git log | unit tests; Setup tab not yet seen running |
-| 10 | Keep the microphone warm | not started | | |
+| 9 | First-run walkthrough in Setup | done (31 Oct, PC) | `aaa0e82` | unit tests; Setup tab not yet seen running |
+| 10 | Keep the microphone warm | done (31 Oct, PC) | see git log | core unit test; the `mic: reused warm stream` log line not yet seen live |
 | 11 | Tokens in the OS keychain | not started | | |
 | 12 | macOS in the release CI | not started | | |
 | 13 | Live check, docs, roadmap status table, 0.6.0-alpha.1 | not started | | |
@@ -67,6 +67,13 @@ Machines: Mac M1 8 GB (tasks 1–3, 29 Oct) and the Windows PC with an AMD GPU a
 - Command `setup_status` gathers permissions, settings, the polisher's selected endpoint, the history count and the OS. `open_privacy` on Windows opens `ms-settings:privacy-microphone` for the microphone and refuses the two macOS-only panes; Linux has no pane.
 - Panel: the Setup card is a rendered list with a summary line ("N steps left before the first dictation"); the macOS "quit and start again" note shows only while a macOS grant is missing. The walkthrough refreshes on `history-changed` while visible. Tools card unchanged.
 - Tests: `setup::tests::steps_mark_done_and_todo`, `windows_and_linux_skip_the_macos_permissions`, `microphone_step_names_the_chosen_device`.
+
+### Task 10 — Keep the microphone warm (31 Oct, Windows PC)
+
+- Core: `warmmic::WarmMic` with `on_start() -> Reuse|Open`, `on_stop(now, lazy) -> Keep|Close`, `due(now)`, `mark_closed()`. `Settings.mic_lazy_close_secs` existed unused since phase 1 (default 60); the default is now 20 as the plan says and it is validated 0..=300 (0 = close at once, the old behaviour).
+- App: `MicCapture` keeps the cpal stream open after a stop with delivery paused (the callbacks forward into a swappable sink), reuses it on the next start (`mic: reused warm stream` in the log), and a timer thread closes it when the window passes (`mic: closed (20 s idle)`). A newer stop re-arms the window (generation counter); a changed input device forces a fresh open; the stream, the device and the timing state sit behind one lock so the timer and a start cannot race. The mic test (Task 5) goes through the same adapter and benefits too.
+- Panel: "Keep the microphone open after a dictation (s, 0–300)" in Keys and activation.
+- Tests: `warmmic::tests::stream_is_reused_within_the_window_and_closed_after`, `zero_window_closes_at_once`, `settings::tests::validate_bounds_mic_lazy_close`. Known trade-off (as in Handy): the OS microphone indicator stays on for the window after a dictation.
 
 ## Windows PC notes (31 Oct)
 

@@ -23,6 +23,7 @@ pub mod preview;
 pub mod textnorm;
 pub mod undo;
 pub mod vad;
+pub mod warmmic;
 
 /// Crate version, used by the panel's About line.
 pub fn version() -> &'static str {
