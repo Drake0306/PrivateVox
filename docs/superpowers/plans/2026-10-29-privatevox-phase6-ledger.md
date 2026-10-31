@@ -13,8 +13,8 @@ Machines: Mac M1 8 GB (tasks 1–3, 29 Oct) and the Windows PC with an AMD GPU a
 | 3 | Launch at login, pill show/hide, tray model picker, Load model now | done, tray check pending | `d160207` | unit tests green; the tray menu was not seen open by eye yet (Mac scripting failed). Check by hand on either machine. |
 | 4 | History filters by app and mode, Clear all with confirm | done (31 Oct, PC) | `95e79b5` | unit tests (core + app); panel not yet seen running on the PC |
 | — | Windows pass, part 1: worker parent watch, benchmark clip, build wrapper, Unix-only tests | done (31 Oct, PC) | `e7059a2` | all three suites green on Windows |
-| 5 | Microphone level test | in progress (31 Oct, PC) | | |
-| 6 | Paste method per app | not started | | |
+| 5 | Microphone level test | done (31 Oct, PC) | `d64f713` | unit test; not yet watched with a real microphone |
+| 6 | Paste method per app | done (31 Oct, PC) | see git log | unit tests (core + app) |
 | 7 | Q8_0 turbo offered from 12 GB | not started | | |
 | 8 | Crash report file, Show report in Setup | not started | | |
 | 9 | First-run walkthrough in Setup | not started | | |
@@ -38,6 +38,13 @@ Machines: Mac M1 8 GB (tasks 1–3, 29 Oct) and the Windows PC with an AMD GPU a
 - App: `mic_test(on)` command; `mic-level` event (number or `null`).
 - Panel: Test/Stop button and a meter beside the Microphone picker; the bar maps −60…0 dBFS to 0…100 % and turns red above −6 dBFS.
 - Test: `pipeline::tests::mic_test_refuses_while_recording_and_stops_itself` (refusal, ≥5 levels in 700 ms, end marker on stop, nothing after stop, self-stop at the limit, no history row). Not yet watched live with a real microphone.
+
+### Task 6 — Paste method per app (31 Oct, Windows PC)
+
+- Core: `pastemethod::AppPaste { app, method }` and `resolve(rules, app, default)` (case-insensitive substring, first match wins, blank patterns never match); `Settings.app_paste_methods` (old settings files load with an empty table).
+- App: `PasteSink::paste(text, method)`; the coordinator resolves the method from the app in front **at paste time** (Review Focus 3), for dictations and for "Paste again". Side effect worth knowing: the Paste method setting itself is now read per paste too, so changing it in Settings applies to the next paste. Before, `Paster` was built once at startup with the setting, so a change needed a restart despite the "applies without restart" note in the panel.
+- Panel: "Paste method per app" card under Modes per app, same row widget (Add rule, ↑, Remove, Save rules).
+- Tests: `pastemethod::tests::resolve_matches_substring_first_wins`, `settings_default_has_no_rules_and_old_files_load`, `pipeline::tests::paste_method_follows_the_app_in_front_at_paste_time` (Mail at start, Terminal at paste → Type; setting flipped to Type → next paste types).
 
 ## Windows PC notes (31 Oct)
 

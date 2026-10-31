@@ -144,6 +144,12 @@
           <div id="appRules"></div>
           <div class="inline" style="margin-top:8px"><input type="text" id="appRuleName" placeholder="App name contains…" style="width:200px" aria-label="App name"><select id="appRuleMode" aria-label="Mode"></select><button class="btn sm" id="appRuleAdd">Add rule</button><button class="btn primary sm" id="appRulesSave">Save rules</button><span class="muted" id="appRulesMsg"></span></div>
         </div>
+        <div class="card" id="pasteCard">
+          <h3>Paste method per app</h3>
+          <p class="muted" style="margin:0 0 8px">Some apps ignore the paste keystroke (terminals, remote desktops, some games): have the text typed there instead. The rule is read from the app in front when the text lands; first match wins; no match means the Paste method above.</p>
+          <div id="pasteRules"></div>
+          <div class="inline" style="margin-top:8px"><input type="text" id="pasteRuleName" placeholder="App name contains…" style="width:200px" aria-label="App name"><select id="pasteRuleMethod" aria-label="Paste method"><option value="type">Type the text</option><option value="clipboard">Clipboard + paste key</option></select><button class="btn sm" id="pasteRuleAdd">Add rule</button><button class="btn primary sm" id="pasteRulesSave">Save rules</button><span class="muted" id="pasteRulesMsg"></span></div>
+        </div>
         <div class="card" id="dictationCard">
           <h3>Languages and dictionary</h3>
           <div class="inline" style="align-items:flex-start;gap:18px;flex-wrap:wrap">
@@ -207,7 +213,7 @@
   document.querySelectorAll('nav.tabs button').forEach(b => b.onclick = () => {
     document.querySelectorAll('nav.tabs button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
     for (const t of ['history', 'models', 'polish', 'network', 'settings', 'setup']) $('tab-' + t).hidden = t !== b.dataset.tab;
-    if (b.dataset.tab === 'settings') { loadSettings(); loadDictation(); loadAppRules(); } if (b.dataset.tab === 'polish') loadPolish(); if (b.dataset.tab === 'network') loadNetwork(); if (b.dataset.tab === 'setup') loadSetup(); if (b.dataset.tab === 'models') loadModels(); if (b.dataset.tab === 'history') loadMemory();
+    if (b.dataset.tab === 'settings') { loadSettings(); loadDictation(); loadAppRules(); loadPasteRules(); } if (b.dataset.tab === 'polish') loadPolish(); if (b.dataset.tab === 'network') loadNetwork(); if (b.dataset.tab === 'setup') loadSetup(); if (b.dataset.tab === 'models') loadModels(); if (b.dataset.tab === 'history') loadMemory();
   });
 
   // ---------- history ----------
@@ -465,6 +471,31 @@
   $('appRulesSave').onclick = async () => {
     const live = await inv('get_settings');
     try { await inv('set_settings', { settings: { ...live, app_modes: appRules } }); $('appRulesMsg').textContent = 'Saved'; flash('App rules saved'); } catch (e) { $('appRulesMsg').textContent = String(e); }
+  };
+
+  // ---------- paste method per app ----------
+  let pasteRules = [];
+  const pasteLabel = (m) => m === 'type' ? 'Type the text' : 'Clipboard + paste key';
+  function renderPasteRules() {
+    const list = $('pasteRules');
+    list.innerHTML = pasteRules.length ? '' : '<p class="muted">No rules yet. Example: "Terminal" → Type the text.</p>';
+    pasteRules.forEach((r, i) => {
+      const el = document.createElement('div'); el.className = 'eprow';
+      el.innerHTML = `<div><strong>${esc(r.app)}</strong> <span class="muted">→ ${esc(pasteLabel(r.method))}</span></div><div class="acts"><button class="btn sm" data-up>↑</button><button class="btn sm" data-rm>Remove</button></div>`;
+      el.querySelector('[data-rm]').onclick = () => { pasteRules.splice(i, 1); renderPasteRules(); };
+      el.querySelector('[data-up]').onclick = () => { if (i > 0) { [pasteRules[i - 1], pasteRules[i]] = [pasteRules[i], pasteRules[i - 1]]; renderPasteRules(); } };
+      list.appendChild(el);
+    });
+  }
+  async function loadPasteRules() {
+    const s = await inv('get_settings');
+    pasteRules = (s.app_paste_methods || []).map(r => ({ app: r.app, method: r.method }));
+    renderPasteRules();
+  }
+  $('pasteRuleAdd').onclick = () => { const app = $('pasteRuleName').value.trim(); if (!app) return; pasteRules.push({ app, method: $('pasteRuleMethod').value }); $('pasteRuleName').value = ''; renderPasteRules(); };
+  $('pasteRulesSave').onclick = async () => {
+    const live = await inv('get_settings');
+    try { await inv('set_settings', { settings: { ...live, app_paste_methods: pasteRules } }); $('pasteRulesMsg').textContent = 'Saved'; flash('Paste rules saved'); } catch (e) { $('pasteRulesMsg').textContent = String(e); }
   };
 
   // ---------- dictation settings (languages, dictionary) ----------

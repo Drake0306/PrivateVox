@@ -112,7 +112,8 @@ pub trait CaptureSource: Send {
 }
 
 pub trait PasteSink: Send {
-    fn paste(&mut self, text: &str) -> anyhow::Result<PasteOutcome>;
+    /// `method` is resolved by the coordinator from the app in front at paste time (per-app table, else the setting).
+    fn paste(&mut self, text: &str, method: privatevox_core::settings::PasteMethod) -> anyhow::Result<PasteOutcome>;
     /// Sends the front app's undo keystroke.
     fn undo(&mut self) -> anyhow::Result<()>;
     /// Puts text on the clipboard without pasting.
@@ -570,7 +571,8 @@ impl Coordinator {
                 Cmd::Preview { gen, text } => self.preview_result(gen, text),
                 Cmd::PasteText(text) => {
                     let app_name = (self.deps.frontmost)();
-                    match self.deps.paste.paste(&text) {
+                    let method = self.paste_method_for(app_name.as_deref());
+                    match self.deps.paste.paste(&text, method) {
                         Ok(PasteOutcome::Pasted) => {
                             self.last_paste = Some(privatevox_core::undo::LastPaste { text: text.clone(), app: app_name, at: Instant::now() });
                             (self.emit)(PillState::Pasted { preview: format!("Pasted again: {}", first_chars(&text, 50)) });
@@ -666,6 +668,13 @@ impl Coordinator {
                 self.schedule_idle(tx);
             }
         }
+    }
+
+    /// The paste method for the app in front right now: the per-app table first, else the setting (§4.3, §4.5).
+    /// Read at paste time, so a changed setting applies to the next paste without a restart.
+    fn paste_method_for(&self, app_name: Option<&str>) -> privatevox_core::settings::PasteMethod {
+        let s = self.settings();
+        privatevox_core::pastemethod::resolve(&s.app_paste_methods, app_name, s.paste_method)
     }
 
     /// Settings → Microphone → Test (§4.5): opens the chosen input and reports its level every 100 ms, for at most
@@ -1386,7 +1395,8 @@ impl Coordinator {
         let polished_text = polished_text.map(|p| format!("{p}{suffix}"));
         let t = Instant::now();
         let app_name = (self.deps.frontmost)();
-        let paste_result = if self.copy_only { self.deps.paste.copy_only(&text).map(|_| PasteOutcome::CopiedOnly("copy-only key".into())) } else { self.deps.paste.paste(&text) };
+        let method = self.paste_method_for(app_name.as_deref());
+        let paste_result = if self.copy_only { self.deps.paste.copy_only(&text).map(|_| PasteOutcome::CopiedOnly("copy-only key".into())) } else { self.deps.paste.paste(&text, method) };
         let (status, preview) = match paste_result {
             Ok(PasteOutcome::CopiedOnly(_)) if self.copy_only => ("copied_only", format!("Copied: {}", first_chars(&text, 60))),
             Ok(PasteOutcome::Pasted) => {
@@ -1650,10 +1660,12 @@ mod tests {
         fn stop(&mut self) {}
     }
 
-    struct FakePaste(Arc<Mutex<Vec<String>>>, Arc<Mutex<u32>>);
+    /// (pasted texts, undo count, the method each paste was asked for)
+    struct FakePaste(Arc<Mutex<Vec<String>>>, Arc<Mutex<u32>>, Arc<Mutex<Vec<privatevox_core::settings::PasteMethod>>>);
     impl PasteSink for FakePaste {
-        fn paste(&mut self, text: &str) -> anyhow::Result<crate::paste::PasteOutcome> {
+        fn paste(&mut self, text: &str, method: privatevox_core::settings::PasteMethod) -> anyhow::Result<crate::paste::PasteOutcome> {
             self.0.lock().unwrap().push(text.to_string());
+            self.2.lock().unwrap().push(method);
             Ok(crate::paste::PasteOutcome::Pasted)
         }
         fn undo(&mut self) -> anyhow::Result<()> {
@@ -1693,6 +1705,8 @@ mod tests {
         cues: Arc<Mutex<Vec<crate::cues::Cue>>>,
         /// Every `on_mic_level` call: `Some(dB)` ticks and the `None` end markers, in order.
         mic_levels: Arc<Mutex<Vec<Option<f32>>>>,
+        /// The method each paste was asked for, in order.
+        paste_methods: Arc<Mutex<Vec<privatevox_core::settings::PasteMethod>>>,
         tx: std::sync::mpsc::Sender<Cmd>,
         join: std::thread::JoinHandle<()>,
         _dir: tempfile::TempDir,
@@ -1744,11 +1758,12 @@ mod tests {
         let cq = cues.clone();
         let mic_levels: Arc<Mutex<Vec<Option<f32>>>> = Default::default();
         let ml = mic_levels.clone();
+        let paste_methods: Arc<Mutex<Vec<privatevox_core::settings::PasteMethod>>> = Default::default();
         let deps = Deps {
             engine: Arc::new(Mutex::new(engine)),
             remote: remote.clone(),
             capture: Box::new(capture),
-            paste: Box::new(FakePaste(pasted.clone(), undos.clone())),
+            paste: Box::new(FakePaste(pasted.clone(), undos.clone(), paste_methods.clone())),
             model_path: Some(models_dir.join("ggml-large-v3-turbo-q5_0.bin")),
             model_dir: models_dir,
             frontmost: Box::new(move || fm.lock().unwrap().clone()),
@@ -1774,7 +1789,7 @@ mod tests {
         let tx2 = tx.clone();
         let join = std::thread::spawn(move || coord.run(rx, tx2));
         let _ = &remote;
-        Harness { states, pasted, store, settings, switched, benchmarks, undos, frontmost, polish_fn, polish_calls, warms, llm_unloads, history_changed, cues, mic_levels, tx, join, _dir: dir }
+        Harness { states, pasted, store, settings, switched, benchmarks, undos, frontmost, polish_fn, polish_calls, warms, llm_unloads, history_changed, cues, mic_levels, paste_methods, tx, join, _dir: dir }
     }
 
     fn kinds(states: &[PillState]) -> Vec<&'static str> {
@@ -2132,6 +2147,38 @@ mod tests {
 
     fn last_row(h: &Harness) -> privatevox_core::store::Dictation {
         h.store.lock().unwrap().list(1, 0).unwrap().remove(0)
+    }
+
+    #[test]
+    fn paste_method_follows_the_app_in_front_at_paste_time() {
+        use privatevox_core::pastemethod::AppPaste;
+        use privatevox_core::settings::PasteMethod;
+        let h = harness(engine_saying("ls -la"), capture_ok());
+        h.settings.lock().unwrap().app_paste_methods = vec![AppPaste { app: "Terminal".into(), method: PasteMethod::Type }];
+        // Mail in front from start to paste: no rule matches, the setting (clipboard) applies.
+        *h.frontmost.lock().unwrap() = Some("Mail".into());
+        h.tx.send(Cmd::Start).unwrap();
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(h.paste_methods.lock().unwrap().clone(), vec![PasteMethod::Clipboard]);
+        // Mail in front at start, Terminal in front when the text lands: the Terminal rule wins, because the rule is
+        // read from the app that receives the paste, not the one that was in front when the key went down.
+        *h.frontmost.lock().unwrap() = Some("Mail".into());
+        h.tx.send(Cmd::Start).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        *h.frontmost.lock().unwrap() = Some("Windows Terminal".into());
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(h.paste_methods.lock().unwrap().last().cloned(), Some(PasteMethod::Type));
+        assert_eq!(h.pasted.lock().unwrap().len(), 2);
+        // The setting itself is read at paste time too: switching it to Type applies to the next paste, no restart.
+        h.settings.lock().unwrap().paste_method = PasteMethod::Type;
+        *h.frontmost.lock().unwrap() = Some("Mail".into());
+        h.tx.send(Cmd::PasteText("again".into())).unwrap();
+        std::thread::sleep(Duration::from_millis(150));
+        assert_eq!(h.paste_methods.lock().unwrap().last().cloned(), Some(PasteMethod::Type));
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
     }
 
     #[test]

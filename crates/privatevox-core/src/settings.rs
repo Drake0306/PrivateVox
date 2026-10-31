@@ -130,6 +130,8 @@ pub struct Settings {
     pub auto_stop_silence_secs: Option<u32>,
     /// Per-app default modes, first match wins (phase 5, A4).
     pub app_modes: Vec<crate::appmodes::AppMode>,
+    /// Per-app paste method, first match wins; no match means `paste_method` (§4.3, §4.5).
+    pub app_paste_methods: Vec<crate::pastemethod::AppPaste>,
     /// Soft sounds on start, stop and "nothing heard" (phase 5, A5).
     pub sound_cues: bool,
     /// Words in the pill while you speak (phase 5, A1).
@@ -181,6 +183,7 @@ impl Default for Settings {
             keep_audio: false,
             auto_stop_silence_secs: Some(2),
             app_modes: Vec::new(),
+            app_paste_methods: Vec::new(),
             sound_cues: true,
             live_preview: crate::preview::Preview::On,
             spoken_commands: true,

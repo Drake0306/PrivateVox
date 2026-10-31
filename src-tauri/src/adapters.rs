@@ -45,9 +45,11 @@ impl SystemPaste {
 }
 
 impl PasteSink for SystemPaste {
-    fn paste(&mut self, text: &str) -> anyhow::Result<PasteOutcome> {
+    fn paste(&mut self, text: &str, method: privatevox_core::settings::PasteMethod) -> anyhow::Result<PasteOutcome> {
+        // The coordinator picks the method per paste (per-app table, else the live setting).
+        self.paster.method = method;
         // Re-check on every paste: a revoked Accessibility grant must not turn into a silent "pasted".
-        if matches!(self.paster.method, privatevox_core::settings::PasteMethod::Clipboard) && !crate::paste::accessibility_trusted(false) {
+        if matches!(method, privatevox_core::settings::PasteMethod::Clipboard) && !crate::paste::accessibility_trusted(false) {
             let mut cb = arboard::Clipboard::new()?;
             cb.set_text(text.to_string())?;
             return Ok(PasteOutcome::CopiedOnly("Accessibility not granted".into()));
