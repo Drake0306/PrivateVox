@@ -75,6 +75,20 @@ if (Test-Path $vswhere) {
     Write-Warning 'win-cargo: vswhere.exe not found; building without the developer environment'
 }
 
+# A dev run or build replaces privatevox.exe, which Windows refuses while a copy from this target directory is still
+# running (a leftover of an earlier dev session). Stop that copy first, and only that copy: an installed PrivateVox
+# lives elsewhere and is never touched.
+if ($args.Count -gt 0 -and $args[0] -in @('run', 'build', 'tauri')) {
+    $targetRoot = [System.IO.Path]::GetFullPath($env:CARGO_TARGET_DIR).TrimEnd('\')
+    foreach ($proc in (Get-Process -Name privatevox, privatevox-worker -ErrorAction SilentlyContinue)) {
+        $path = try { $proc.Path } catch { $null }
+        if ($path -and $path.StartsWith("$targetRoot\", [System.StringComparison]::OrdinalIgnoreCase)) {
+            Write-Host "win-cargo: stopping $($proc.Name) (pid $($proc.Id)) left from an earlier dev session so the build can replace it"
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 # Run cargo as a child and watch our own parent while it runs. The Tauri CLI stops a dev session by killing its runner
 # (the cmd shim); when that parent disappears this shell exits, the job closes, and cargo and the app go with it.
 $parentId = try { (Get-CimInstance Win32_Process -Filter "ProcessId = $PID" -ErrorAction Stop).ParentProcessId } catch { 0 }
