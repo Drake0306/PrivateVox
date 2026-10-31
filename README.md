@@ -84,13 +84,13 @@ The first build compiles whisper.cpp and the Tauri stack (several minutes). The 
 
 ### Windows
 
-Needs Visual Studio 2022 Build Tools with the C++ workload, CMake, the Vulkan SDK (`winget install KhronosGroup.VulkanSDK`, for the shader compiler; open a new terminal afterwards so `VULKAN_SDK` is set), LLVM (`winget install LLVM.LLVM`, bindgen needs `libclang.dll`) and the Tauri CLI. With those in place a plain `cargo tauri dev` from the repo root works: `.cargo/config.toml` points the build at `cmake` on PATH, because the CMake installer's "add to environment" option sets a `CMAKE` variable to a *folder*, which otherwise fails with "Access is denied".
+Needs Visual Studio 2022 Build Tools with the C++ workload, CMake, Ninja, the Vulkan SDK (`winget install KhronosGroup.VulkanSDK`, for the shader compiler; open a new terminal afterwards so `VULKAN_SDK` is set), LLVM (`winget install LLVM.LLVM`, bindgen needs `libclang.dll`), PowerShell 7 and the Tauri CLI. Then a plain `cargo tauri dev` from the repo root works: on Windows the Tauri CLI runs cargo through `scripts/win-cargo.cmd` (set as `build.runner` in `src-tauri/tauri.windows.conf.json`), which imports the MSVC developer environment, uses Ninja and builds into a short target directory (`D:\t` when a D: drive exists, else `%LOCALAPPDATA%\pvx-target`). Without that, whisper.cpp's nested shader project fails: MSVC's build tracker cannot write under the long default `target\…` path and `cl.exe` is not on a plain terminal's PATH. `.cargo/config.toml` also points the build at `cmake` on PATH, because the CMake installer's "add to environment" option sets a `CMAKE` variable to a *folder*, which fails with "Access is denied".
 
-If the build still fails inside whisper.cpp's shader step (it needs `cl.exe` on PATH, which a plain terminal does not have) or with a long-path error, use the wrapper, which mirrors CI: MSVC developer environment, Ninja, and a short target directory:
+For cargo commands other than `tauri dev` / `tauri build`, call the wrapper yourself:
 
 ```powershell
-pwsh scripts/win-cargo.ps1 tauri dev
 pwsh scripts/win-cargo.ps1 test -p privatevox --lib -- --test-threads=1
+pwsh scripts/win-cargo.ps1 tauri build
 ```
 
 Whisper runs through Vulkan, so any recent AMD, NVIDIA or Intel GPU with a current driver works; nothing is tied to one card.
