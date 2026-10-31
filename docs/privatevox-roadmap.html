@@ -43,25 +43,33 @@ li small{display:block;color:var(--muted);font-size:.9rem;line-height:1.4}
 .note{border-left:3px solid var(--accent);padding:.5rem .9rem;background:var(--surface);margin:1rem 0;border-radius:0 6px 6px 0}
 code{font-family:var(--mono);font-size:.88em;background:var(--surface-2);padding:.08em .35em;border-radius:3px}
 footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--line);font-size:.85rem;color:var(--muted)}
+table.status{width:100%;border-collapse:collapse;font-size:.92rem;margin:.4rem 0 .2rem}
+table.status th{text-align:left;font-family:var(--mono);font-size:.7rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500;padding:.4rem .4rem .4rem 0;border-bottom:1px solid var(--line)}
+table.status td{padding:.45rem .4rem .45rem 0;border-top:1px solid var(--line);vertical-align:top}
+table.status tr:first-child td{border-top:0}
+table.status td:nth-child(2){font-family:var(--mono);font-size:.8rem;color:var(--muted);white-space:nowrap}
+table.status td:last-child{white-space:nowrap}
+@media (max-width:600px){table.status td:last-child{white-space:normal}}
 </style>
 
 <header class="wrap">
-  <div class="eyebrow">Status · 29 Oct 2026 · 0.5.0-alpha.1, phase 5 built</div>
+  <div class="eyebrow">Status · 31 Oct 2026 · 0.6.0-alpha.1, phase 6 built</div>
   <h1 style="margin-top:.4rem">PrivateVox Roadmap</h1>
-  <p class="lede">What the design promised, what is built, what is next. All five phases are built on the Mac: it dictates, switches models, shows its memory, cleans up the text with a local or LAN LLM, hands the work to a PC on the LAN, and now previews, auto-stops and takes spoken commands. The Windows pass on the RX 9070 and a signed build are what is left.</p>
+  <p class="lede">What the design promised, what is built, what is next. Six phases are built: it dictates, switches models, shows its memory, cleans up the text with a local or LAN LLM, hands the work to a PC on the LAN, previews, auto-stops, takes spoken commands, and now has every setting and safety net the design listed. Phase 6 was finished on the Windows PC, where all three test suites are green with the Vulkan engine. What is left needs a person at the PC and an Apple Developer account.</p>
   <div class="summary">
-    <div class="sum done"><div class="n">5 / 5</div><div class="k">plans complete on the Mac</div></div>
-    <div class="sum next"><div class="n">PC</div><div class="k">left: Windows pass and RX 9070 timing</div></div>
-    <div class="sum later"><div class="n">6</div><div class="k">installers on the alpha release</div></div>
-    <div class="sum you"><div class="n">2</div><div class="k">things only you can do</div></div>
+    <div class="sum done"><div class="n">6 / 6</div><div class="k">plans built (5 on the Mac, phase 6 on the PC)</div></div>
+    <div class="sum next"><div class="n">PC</div><div class="k">left: hold key, paste, host run and GPU timing by hand</div></div>
+    <div class="sum later"><div class="n">7</div><div class="k">installers once the 0.6.0 tag builds (dmg now from CI)</div></div>
+    <div class="sum you"><div class="n">3</div><div class="k">things only you can do</div></div>
   </div>
 </header>
 
 <section class="wrap">
   <h2>On your side <span class="chip you">needs you</span></h2>
   <div class="phase"><ul class="list">
-    <li><span class="mark you">!</span><div><b>Grant Accessibility, then restart PrivateVox</b><small>Your last dictation transcribed fine but only reached the clipboard ("Copied, paste blocked"). Setup tab → Accessibility → Open setting, tick PrivateVox, quit from the menu bar, start again.</small></div></li>
-    <li><span class="mark you">!</span><div><b>Try the new panel and pill build</b><small><code>git pull && cargo tauri dev</code>. The panel is now the wide mockup layout; the pill sits above the Dock and shows "loading model, keep talking" on a cold press. Send a screenshot if anything looks off.</small></div></li>
+    <li><span class="mark you">!</span><div><b>Merge the phase 6 branch and tag <code>v0.6.0-alpha.1</code></b><small>Branch <code>claude/new-session-114a90</code> holds tasks 4–12, the Windows fixes, the docs and the version bump. The tag starts the release workflow, which now builds the dmg too.</small></div></li>
+    <li><span class="mark you">!</span><div><b>Run PrivateVox on the PC by hand</b><small><code>pwsh scripts/win-cargo.ps1 tauri dev</code> (or the installer from the release). Check: Right Alt hold and paste into a few apps, the Q8 model card, the mic meter, Clear all, host mode PC→Mac, and <code>PRIVATEVOX_DEBUG_SCRIPT=panic</code> for a crash report. Then the Vulkan timing test from the resume notes.</small></div></li>
+    <li><span class="mark you">!</span><div><b>On the Mac: click the menu bar icon once</b><small>Task 3's tray items (Model submenu, Load model now, Show pill, Launch at login) were never seen open by eye because the UI scripting failed that evening.</small></div></li>
   </ul></div>
 </section>
 
@@ -119,7 +127,7 @@ footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--line);font-si
     <li><span class="mark done">✓</span><div><b>Keep audio clips</b><small>Off by default; replay next to the transcript; re-run with a bigger model.</small></div></li>
     <li><span class="mark done">✓</span><div><b>Receipt-sequenced paste and secure-input detection</b><small>Restore the clipboard only after the target app actually read it; keep hotkeys alive next to password fields.</small></div></li>
     <li><span class="mark done">✓</span><div><b>Long-form document view</b><small>Open as document on long rows: paragraphs, Copy all, Markdown export.</small></div></li>
-    <li><span class="mark todo"></span><div><b>Windows on the RX 9070</b><small>Run the CI installer, hold key and paste checks, Vulkan versus ROCm timing, which LLM runtime serves the 7B model fastest. Runs when you are at the PC.</small></div></li>
+    <li><span class="mark next"></span><div><b>Windows on an AMD GPU (Vulkan)</b><small>Half done on 31 Oct: the workspace builds on the PC, all suites pass, the worker now dies with the app on Windows, Benchmark has a clip. Still by hand: the installer, hold key and paste checks, Vulkan timing, which LLM runtime serves the 7B model fastest.</small></div></li>
     <li><span class="mark todo"></span><div><b>Open-source release pass</b><small>Notarised .dmg (needs an Apple Developer account), README for strangers, CI badges.</small></div></li>
     <li><span class="mark done">✓</span><div><b>Deferred review minors</b><small>From the phase 2 and 3 reviews, listed in the ledgers under <code>docs/superpowers/plans/</code>.</small></div></li>
   </ul></div>
@@ -144,7 +152,71 @@ footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--line);font-si
 </section>
 
 <section class="wrap">
-  <div class="note">Measured on the M1 with qwen2.5:3b through Ollama: a warm polish takes about one second; the warm-up on key press is under 100 ms once the model is resident; with Ollama stopped a dictation pastes the raw text and the row is marked unpolished. Everything that runs on the Mac is built. What is left needs you at the PC: install the CI build, check the hold key and paste there, turn on host mode and dictate from the Mac, and time Vulkan against ROCm on the RX 9070. Notarising the Mac build needs an Apple Developer account.</div>
+  <h2>Phase 6 · Everything else the design promised <span class="chip done">done</span></h2>
+  <p class="muted" style="margin:0 0 .6rem">Tasks 1–3 on the Mac (29 Oct), tasks 4–12 on the Windows PC (31 Oct). Plan and ledger: <code>docs/superpowers/plans/2026-10-29-privatevox-phase6*.md</code>.</p>
+  <div class="phase"><ul class="list">
+    <li><span class="mark done">✓</span><div><b>1 · Live preview on by default, Settings reordered</b><small>Dictation behaviour first; the language list collapsed behind a count.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>2 · Copy-only dictation key</b><small>Ctrl+Shift+Alt+Space: tap, talk, tap; copied, never pasted; undo untouched.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>3 · Launch at login, Show pill, Model submenu, Load model now</b><small>Tray items unit-tested; the menu still to be seen open by eye on the Mac.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>4 · History filters and Clear all</b><small>App and mode filters compose with the search; Clear all removes kept clips, never a host's rows.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>5 · Microphone level test</b><small>Meter beside the picker and in Setup; refused while recording; ends itself after 10 s.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>6 · Paste method per app</b><small>Resolved from the app in front at paste time; the setting itself applies without a restart now.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>7 · Q8_0 turbo</b><small>Offered from 12 GB or where the file exists; never auto-recommended.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>8 · Crash report</b><small><code>crash-&lt;ts&gt;.txt</code> on any panic; Show report in Setup; found and fixed a wrong model file name for distil on the way.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>9 · First-run walkthrough</b><small>Numbered steps with a state each; Windows skips the macOS grants.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>10 · Keep the microphone warm</b><small>20 s window (0–300), reuse logged, timer close; one lock around stream and state.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>11 · Tokens in the OS keychain</b><small>Keychain / Credential Manager; <code>@keychain</code> in the file; a refusing store keeps the token rather than losing it.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>12 · macOS in the release CI</b><small>macos-14 runner; first real run on the 0.6.0 tag.</small></div></li>
+    <li><span class="mark next"></span><div><b>13 · Live check, docs, release</b><small>Docs, changelog, release notes and this table are done; the live check on the PC and the tag are yours (see "On your side").</small></div></li>
+  </ul></div>
+</section>
+
+<section class="wrap">
+  <h2>Feature status <span class="chip done">design doc audit</span></h2>
+  <p class="muted" style="margin:0 0 .6rem">Every item the design document promised, with how far it is. "Live" means watched working on a machine; "unit" means built and covered by tests but not yet watched.</p>
+  <div class="phase">
+    <table class="status">
+      <thead><tr><th>Item</th><th>Spec</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Hold / toggle / hold-or-toggle hotkeys, undo, key recorder</td><td>§4.1</td><td><span class="chip done">built · live</span></td></tr>
+        <tr><td>Copy-only dictation key</td><td>§4.2</td><td><span class="chip done">built · live</span></td></tr>
+        <tr><td>Capture, VAD trimming, chunked decode, 5 min cap</td><td>§4.3, §5</td><td><span class="chip done">built · live</span></td></tr>
+        <tr><td>Paste with clipboard restore; receipt-sequenced on macOS; typing fallback</td><td>§4.3, §18.11</td><td><span class="chip done">built · live</span></td></tr>
+        <tr><td>Paste method per app</td><td>§4.3, §4.5</td><td><span class="chip next">built · unit</span></td></tr>
+        <tr><td>History: search, edit, pin, paste again, raw, export, document view</td><td>§4.4</td><td><span class="chip done">built · live</span></td></tr>
+        <tr><td>History filters by app and mode; Clear all</td><td>§4.4</td><td><span class="chip next">built · unit</span></td></tr>
+        <tr><td>Settings applied without restart; idle unload; microphone picker</td><td>§4.5</td><td><span class="chip done">built · live</span></td></tr>
+        <tr><td>Microphone level test</td><td>§4.5</td><td><span class="chip next">built · unit</span></td></tr>
+        <tr><td>Launch at login; pill show/hide</td><td>§4.5, §4.7</td><td><span class="chip next">built · unit</span></td></tr>
+        <tr><td>Three model tiers, download, switch, delete, benchmark, memory strip</td><td>§4.6, §9</td><td><span class="chip done">built · live</span></td></tr>
+        <tr><td>Q8_0 turbo on 12 GB+</td><td>§4.6</td><td><span class="chip next">built · unit</span></td></tr>
+        <tr><td>Tray: pause and unload, Load model now, Model submenu</td><td>§4.7</td><td><span class="chip next">built · unit (menu not yet seen open)</span></td></tr>
+        <tr><td>First-run walkthrough</td><td>§4.8</td><td><span class="chip next">built · unit</span></td></tr>
+        <tr><td>LLM polish: modes, local first, LAN failover, warm-up, re-polish</td><td>§7, §8</td><td><span class="chip done">built · live</span></td></tr>
+        <tr><td>Tokens in the OS keychain</td><td>§8.5</td><td><span class="chip next">built · unit (Linux: file)</span></td></tr>
+        <tr><td>Host mode and the remote interface; mDNS discovery</td><td>§8.6</td><td><span class="chip done">built · live (one Mac as both roles)</span></td></tr>
+        <tr><td>Real PC → Mac host run</td><td>§8.6</td><td><span class="chip you">pending · needs the PC</span></td></tr>
+        <tr><td>Crash report file and Show report</td><td>§10</td><td><span class="chip next">built · unit</span></td></tr>
+        <tr><td>Worker process: crash and hang recovery, dies with the app</td><td>§10, §18.1</td><td><span class="chip done">built · live (macOS) · unit (Windows)</span></td></tr>
+        <tr><td>Windows: hold key, paste, elevated-target detection</td><td>§12</td><td><span class="chip you">pending · needs the PC</span></td></tr>
+        <tr><td>Vulkan timing on an AMD GPU</td><td>§12, §13</td><td><span class="chip you">pending · needs the PC</span></td></tr>
+        <tr><td>macOS dmg from CI</td><td>§13</td><td><span class="chip next">built · verified on the next tag</span></td></tr>
+        <tr><td>Notarised dmg, signed Windows build, auto-update</td><td>§13, C2</td><td><span class="chip you">pending · needs an account</span></td></tr>
+        <tr><td>Dictionary, spoken languages, kept audio, re-run</td><td>§18.8–18.10</td><td><span class="chip done">built · live</span></td></tr>
+        <tr><td>Keep the microphone warm</td><td>§18.3</td><td><span class="chip next">built · unit</span></td></tr>
+        <tr><td>Secure-input warning</td><td>§18.12</td><td><span class="chip done">built · live (macOS only by design)</span></td></tr>
+        <tr><td>Live preview, auto-stop, spoken commands, per-app modes, cues</td><td>phase 5</td><td><span class="chip done">built · live</span></td></tr>
+        <tr><td>Translate to any language via the LLM</td><td>B2</td><td><span class="chip later">not picked yet</span></td></tr>
+        <tr><td>Host extras: shared dictionary, client-driven downloads, queue</td><td>C3</td><td><span class="chip later">not picked yet</span></td></tr>
+        <tr><td>Wayland hold key</td><td>C4</td><td><span class="chip later">not picked yet</span></td></tr>
+        <tr><td>Snippets, stats page, streaming LLM answer, cloud providers, other model families, UI translations</td><td>§17</td><td><span class="chip later">not planned</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="wrap">
+  <div class="note">Measured on the M1 with qwen2.5:3b through Ollama: a warm polish takes about one second; the warm-up on key press is under 100 ms once the model is resident; with Ollama stopped a dictation pastes the raw text and the row is marked unpolished. On the Windows PC (AMD GPU, 32 GB) the workspace builds with the Vulkan engine and every suite is green; a refused loopback connection takes about two seconds there, so an unreachable host surfaces as "did not answer in time" rather than "nothing answered", with the same fallback. Everything in the design is built. What is left needs you at the PC and an Apple Developer account.</div>
 </section>
 
 <footer class="wrap">Source of truth: <code>docs/superpowers/specs/2026-10-28-whisper-harness-design.md</code> and the plan files beside it. Repo: github.com/Drake0306/PrivateVox.</footer>

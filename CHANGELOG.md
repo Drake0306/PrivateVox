@@ -2,6 +2,30 @@
 
 All notable changes to PrivateVox. Versions follow the plans in `docs/superpowers/plans/`.
 
+## 0.6.0-alpha.1 — 2026-10-31
+
+Fifth alpha: the rest of what the design doc promised, plus the first real Windows pass. Tasks 1–3 were built and checked on the Mac (29 Oct), tasks 4–12 on a Windows PC with an AMD GPU (31 Oct), where all three test suites run green.
+
+### Phase 6
+- Live preview is on by default (an existing settings file keeps its value); the Settings tab leads with Dictation behaviour and the language list is collapsed.
+- Clipboard-only dictation key (default Ctrl+Shift+Alt+Space): tap to start, tap to stop, copied not pasted.
+- Launch at login, Show the pill, a Model submenu and "Load model now" in the menu bar.
+- History filters by app and mode (composing with the search box) and "Clear all…" with an inline confirm that also removes kept clips; never touches a host's history.
+- Microphone level test beside the microphone picker and in Setup: a meter for up to ten seconds, refused while recording.
+- Paste method per app (Type the text for terminals and remote desktops), resolved from the app in front at paste time. The Paste method setting itself now applies to the next paste instead of needing a restart.
+- Q8_0 turbo model (874 MB) offered on machines with 12 GB or more, or wherever the file already exists; never auto-recommended.
+- Crash report file (`crash-<timestamp>.txt` next to the log) on any panic, with "Show report" in Setup.
+- First-run walkthrough: Setup is a numbered list with a state per step; Windows skips the macOS-only grants and opens its microphone settings page.
+- The microphone stays open for 20 s after a dictation (0–300 s, 0 = close at once), so the next one starts without reopening the device.
+- Host, remote and LLM endpoint tokens live in the OS keychain (macOS Keychain, Windows Credential Manager); `settings.json` only holds `@keychain`.
+- The release workflow builds the macOS dmg on a macos-14 runner.
+
+### Windows
+- The engine worker exits when the app dies on Windows too (it waits on the parent's process handle); before, a force-quit left it and its GPU memory alive.
+- The benchmark clip is synthesised with Windows Speech, so Benchmark works on Windows.
+- `scripts/win-cargo.ps1` reproduces the CI build environment on a PC; README has the prerequisites.
+- Fixes found on the way: the model file name was assumed to end in `-q5_0.bin` (wrong for distil and the Q8 turbo); the supervisor tests and two timing-sensitive tests assumed Unix process tools or instant connection refusal.
+
 ## 0.5.0-alpha.1 — 2026-10-29
 
 Fourth alpha: the things that make dictating feel immediate. macOS on Apple Silicon tested by hand; Windows and Linux built by CI.

@@ -3958,7 +3958,7 @@ dependencies = [
 
 [[package]]
 name = "privatevox"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -3991,7 +3991,7 @@ dependencies = [
 
 [[package]]
 name = "privatevox-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4015,7 +4015,7 @@ dependencies = [
 
 [[package]]
 name = "privatevox-engine"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "env_logger",

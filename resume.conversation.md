@@ -27,12 +27,16 @@ truth; this file is the map.
   or `cargo clean -p privatevox -p privatevox-core -p privatevox-engine` when space runs out; the debug tree grows past
   15 GB). Ollama 0.40 with `qwen2.5:3b`. Screenshots work from the shell (`screencapture`), System Events UI
   scripting works for iTerm2 (Accessibility granted), used by `scripts/ui-shot.sh` and `scripts/tray-menu.sh`.
-- **Windows PC**: AMD RX 9070 16 GB. Planned for 2026-10-30: install `PrivateVox_0.5.0_x64-setup.exe` (or the msi)
-  from the 0.5.0-alpha.1 release, check the Right Alt hold key and paste, run host mode PC→Mac for real, time Vulkan
-  vs ROCm (`cargo test -p privatevox-engine --release --lib spike_timing -- --ignored --nocapture` with
-  `PRIVATEVOX_TEST_MODEL=<ggml file>` and `PRIVATEVOX_SPIKE_CLIPS=<dir with clip_30/clip_10/clip_short.wav>`; make the
-  clips with any TTS at 16 kHz mono). Windows build needs the Vulkan SDK (CI uses the jakoch action), Ninja and a short
-  target dir (`CARGO_TARGET_DIR=D:\t`). Nothing Windows-specific has been run by a person yet.
+- **Windows PC**: AMD RX 9070 (any Vulkan-capable AMD/NVIDIA/Intel GPU is the target; nothing is tied to this card),
+  32 GB RAM, Windows 11. Set up on 2026-10-31: Visual Studio 2022 Build Tools, CMake, Ninja, Vulkan SDK 1.4.363, LLVM
+  (libclang), Tauri CLI 2.12.4, Ollama (AMD AI bundle). Build with `pwsh scripts/win-cargo.ps1 <cargo args>` (imports
+  vcvars64, Ninja, `CARGO_TARGET_DIR=D:\t`, `VULKAN_SDK`, `LIBCLANG_PATH`; also repoints a user-level `CMAKE` variable
+  that pointed at the bin directory). The workspace builds and all suites pass there. Still by hand: install
+  `PrivateVox_0.6.0_x64-setup.exe` (or `cargo tauri dev`), check the Right Alt hold key and paste, run host mode
+  PC→Mac for real, time Vulkan (`cargo test -p privatevox-engine --release --lib spike_timing -- --ignored --nocapture`
+  with `PRIVATEVOX_TEST_MODEL=<ggml file>` and `PRIVATEVOX_SPIKE_CLIPS=<dir with clip_30/clip_10/clip_short.wav>`; the
+  Windows Speech clip generator in `benchmark.rs` makes 16 kHz mono WAVs). Known Windows behaviour: a refused loopback
+  connection takes ~2 s, so a dead host reads as "did not answer in time".
 - Important for debug builds on macOS: every `cargo build` changes the binary identity, so macOS **forgets the
   Accessibility grant** → pastes fall back to "copied only". Run the bundled app (`cargo tauri build --debug`, then the
   `.app`) or re-grant after each build. Roy's screen on 2026-10-29 showed "Accessibility: not granted" for the debug binary.
@@ -113,10 +117,12 @@ Status:
   and says whether the new items appear; or verify through the Settings checkboxes (same inner functions), then
   commit `feat: launch at login, pill show/hide, tray model picker and Load model now`, `task-done 3 5b09b5b`,
   `task-start 4`.
-- Tasks 4–13 **not started**: history filters + clear all; mic level test; paste method per app; Q8_0 turbo
-  (`ggml-large-v3-turbo-q8_0.bin`, 874,188,075 bytes, offered from 12 GB); crash report file; first-run walkthrough;
-  keep-mic-warm (`mic_lazy_close_secs`); keychain tokens (`keyring` 3); macOS in CI; live check with screenshots,
-  docs, roadmap **Feature status** table, 0.6.0-alpha.1.
+- Tasks 4–12 **done on the Windows PC on 2026-10-31** (branch `claude/new-session-114a90`, one commit per task, all
+  three suites green on Windows: core 219, engine 14 + 7 supervisor, app 137). Task 13: docs, changelog, release notes,
+  roadmap Feature status table and the 0.6.0 version bump are done; the live check with screenshots and the
+  `v0.6.0-alpha.1` tag are **left to Roy** (tagging publishes a release). Full per-task notes, Windows build setup and
+  the Windows fixes (worker parent watch, benchmark clip via Windows Speech, `scripts/win-cargo.ps1`, model file name
+  fix) are in `docs/superpowers/plans/2026-10-29-privatevox-phase6-ledger.md`, which is now the tracked progress file.
 - Not buildable without the PC (list in the roadmap under "needs the PC"): Windows admin-elevated target detection
   (§12), the Windows pass, RX 9070 timing, real PC→Mac host run. Needs an account: notarisation/signing (C2).
 - Not picked from the phase 5 proposal: B2 LLM translate, C3 host extras, C4 Wayland.
@@ -140,13 +146,13 @@ Status:
   first match wins; spoken commands are English-only; afplay assumed present.
 - Phase 6: copy-only is read from `Stage::Recording { binding: CopyOnly }` rather than a new Effect field.
 
-## 8. How to resume
+## 8. How to resume (updated 2026-10-31)
 
-1. `git pull`; read this file, then the phase 6 plan and its Review Focus; run the three suites to confirm green.
-2. On the Mac: recreate the ledger if `.superpowers/sdd/2026-10-29-privatevox-phase6/progress.md` is missing, mark
-   Tasks 1–2 complete, finish Task 3's visual check, then `task-start 4` and continue task by task (TDD, commit, ledger).
-3. On the PC: do the §2 PC checklist first (it needs a person at the machine), record results in a new ledger
-   `docs/superpowers/plans/2026-10-30-privatevox-windows-ledger.md`, then continue phase 6 tasks that do not need
-   macOS (4, 6, 7, 8, 9, 11 are cross-platform; 3's autostart and 10's cpal are OS-specific but compile everywhere).
-4. Finish with the fresh whole-branch review (Agent, model fable, `superpowers/requesting-code-review/code-reviewer.md`
-   with the review-package diff), one fix pass, docs, roadmap status table, tag `v0.6.0-alpha.1`.
+1. `git pull`; read this file, then `docs/superpowers/plans/2026-10-29-privatevox-phase6-ledger.md` (the tracked
+   progress table); run the three suites to confirm green (`pwsh scripts/win-cargo.ps1 test ...` on the PC).
+2. Roy: merge `claude/new-session-114a90` into `main`, tag `v0.6.0-alpha.1`, watch the three CI builds (the dmg is new
+   there). Then the PC checklist in §2 by hand, and on the Mac a single click on the menu bar icon to see Task 3's items.
+3. Next engineering work, in order of value: the fresh whole-branch review of phase 6 (Agent, code-reviewer prompt,
+   one fix pass); the Windows elevated-target detection (§12); B2 translate via the LLM; C3 host extras after the first
+   real PC→Mac run; C4 Wayland.
+4. Rules unchanged: no co-author trailers, `&&` not `;`, no `git stash`, ask before restarting a running app.

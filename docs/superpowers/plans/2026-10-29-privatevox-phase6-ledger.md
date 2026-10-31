@@ -20,8 +20,8 @@ Machines: Mac M1 8 GB (tasks 1–3, 29 Oct) and the Windows PC with an AMD GPU a
 | 9 | First-run walkthrough in Setup | done (31 Oct, PC) | `aaa0e82` | unit tests; Setup tab not yet seen running |
 | 10 | Keep the microphone warm | done (31 Oct, PC) | `e3ed33a` | core unit test; the `mic: reused warm stream` log line not yet seen live |
 | 11 | Tokens in the OS keychain | done (31 Oct, PC) | `913e088` | unit tests with the memory store; real Credential Manager / Keychain round trip not yet watched |
-| 12 | macOS in the release CI | done (31 Oct, PC) | see git log | verified on the next tag build (Task 13) |
-| 13 | Live check, docs, roadmap status table, 0.6.0-alpha.1 | not started | | |
+| 12 | macOS in the release CI | done (31 Oct, PC) | `f4856b7` | verified on the next tag build (Task 13) |
+| 13 | Live check, docs, roadmap status table, 0.6.0-alpha.1 | docs done; live check and tag pending | see git log | README, CHANGELOG, release notes, roadmap Feature status table, version 0.6.0. The live check on the PC and the `v0.6.0-alpha.1` tag are the owner's (see below). |
 
 ## Task notes
 
@@ -85,6 +85,12 @@ Machines: Mac M1 8 GB (tasks 1–3, 29 Oct) and the Windows PC with an AMD GPU a
 ### Task 12 — macOS in the release CI (31 Oct, Windows PC)
 
 - `release.yml` matrix gains `macOS (Apple Silicon)` on `macos-14`, target `aarch64-apple-darwin`; the Vulkan SDK step is skipped there (Metal), the Linux and Windows-only steps keep their conditions. tauri-action builds and attaches the dmg (ad-hoc signed, as the local builds were). First real run happens on the `v0.6.0-alpha.1` tag; until then the Mac-built dmg remains the checksum source.
+
+### Task 13 — Docs, roadmap, release (31 Oct, Windows PC)
+
+- Done: README (status line, "Settings, setup and safety nets" section, Windows build prerequisites and `win-cargo.ps1`, 0.6.0 download line), CHANGELOG 0.6.0-alpha.1, `docs/releases/v0.6.0-alpha.1.md`, roadmap page (header, "On your side", phase 4b Windows row, a Phase 6 section, the **Feature status** table with built · live / built · unit / pending · needs the PC / pending · needs an account / not picked / not planned), version 0.6.0 in `Cargo.toml`, `tauri.conf.json` and `Cargo.lock`.
+- Not done here: the live check with screenshots (the panel is a Tauri window on this PC; the items need a person with the microphone and the hold key: Settings order, copy-only, tray, pill hide/show, history filters and Clear all, mic meter, per-app paste, Q8 card, crash report via `PRIVATEVOX_DEBUG_SCRIPT=panic`, Setup steps, the warm-mic log line) and the `v0.6.0-alpha.1` tag. Tagging publishes a release and starts the three CI builds, so it is left to the owner together with the merge of this branch into `main`.
+- Still open from the plan's "needs the PC" list: Windows elevated-target detection (§12), the Windows pass by hand, Vulkan timing, the real PC→Mac host run. Needs an account: notarisation / signing (C2).
 
 ## Windows PC notes (31 Oct)
 
