@@ -42,17 +42,64 @@ pub fn set_settings(app: AppHandle, state: State<'_, AppState>, mut settings: Se
 /// Opens a macOS Privacy & Security pane: "microphone", "accessibility" or "input_monitoring".
 #[tauri::command]
 pub fn open_privacy(pane: String) -> Result<(), String> {
-    let anchor = match pane.as_str() {
-        "microphone" => "Privacy_Microphone",
-        "accessibility" => "Privacy_Accessibility",
-        "input_monitoring" => "Privacy_ListenEvent",
-        _ => return Err("unknown pane".into()),
+    #[cfg(target_os = "macos")]
+    {
+        let anchor = match pane.as_str() {
+            "microphone" => "Privacy_Microphone",
+            "accessibility" => "Privacy_Accessibility",
+            "input_monitoring" => "Privacy_ListenEvent",
+            _ => return Err("unknown pane".into()),
+        };
+        std::process::Command::new("open")
+            .arg(format!("x-apple.systempreferences:com.apple.preference.security?{anchor}"))
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // Windows has no Accessibility / Input Monitoring grants; the microphone has a Settings page.
+        if pane != "microphone" {
+            return Err("Windows needs no separate permission for this".into());
+        }
+        use std::os::windows::process::CommandExt as _;
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", "ms-settings:privacy-microphone"])
+            .creation_flags(0x0800_0000)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let _ = pane;
+        Err("No system permission pane to open on this platform".into())
+    }
+}
+
+/// The first-run walkthrough (§4.8): numbered steps with a state each; see `setup::steps`.
+#[derive(serde::Serialize)]
+pub struct SetupStatus {
+    pub steps: Vec<crate::setup::SetupStep>,
+    pub os: &'static str,
+}
+
+#[tauri::command]
+pub fn setup_status(state: State<'_, AppState>) -> Result<SetupStatus, String> {
+    let settings = state.settings.lock().map_err(|e| e.to_string())?.clone();
+    let history_count = state.store.lock().map_err(|e| e.to_string())?.count().map_err(|e| e.to_string())?;
+    let selected = state.polisher.selected(std::time::Instant::now()).map(|e| e.label.clone());
+    let inputs = crate::setup::SetupInputs {
+        model_present: state.paths.model_file(&settings.model_id).exists(),
+        accessibility: crate::paste::accessibility_trusted(false),
+        input_monitoring: crate::hotkeys::input_monitoring_granted(false),
+        settings: &settings,
+        llm_enabled: state.polisher.enabled(),
+        llm_selected: selected,
+        history_count,
+        os: std::env::consts::OS,
     };
-    std::process::Command::new("open")
-        .arg(format!("x-apple.systempreferences:com.apple.preference.security?{anchor}"))
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    Ok(SetupStatus { steps: crate::setup::steps(&inputs), os: std::env::consts::OS })
 }
 
 /// Permission state for the first-run checklist.

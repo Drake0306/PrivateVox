@@ -16,8 +16,8 @@ Machines: Mac M1 8 GB (tasks 1–3, 29 Oct) and the Windows PC with an AMD GPU a
 | 5 | Microphone level test | done (31 Oct, PC) | `d64f713` | unit test; not yet watched with a real microphone |
 | 6 | Paste method per app | done (31 Oct, PC) | `249942a` | unit tests (core + app) |
 | 7 | Q8_0 turbo offered from 12 GB | done (31 Oct, PC) | `43b17ef` | unit tests; the PC (32 GB) will show it, the 8 GB Mac will not |
-| 8 | Crash report file, Show report in Setup | done (31 Oct, PC) | see git log | unit tests; live check with `PRIVATEVOX_DEBUG_SCRIPT=panic` pending |
-| 9 | First-run walkthrough in Setup | not started | | |
+| 8 | Crash report file, Show report in Setup | done (31 Oct, PC) | `ce1f6b3` | unit tests; live check with `PRIVATEVOX_DEBUG_SCRIPT=panic` pending |
+| 9 | First-run walkthrough in Setup | done (31 Oct, PC) | see git log | unit tests; Setup tab not yet seen running |
 | 10 | Keep the microphone warm | not started | | |
 | 11 | Tokens in the OS keychain | not started | | |
 | 12 | macOS in the release CI | not started | | |
@@ -60,6 +60,13 @@ Machines: Mac M1 8 GB (tasks 1–3, 29 Oct) and the Windows PC with an AMD GPU a
 - Panel Setup: "Show report" on the stale-lock line when a report exists; a quieter line with the same button when a report exists without a stale lock. Debug script action `panic` for the live check (`PRIVATEVOX_DEBUG_SCRIPT=panic`: the helper thread panics, the app stays up, a report appears).
 - Found and fixed on the way: `AppPaths::model_file` built the file name as `ggml-<id>-q5_0.bin`, wrong for distil (`ggml-distil-large-v3.bin`) and for the new Q8 entry; it now asks the catalog. Before, a restart with distil selected started without a model path.
 - Tests: `crash::tests::report_text_has_version_os_model_state`, `write_and_latest_pick_the_newest`, `os_label_names_the_platform`.
+
+### Task 9 — First-run walkthrough (31 Oct, Windows PC)
+
+- `src-tauri/src/setup.rs`: `steps(&SetupInputs)` → numbered `SetupStep { id, label, state: done|todo|optional, detail, action }`: model (Download), microphone (Test, the Task 5 meter; done once a dictation exists), Accessibility and Input Monitoring (macOS only, Open setting), dictation key (shows `hotkey_hint`, Change → Settings), polish LLM (done / todo when on but nothing answers / optional when off), say something (Record / Stop; done once History has a row).
+- Command `setup_status` gathers permissions, settings, the polisher's selected endpoint, the history count and the OS. `open_privacy` on Windows opens `ms-settings:privacy-microphone` for the microphone and refuses the two macOS-only panes; Linux has no pane.
+- Panel: the Setup card is a rendered list with a summary line ("N steps left before the first dictation"); the macOS "quit and start again" note shows only while a macOS grant is missing. The walkthrough refreshes on `history-changed` while visible. Tools card unchanged.
+- Tests: `setup::tests::steps_mark_done_and_todo`, `windows_and_linux_skip_the_macos_permissions`, `microphone_step_names_the_chosen_device`.
 
 ## Windows PC notes (31 Oct)
 

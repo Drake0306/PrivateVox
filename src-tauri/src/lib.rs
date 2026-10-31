@@ -19,6 +19,7 @@ pub mod pipeline;
 mod net_commands;
 mod remote;
 mod secure_input;
+pub mod setup;
 pub mod state;
 pub mod tray;
 
@@ -107,6 +108,7 @@ pub fn run() {
             commands::current_pill_state,
             commands::open_privacy,
             commands::permissions,
+            commands::setup_status,
             commands::open_crash_report,
             commands::download_model,
             commands::list_models,

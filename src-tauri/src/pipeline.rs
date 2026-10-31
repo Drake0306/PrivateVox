@@ -306,7 +306,7 @@ fn ptt_key_label(s: &Settings) -> Option<String> {
 }
 
 /// The pill's idle text: which key, and whether to hold or tap it, from the activation setting (§4.1).
-fn hotkey_hint(s: &Settings) -> String {
+pub fn hotkey_hint(s: &Settings) -> String {
     use privatevox_core::settings::Activation;
     match (s.activation, ptt_key_label(s), &s.toggle.combo) {
         (Activation::PushToTalk, Some(k), _) => format!("Hold {k} to talk"),

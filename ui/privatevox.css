@@ -73,6 +73,17 @@ section.tab { padding: 0 0 24px; }
 .tile .s { display: block; color: var(--muted); font-size: 14px; }
 .tile.good .v { color: var(--ok); } .tile.bad .v { color: var(--rec); }
 
+/* first-run walkthrough (Setup) */
+ol.steps { list-style: none; counter-reset: step; margin: 0; padding: 0; display: grid; gap: 8px; }
+.step { display: grid; grid-template-columns: 28px 1fr auto; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); }
+.step::before { counter-increment: step; content: counter(step); width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-2); color: var(--muted); font: 600 13px var(--mono); }
+.step.done::before { content: "✓"; background: var(--ok); color: #fff; }
+.step.todo::before { background: var(--warn-soft); color: var(--warn); }
+.step .t { font: 600 15px var(--display); }
+.step .d { color: var(--muted); font-size: 13px; line-height: 1.4; }
+.step .acts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.step .badge { margin-left: 8px; }
+
 /* microphone level test (Settings) */
 .micmeter { display: inline-block; width: 110px; height: 10px; border-radius: 5px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; flex: none; }
 .micmeter i { display: block; height: 100%; width: 0; background: var(--ok); transition: width .08s; }

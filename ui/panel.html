@@ -174,14 +174,11 @@
     <section class="tab" id="tab-setup" hidden>
       <div class="pad">
         <div class="card">
-          <h3>First-run checklist</h3>
-          <div class="check"><span>Whisper model (large-v3-turbo, 574 MB)</span><span id="pModel"></span></div>
+          <h3>Set up PrivateVox</h3>
+          <p class="muted" id="setupSummary" style="margin:0 0 10px"></p>
+          <ol class="steps" id="setupSteps"></ol>
           <div class="progress" id="dl" hidden><i id="dlBar"></i></div>
-          <div class="check"><span>Microphone</span><span><button class="btn sm" data-priv="microphone">Open setting</button></span></div>
-          <div class="check"><span>Accessibility (needed to paste)</span><span><span id="pAcc"></span> <button class="btn sm" data-priv="accessibility">Open setting</button></span></div>
-          <div class="check"><span>Input Monitoring (needed for the hold key)</span><span><span id="pIm"></span> <button class="btn sm" data-priv="input_monitoring">Open setting</button></span></div>
-          <div class="check"><span>Polish LLM</span><span id="pLlm"></span></div>
-          <p class="muted">After granting Accessibility or Input Monitoring, quit PrivateVox from the menu bar and start it again.</p>
+          <p class="muted" id="setupMacNote" hidden>After granting Accessibility or Input Monitoring, quit PrivateVox from the menu bar and start it again.</p>
           <p id="stale" class="err" hidden>The last session ended unexpectedly. Nothing was lost; history is saved after every dictation. <button class="btn sm" id="crashShowStale" hidden title="Open the crash report written when the app went down">Show report</button></p>
           <p id="crashLine" class="muted" hidden>A crash report exists from an earlier session. <button class="btn sm" id="crashShow">Show report</button></p>
         </div>
@@ -580,15 +577,17 @@
   });
   window.pvx.listen('history-changed', () => { loadHistory(); flash('History updated'); });
 
-  // ---------- microphone level test ----------
+  // ---------- microphone level test (Settings and the Setup walkthrough share one test) ----------
   let micTesting = false;
-  function micTestUi(on) { micTesting = on; $('micTest').textContent = on ? 'Stop' : 'Test'; $('micMeter').hidden = !on; if (!on) $('micMeter').firstElementChild.style.width = '0'; }
-  $('micTest').onclick = async () => { try { await inv('mic_test', { on: !micTesting }); micTestUi(!micTesting); } catch (e) { flash(String(e)); } };
+  const micPairs = () => [['micTest', 'micMeter'], ['micTestSetup', 'micMeterSetup']].map(([b, m]) => [$(b), $(m)]).filter(([b, m]) => b && m);
+  function micTestUi(on) { micTesting = on; for (const [b, m] of micPairs()) { b.textContent = on ? 'Stop' : 'Test'; m.hidden = !on; if (!on) m.firstElementChild.style.width = '0'; } }
+  async function micTestClick() { try { await inv('mic_test', { on: !micTesting }); micTestUi(!micTesting); } catch (e) { flash(String(e)); } }
+  $('micTest').onclick = micTestClick;
   window.pvx.listen('mic-level', (db) => {
     if (db === null || db === undefined) { if (micTesting) flash('Microphone test ended'); micTestUi(false); return; }
     if (!micTesting) micTestUi(true);
     const pct = Math.max(0, Math.min(100, ((db + 60) / 60) * 100)); // -60 dBFS (silence) … 0 dBFS (clipping)
-    const bar = $('micMeter').firstElementChild; bar.style.width = pct + '%'; bar.classList.toggle('hot', db > -6);
+    for (const [, m] of micPairs()) { const bar = m.firstElementChild; bar.style.width = pct + '%'; bar.classList.toggle('hot', db > -6); }
   });
 
   // ---------- network settings ----------
@@ -631,20 +630,43 @@
   window.pvx.listen('remote-changed', (ev) => { flash(ev && ev.payload ? remoteLabel + ' reachable, dictation goes there' : remoteLabel + ' unreachable, dictating locally'); loadMemory(); if (!$('tab-network').hidden) loadNetwork(); });
 
   // ---------- setup ----------
+  // The walkthrough (§4.8): numbered steps from setup_status; each step's action is wired here.
+  const showTab = (name) => document.querySelector(`nav.tabs button[data-tab="${name}"]`).click();
+  function stepActions(step) {
+    switch (step.action) {
+      case 'download': return [['Download', () => { inv('download_model'); $('dl').hidden = false; }]];
+      case 'mic_test': return [['Test', null]]; // wired to the shared mic test below
+      case 'open_privacy': return [['Open setting', () => inv('open_privacy', { pane: step.id }).catch(e => flash(String(e)))]];
+      case 'settings': return [['Change', () => showTab('settings')]];
+      case 'polish': return [[step.state === 'done' ? 'Polish settings' : 'Set up polish', () => showTab('polish')]];
+      case 'record': return [['● Record', () => inv('debug_start')], ['■ Stop', () => inv('debug_stop')]];
+      default: return [];
+    }
+  }
   async function loadSetup() {
-    const p = await inv('permissions');
-    $('pModel').innerHTML = p.model_present ? '<span class="ok">ready</span>' : '<button class="btn sm" id="dlBtn">Download</button>';
-    if (!p.model_present) $('dlBtn').onclick = () => { inv('download_model'); $('dl').hidden = false; };
-    $('pAcc').innerHTML = p.accessibility ? '<span class="ok">granted</span>' : '<span class="no">not granted</span>';
-    $('pIm').innerHTML = p.input_monitoring ? '<span class="ok">granted</span>' : '<span class="no">not granted</span>';
+    const [p, s] = await Promise.all([inv('permissions'), inv('setup_status')]);
+    const list = $('setupSteps'); list.innerHTML = '';
+    const todo = s.steps.filter(x => x.state === 'todo').length;
+    $('setupSummary').textContent = todo ? `${todo} step${todo === 1 ? '' : 's'} left before the first dictation.` : 'Everything is in place. Hold the key and talk.';
+    $('setupMacNote').hidden = s.os !== 'macos' || !s.steps.some(x => (x.id === 'accessibility' || x.id === 'input_monitoring') && x.state !== 'done');
+    for (const step of s.steps) {
+      const li = document.createElement('li'); li.className = 'step ' + step.state;
+      li.innerHTML = `<div><div class="t">${esc(step.label)}${step.state === 'optional' ? '<span class="badge">optional</span>' : ''}</div><div class="d">${esc(step.detail)}</div></div><div class="acts"></div>`;
+      const acts = li.querySelector('.acts');
+      for (const [label, fn] of stepActions(step)) {
+        const b = document.createElement('button'); b.className = 'btn sm'; b.textContent = label;
+        if (fn) b.onclick = fn;
+        else { b.id = 'micTestSetup'; const m = document.createElement('span'); m.className = 'micmeter'; m.hidden = true; m.innerHTML = '<i></i>'; m.id = 'micMeterSetup'; acts.appendChild(m); b.onclick = micTestClick; }
+        acts.appendChild(b);
+      }
+      list.appendChild(li);
+    }
     $('stale').hidden = !p.stale_lock;
     $('crashShowStale').hidden = !p.crash_report;
     $('crashLine').hidden = p.stale_lock || !p.crash_report;
     for (const id of ['crashShowStale', 'crashShow']) $(id).onclick = async () => { try { await inv('open_crash_report'); } catch (e) { flash(String(e)); } };
-    const st = await inv('llm_status');
-    $('pLlm').innerHTML = !st.enabled ? '<span class="muted">off</span>' : st.selected ? `<span class="ok">${esc(st.selected.label)} ready</span>` : '<span class="no">none found</span> <span class="muted">Install Ollama and run <code>ollama pull qwen2.5:3b</code>, or add a LAN endpoint in Settings → Polish</span>';
-    document.querySelectorAll('[data-priv]').forEach(b => b.onclick = () => inv('open_privacy', { pane: b.dataset.priv }));
   }
+  window.pvx.listen('history-changed', () => { if (!$('tab-setup').hidden) loadSetup(); });
   $('dbgStart').onclick = () => inv('debug_start'); $('dbgStop').onclick = () => inv('debug_stop');
   $('exportMd').onclick = async () => { try { flash('Saved ' + await inv('export_history', { format: 'md' })); } catch (e) { flash(String(e)); } };
   $('exportJson').onclick = async () => { try { flash('Saved ' + await inv('export_history', { format: 'json' })); } catch (e) { flash(String(e)); } };
