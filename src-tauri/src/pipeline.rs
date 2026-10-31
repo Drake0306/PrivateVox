@@ -98,6 +98,10 @@ pub enum Cmd {
     Notice(String),
     /// macOS Secure Event Input went on or off (design §18.12).
     SecureInput(bool),
+    /// Settings → Microphone → Test: meter the input without recording (§4.5). `false` ends the test.
+    MicTest(bool),
+    /// 100 ms tick of a running mic test; the generation discards ticks of an ended test.
+    MicTestTick(u64),
     Quit,
 }
 
@@ -144,7 +148,19 @@ pub struct Deps {
     pub audio_dir: PathBuf,
     /// Sound/visual cue hook; the app gates it on the setting and plays on a helper thread.
     pub cue: Arc<dyn Fn(crate::cues::Cue) + Send + Sync>,
+    /// Mic test meter: `Some(dBFS)` every 100 ms while a test runs, `None` once when it ends (or was refused).
+    pub on_mic_level: Arc<dyn Fn(Option<f32>) + Send + Sync>,
 }
+
+/// A running microphone test (Settings → Test): the capture is open, nothing is buffered or decoded.
+struct MicTestRun {
+    level: Arc<Mutex<f32>>,
+    started: Instant,
+    gen: u64,
+}
+
+/// How long a mic test runs before ending itself (§4.5).
+pub const MIC_TEST_LIMIT: Duration = Duration::from_secs(10);
 
 /// One chunk's decode request for the per-recording decode worker.
 struct ChunkJob {
@@ -268,6 +284,11 @@ pub struct Coordinator {
     copy_only: bool,
     /// This machine's memory, for the live-preview Auto rule (read once).
     total_memory: u64,
+    /// Settings → Microphone → Test in progress; never alongside a recording.
+    mic_test: Option<MicTestRun>,
+    mic_gen: u64,
+    /// Tests shorten this; the app keeps `MIC_TEST_LIMIT`.
+    pub mic_test_limit: Duration,
 }
 
 /// The hold key as the pill names it ("right ⌥", or a combination), if one is set.
@@ -378,7 +399,7 @@ impl Coordinator {
             let s = settings.lock().map(|s| s.clone()).unwrap_or_default();
             Machine::new(s.activation, Duration::from_millis(s.hold_threshold_ms))
         };
-        Coordinator { deps, settings, store, vad, emit, recording: None, queued: None, generation: 0, machine, pending_switch: None, last_paste: None, idle_tx: None, last_used_remote: false, fell_back: Arc::new(AtomicBool::new(false)), secure_input: false, dictation_mode: Mode::Clean, copy_only: false, total_memory: privatevox_core::memory::system_memory().0 }
+        Coordinator { deps, settings, store, vad, emit, recording: None, queued: None, generation: 0, machine, pending_switch: None, last_paste: None, idle_tx: None, last_used_remote: false, fell_back: Arc::new(AtomicBool::new(false)), secure_input: false, dictation_mode: Mode::Clean, copy_only: false, total_memory: privatevox_core::memory::system_memory().0, mic_test: None, mic_gen: 0, mic_test_limit: MIC_TEST_LIMIT }
     }
 
     /// Unloads the current model and loads `id` from the models directory. Refused if the file is missing.
@@ -487,6 +508,8 @@ impl Coordinator {
                     }
                 }
                 Cmd::Tick(gen) => self.tick(gen, &tx),
+                Cmd::MicTest(on) => self.mic_test(on, &tx),
+                Cmd::MicTestTick(gen) => self.mic_test_tick(gen, &tx),
                 Cmd::SettingsChanged => {
                     let s = self.settings();
                     self.machine.set_activation(s.activation, Duration::from_millis(s.hold_threshold_ms));
@@ -589,6 +612,8 @@ impl Coordinator {
         if self.recording.is_some() {
             return;
         }
+        // A dictation takes the microphone back from a running mic test.
+        self.mic_test_end();
         let settings = self.settings();
         let buffer = Arc::new(Mutex::new(ClipBuffer::new(settings.max_clip_seconds)));
         let level = Arc::new(Mutex::new(-100.0f32));
@@ -640,6 +665,69 @@ impl Coordinator {
                 self.error(&format!("Microphone unavailable: {e}"));
                 self.schedule_idle(tx);
             }
+        }
+    }
+
+    /// Settings → Microphone → Test (§4.5): opens the chosen input and reports its level every 100 ms, for at most
+    /// `mic_test_limit`. Refused with an immediate end marker while a dictation is recording, so the two never
+    /// fight over the device; a dictation that starts mid-test ends the test.
+    fn mic_test(&mut self, on: bool, tx: &Sender<Cmd>) {
+        if !on {
+            self.mic_test_end();
+            return;
+        }
+        if self.recording.is_some() {
+            (self.deps.on_mic_level)(None);
+            return;
+        }
+        if self.mic_test.is_some() {
+            return;
+        }
+        let level = Arc::new(Mutex::new(-100.0f32));
+        let l = level.clone();
+        let on_pcm: Box<dyn FnMut(&[f32]) + Send> = Box::new(move |pcm| {
+            if let Ok(mut lv) = l.lock() {
+                *lv = level_db(pcm);
+            }
+        });
+        let err_tx = tx.clone();
+        let on_error: Box<dyn FnMut(String) + Send> = Box::new(move |msg| {
+            let _ = err_tx.send(Cmd::Notice(format!("Microphone: {msg}")));
+            let _ = err_tx.send(Cmd::MicTest(false));
+        });
+        match self.deps.capture.start(on_pcm, on_error) {
+            Ok(()) => {
+                self.mic_gen += 1;
+                self.mic_test = Some(MicTestRun { level, started: Instant::now(), gen: self.mic_gen });
+                schedule(tx, Cmd::MicTestTick(self.mic_gen), Duration::from_millis(100));
+            }
+            Err(e) => {
+                (self.deps.on_mic_level)(None);
+                self.error(&format!("Microphone unavailable: {e}"));
+                self.schedule_idle(tx);
+            }
+        }
+    }
+
+    fn mic_test_tick(&mut self, gen: u64, tx: &Sender<Cmd>) {
+        let Some(run) = self.mic_test.as_ref() else { return };
+        if run.gen != gen {
+            return;
+        }
+        if run.started.elapsed() >= self.mic_test_limit {
+            self.mic_test_end();
+            return;
+        }
+        let level = run.level.lock().map(|l| *l).unwrap_or(-100.0);
+        (self.deps.on_mic_level)(Some(level));
+        schedule(tx, Cmd::MicTestTick(gen), Duration::from_millis(100));
+    }
+
+    /// Closes the test's capture and sends the end marker; a no-op when no test runs.
+    fn mic_test_end(&mut self) {
+        if self.mic_test.take().is_some() {
+            self.deps.capture.stop();
+            (self.deps.on_mic_level)(None);
         }
     }
 
@@ -1603,6 +1691,8 @@ mod tests {
         llm_unloads: Arc<Mutex<u32>>,
         history_changed: Arc<Mutex<u32>>,
         cues: Arc<Mutex<Vec<crate::cues::Cue>>>,
+        /// Every `on_mic_level` call: `Some(dB)` ticks and the `None` end markers, in order.
+        mic_levels: Arc<Mutex<Vec<Option<f32>>>>,
         tx: std::sync::mpsc::Sender<Cmd>,
         join: std::thread::JoinHandle<()>,
         _dir: tempfile::TempDir,
@@ -1652,6 +1742,8 @@ mod tests {
         let (w, u, hc) = (warms.clone(), llm_unloads.clone(), history_changed.clone());
         let cues: Arc<Mutex<Vec<crate::cues::Cue>>> = Default::default();
         let cq = cues.clone();
+        let mic_levels: Arc<Mutex<Vec<Option<f32>>>> = Default::default();
+        let ml = mic_levels.clone();
         let deps = Deps {
             engine: Arc::new(Mutex::new(engine)),
             remote: remote.clone(),
@@ -1673,14 +1765,16 @@ mod tests {
             on_history_changed: Arc::new(move || *hc.lock().unwrap() += 1),
             audio_dir: dir.path().join("audio"),
             cue: Arc::new(move |c| cq.lock().unwrap().push(c)),
+            on_mic_level: Arc::new(move |l| ml.lock().unwrap().push(l)),
         };
         let st = states.clone();
-        let coord = Coordinator::new(deps, settings.clone(), store.clone(), vad, Box::new(move |s| st.lock().unwrap().push(s)));
+        let mut coord = Coordinator::new(deps, settings.clone(), store.clone(), vad, Box::new(move |s| st.lock().unwrap().push(s)));
+        coord.mic_test_limit = Duration::from_secs(1);
         let (tx, rx) = channel();
         let tx2 = tx.clone();
         let join = std::thread::spawn(move || coord.run(rx, tx2));
         let _ = &remote;
-        Harness { states, pasted, store, settings, switched, benchmarks, undos, frontmost, polish_fn, polish_calls, warms, llm_unloads, history_changed, cues, tx, join, _dir: dir }
+        Harness { states, pasted, store, settings, switched, benchmarks, undos, frontmost, polish_fn, polish_calls, warms, llm_unloads, history_changed, cues, mic_levels, tx, join, _dir: dir }
     }
 
     fn kinds(states: &[PillState]) -> Vec<&'static str> {
@@ -2038,6 +2132,43 @@ mod tests {
 
     fn last_row(h: &Harness) -> privatevox_core::store::Dictation {
         h.store.lock().unwrap().list(1, 0).unwrap().remove(0)
+    }
+
+    #[test]
+    fn mic_test_refuses_while_recording_and_stops_itself() {
+        let h = harness(engine_saying("x"), capture_ok());
+        h.tx.send(Cmd::Start).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        h.tx.send(Cmd::MicTest(true)).unwrap();
+        std::thread::sleep(Duration::from_millis(150));
+        assert_eq!(h.mic_levels.lock().unwrap().clone(), vec![None], "refused while recording: one end marker, no levels, the capture untouched");
+        h.tx.send(Cmd::Stop).unwrap();
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(h.pasted.lock().unwrap().clone(), vec!["x".to_string()], "the dictation was not disturbed");
+
+        h.mic_levels.lock().unwrap().clear();
+        h.tx.send(Cmd::MicTest(true)).unwrap();
+        std::thread::sleep(Duration::from_millis(700));
+        let levels = h.mic_levels.lock().unwrap().clone();
+        assert!(levels.len() >= 5 && levels.iter().all(|l| l.is_some()), "a level every 100 ms and no end marker while it runs: {levels:?}");
+        assert!(levels[0].unwrap() > -100.0, "the fixture is not silence");
+        h.tx.send(Cmd::MicTest(false)).unwrap();
+        std::thread::sleep(Duration::from_millis(150));
+        assert_eq!(h.mic_levels.lock().unwrap().last().cloned(), Some(None), "stop sends the end marker");
+        let after_stop = h.mic_levels.lock().unwrap().len();
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(h.mic_levels.lock().unwrap().len(), after_stop, "nothing arrives after stop");
+
+        // Left alone, the test ends itself at the limit (1 s in the harness, 10 s in the app).
+        h.mic_levels.lock().unwrap().clear();
+        h.tx.send(Cmd::MicTest(true)).unwrap();
+        std::thread::sleep(Duration::from_millis(1600));
+        let levels = h.mic_levels.lock().unwrap().clone();
+        assert_eq!(levels.last().cloned(), Some(None), "{levels:?}");
+        assert!((8..=12).contains(&levels.len()), "about ten ticks then the marker: {levels:?}");
+        assert_eq!(h.store.lock().unwrap().count().unwrap(), 1, "a mic test never records a dictation");
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
     }
 
     #[test]

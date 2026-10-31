@@ -58,6 +58,8 @@ pub fn run() {
     let pid_slot: Arc<Mutex<Option<PidHandle>>> = Arc::new(Mutex::new(None));
     let (lock_for_exit, engine_for_exit, pid_for_exit) = (lock.clone(), engine_slot.clone(), pid_slot.clone());
 
+    // Only the macOS branch below reassigns the builder.
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(w) = app.get_webview_window("panel") {
@@ -99,6 +101,7 @@ pub fn run() {
             commands::paste_text,
             commands::export_history,
             commands::list_input_devices,
+            commands::mic_test,
             commands::open_panel,
             commands::current_pill_state,
             commands::open_privacy,
@@ -270,6 +273,12 @@ pub fn run() {
                         if settings.lock().map(|s| cues::enabled(&s, c)).unwrap_or(false) {
                             cues::play(c);
                         }
+                    })
+                },
+                on_mic_level: {
+                    let app = app.handle().clone();
+                    Arc::new(move |level| {
+                        let _ = app.emit("mic-level", level);
                     })
                 },
             };

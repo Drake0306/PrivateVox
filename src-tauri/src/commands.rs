@@ -270,6 +270,13 @@ pub fn list_input_devices() -> Vec<String> {
     privatevox_core::audio::input_devices()
 }
 
+/// Settings → Microphone → Test: `on` starts a level test (ended by itself after 10 s, refused while recording),
+/// `false` stops it. Levels arrive as `mic-level` events: a dBFS number every 100 ms, then `null` once at the end.
+#[tauri::command]
+pub fn mic_test(state: State<'_, AppState>, on: bool) {
+    state.send(Cmd::MicTest(on));
+}
+
 /// The pill asks for this when its page loads, since the first `pill-state` event may precede the page.
 #[tauri::command]
 pub fn current_pill_state(state: State<'_, AppState>) -> Option<crate::pipeline::PillState> {

@@ -127,7 +127,7 @@
           <label>Toggle key <span style="display:flex;gap:6px"><input name="toggle_combo" placeholder="Ctrl+Shift+Space" style="flex:1"><button type="button" class="btn sm" data-rec="toggle_combo">Record key</button></span></label>
           <label>Undo last paste <span style="display:flex;gap:6px"><input name="undo_combo" placeholder="Ctrl+Shift+Z" style="flex:1"><button type="button" class="btn sm" data-rec="undo_combo">Record key</button></span></label>
           <label>Copy-only key (dictate to the clipboard, no paste) <span style="display:flex;gap:6px"><input name="copy_only_combo" placeholder="Ctrl+Shift+Alt+Space" style="flex:1"><button type="button" class="btn sm" data-rec="copy_only_combo">Record key</button></span></label>
-          <label>Microphone <select name="microphone"><option value="">System default</option></select></label>
+          <label>Microphone <span style="display:flex;gap:6px;align-items:center"><select name="microphone" style="flex:1"><option value="">System default</option></select><button type="button" class="btn sm" id="micTest" title="Meter this microphone for up to ten seconds; speak or clap to see it move">Test</button><span class="micmeter" id="micMeter" role="img" aria-label="Microphone level" hidden><i></i></span></span></label>
           <label>Paste method <select name="paste_method"><option value="clipboard">Clipboard + ⌘V</option><option value="type">Type the text</option></select></label>
           <label>Unload model after idle (minutes, 1–240) <input name="idle_unload_minutes" type="number" min="1" max="240"></label>
           <label><span><input name="idle_never" type="checkbox"> Never unload</span></label>
@@ -546,6 +546,17 @@
     loadMemory();
   });
   window.pvx.listen('history-changed', () => { loadHistory(); flash('History updated'); });
+
+  // ---------- microphone level test ----------
+  let micTesting = false;
+  function micTestUi(on) { micTesting = on; $('micTest').textContent = on ? 'Stop' : 'Test'; $('micMeter').hidden = !on; if (!on) $('micMeter').firstElementChild.style.width = '0'; }
+  $('micTest').onclick = async () => { try { await inv('mic_test', { on: !micTesting }); micTestUi(!micTesting); } catch (e) { flash(String(e)); } };
+  window.pvx.listen('mic-level', (db) => {
+    if (db === null || db === undefined) { if (micTesting) flash('Microphone test ended'); micTestUi(false); return; }
+    if (!micTesting) micTestUi(true);
+    const pct = Math.max(0, Math.min(100, ((db + 60) / 60) * 100)); // -60 dBFS (silence) … 0 dBFS (clipping)
+    const bar = $('micMeter').firstElementChild; bar.style.width = pct + '%'; bar.classList.toggle('hot', db > -6);
+  });
 
   // ---------- network settings ----------
   async function loadNetwork() {

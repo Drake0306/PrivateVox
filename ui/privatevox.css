@@ -73,6 +73,11 @@ section.tab { padding: 0 0 24px; }
 .tile .s { display: block; color: var(--muted); font-size: 14px; }
 .tile.good .v { color: var(--ok); } .tile.bad .v { color: var(--rec); }
 
+/* microphone level test (Settings) */
+.micmeter { display: inline-block; width: 110px; height: 10px; border-radius: 5px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; flex: none; }
+.micmeter i { display: block; height: 100%; width: 0; background: var(--ok); transition: width .08s; }
+.micmeter i.hot { background: var(--rec); }
+
 /* history filter bar */
 .histbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 22px; border-bottom: 1px solid var(--line); font-size: 14px; }
 .histbar select { font: 14px var(--display); padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--fg); max-width: 220px; }
