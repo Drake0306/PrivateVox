@@ -1,8 +1,8 @@
 name: Release builds
 
-# Builds PrivateVox for Windows (x64, Vulkan) and Linux (x64, Vulkan) when a version tag is pushed, and attaches the
-# bundles to the GitHub release for that tag. Unsigned alpha builds. The macOS bundle is built and uploaded from a Mac
-# (`cargo tauri build`) until signing is set up, so CI does not overwrite it here.
+# Builds PrivateVox for Windows (x64, Vulkan), Linux (x64, Vulkan) and macOS (Apple Silicon, Metal) when a version tag
+# is pushed, and attaches the bundles to the GitHub release for that tag. Unsigned alpha builds (the dmg is ad-hoc
+# signed; notarisation needs an Apple Developer account, design §13).
 on:
   push:
     tags: ["v*"]
@@ -29,6 +29,9 @@ jobs:
           - name: Linux (x64)
             os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+          - name: macOS (Apple Silicon)
+            os: macos-14
+            target: aarch64-apple-darwin
     steps:
       - uses: actions/checkout@v4
         with:
@@ -55,6 +58,7 @@ jobs:
             libvulkan-dev cmake pkg-config
 
       - name: Vulkan SDK (latest LunarG SDK; provides glslc for the whisper.cpp shaders)
+        if: runner.os != 'macOS'
         uses: jakoch/install-vulkan-sdk-action@v1
         with:
           install_runtime: true

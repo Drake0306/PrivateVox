@@ -19,8 +19,8 @@ Machines: Mac M1 8 GB (tasks 1–3, 29 Oct) and the Windows PC with an AMD GPU a
 | 8 | Crash report file, Show report in Setup | done (31 Oct, PC) | `ce1f6b3` | unit tests; live check with `PRIVATEVOX_DEBUG_SCRIPT=panic` pending |
 | 9 | First-run walkthrough in Setup | done (31 Oct, PC) | `aaa0e82` | unit tests; Setup tab not yet seen running |
 | 10 | Keep the microphone warm | done (31 Oct, PC) | `e3ed33a` | core unit test; the `mic: reused warm stream` log line not yet seen live |
-| 11 | Tokens in the OS keychain | done (31 Oct, PC) | see git log | unit tests with the memory store; real Credential Manager / Keychain round trip not yet watched |
-| 12 | macOS in the release CI | not started | | |
+| 11 | Tokens in the OS keychain | done (31 Oct, PC) | `913e088` | unit tests with the memory store; real Credential Manager / Keychain round trip not yet watched |
+| 12 | macOS in the release CI | done (31 Oct, PC) | see git log | verified on the next tag build (Task 13) |
 | 13 | Live check, docs, roadmap status table, 0.6.0-alpha.1 | not started | | |
 
 ## Task notes
@@ -81,6 +81,10 @@ Machines: Mac M1 8 GB (tasks 1–3, 29 Oct) and the Windows PC with an AMD GPU a
 - Every settings write in the app goes through `secrets::save` (apply_settings, the post-switch save, the pill-position save) and the startup load through `secrets::load`, so in memory the settings are always whole and only the file is redacted. `get_settings` to the panel is unchanged (the panel still shows the real token in its field).
 - README: the macOS note about unsigned debug builds and keychain prompts.
 - Tests: `secrets::tests::tokens_leave_settings_json_and_come_back`, `a_store_that_refuses_keeps_the_token_in_the_file`, `stash_is_idempotent_on_already_stashed_settings`. Known gap: an endpoint removed from the list leaves its entry in the keychain (harmless; cleaned up when the same id is re-added).
+
+### Task 12 — macOS in the release CI (31 Oct, Windows PC)
+
+- `release.yml` matrix gains `macOS (Apple Silicon)` on `macos-14`, target `aarch64-apple-darwin`; the Vulkan SDK step is skipped there (Metal), the Linux and Windows-only steps keep their conditions. tauri-action builds and attaches the dmg (ad-hoc signed, as the local builds were). First real run happens on the `v0.6.0-alpha.1` tag; until then the Mac-built dmg remains the checksum source.
 
 ## Windows PC notes (31 Oct)
 
