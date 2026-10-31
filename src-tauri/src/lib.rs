@@ -6,6 +6,7 @@ pub mod commands;
 pub mod crash;
 pub mod cues;
 mod discovery;
+pub mod elevation;
 mod frontmost;
 pub mod host;
 mod hotkeys;
@@ -427,6 +428,8 @@ pub fn run() {
             remote::spawn_health_loop(remote.clone(), app.handle().clone());
             #[cfg(target_os = "macos")]
             secure_input::spawn_watch(tx.clone());
+            #[cfg(windows)]
+            elevation::spawn_watch(tx.clone());
             app.manage(AppState { paths, settings, store, tx: Mutex::new(tx), stale_lock: stale, last_state, downloading: Mutex::new(Default::default()), engine: engine.clone(), polisher, remote, host: Mutex::new(None), vad_path: vad_path.clone(), model_path_slot });
             {
                 let st = app.state::<AppState>();

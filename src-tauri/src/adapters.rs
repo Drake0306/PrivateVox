@@ -169,6 +169,13 @@ impl PasteSink for SystemPaste {
             cb.set_text(text.to_string())?;
             return Ok(PasteOutcome::CopiedOnly("Accessibility not granted".into()));
         }
+        // Windows (§12): keystrokes into a window of an elevated process are dropped by UIPI, typed or chorded. Leave
+        // the text on the clipboard and say so, instead of a silent "pasted" that never arrived.
+        if crate::elevation::foreground_blocks_paste() {
+            let mut cb = arboard::Clipboard::new()?;
+            cb.set_text(text.to_string())?;
+            return Ok(PasteOutcome::CopiedOnly("the app in front runs as administrator".into()));
+        }
         if self.sender.is_none() {
             match EnigoSender::new() {
                 Ok(s) => self.sender = Some(s),

@@ -21,6 +21,7 @@ Fifth alpha: the rest of what the design doc promised, plus the first real Windo
 - The release workflow builds the macOS dmg on a macos-14 runner.
 
 ### Windows
+- Elevated-window warning: when the app in front runs as administrator, Windows drops keystrokes sent to it, so the pill says so while that window is in front and a dictation into it ends as "Copied (paste blocked)" with the text on the clipboard, instead of a "pasted" that never arrived. An elevated PrivateVox is not affected.
 - The memory strip describes the memory Whisper actually lives in. On a PC in GPU mode that is the card's own memory, found through DXGI: the adapter name, its dedicated VRAM, and what other processes hold (the OS budget for this process, minus our own model and a local Ollama). Before, the strip showed system RAM with no GPU name. CPU mode shows system RAM with the processor name; a Mac shows unified memory as before; a GPU without memory of its own is labelled "shared".
 - A GPU / CPU switch in the strip header. CPU moves Whisper into system RAM and leaves the GPU untouched (the model is unloaded from the GPU the moment you switch); GPU moves it back. The bar, the legend and the tiles follow the chosen device; the switch is hidden while a host does the work.
 - The Whisper segment of the bar is measured properly on Windows: the worker reports its VRAM usage in GPU mode and its resident set otherwise (the old measure shelled out to `ps`, which Windows lacks, and always read 0).

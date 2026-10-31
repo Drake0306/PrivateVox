@@ -37,6 +37,8 @@ mdns-sd = "0.13"
 # Windows. Linux keeps them in settings.json for now (the secret service needs libdbus and a running daemon).
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
+# Elevated-window detection (design §12): foreground window → owning process → token elevation.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }

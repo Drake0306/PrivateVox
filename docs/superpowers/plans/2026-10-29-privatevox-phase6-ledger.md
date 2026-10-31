@@ -115,6 +115,11 @@ Six findings, five fixed in the same session, one left as a warning:
 - Worker footprint: `resident_bytes()` shelled out to `ps`, which Windows lacks (always 0 there). It is now `max(process RSS via sysinfo, process VRAM via DXGI)`, so GPU mode reports the model in VRAM and CPU mode the model in RAM. The host's `/v1/status` uses the same local figures.
 - Tests: `memory::tests::local_memory_picks_vram_ram_or_unified`, `pipeline::tests::compute_switch_reloads_the_model_on_the_other_device` (GPU first, unload + reload on CPU without a dictation, no-op on the same setting, back again), `commands::memory_tests` reworked; `memory::tests::prints_this_machines_memory` (ignored) prints what a machine reports.
 
+### Windows elevated-window warning, §12 (31 Oct, night)
+
+- `src-tauri/src/elevation.rs`: `foreground_blocks_paste()` reads the foreground window's owning process and its token's `TokenElevation`, compares with our own (`blocks_paste(target, me)` = target elevated and we are not; a token Windows refuses to open counts as elevated). `spawn_watch` polls every second and sends `Cmd::ElevatedFront(bool)` on change; the coordinator keeps `elevated_front` and the idle pill warns "The app in front runs as administrator: Windows blocks pasting into it, so the text will be copied for you to paste" (secure input wins when both apply). `SystemPaste::paste` checks the same probe before the chord and returns `CopiedOnly("the app in front runs as administrator")`, so the row reads copied-only and the pill "Copied (paste blocked)".
+- Tests: `elevation::tests::paste_is_blocked_only_into_a_more_elevated_window`, `this_process_can_read_its_own_elevation`, `pipeline::tests::idle_warning_follows_elevated_front_cmd`. Not yet watched live (needs an administrator window in front on the PC: e.g. an elevated Notepad).
+
 ## Windows PC notes (31 Oct)
 
 - Toolchain found: Rust 1.95, Visual Studio 2022 Build Tools, CMake 3.31, Ninja, Node 22, Ollama (AMD AI bundle). Installed this session: Vulkan SDK 1.4.363 (`winget install KhronosGroup.VulkanSDK`), LLVM (`winget install LLVM.LLVM`, bindgen needs `libclang.dll`), Tauri CLI 2.12.4. Target dir `D:\t` (short path, 140 GB free).

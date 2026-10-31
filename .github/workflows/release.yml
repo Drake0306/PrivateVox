@@ -87,6 +87,20 @@ jobs:
       - name: Panel JS lint (syntax and const reassignment)
         run: node scripts/check-panel-js.mjs ui/panel.html ui/pill.html
 
+      # The release body comes from docs/releases/<tag>.md when that file exists, so the release reads like the notes
+      # written for it; otherwise a one-line fallback.
+      - name: Release notes
+        id: notes
+        shell: bash
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          file="docs/releases/${tag}.md"
+          {
+            echo "body<<PRIVATEVOX_NOTES_EOF"
+            if [ -f "$file" ]; then cat "$file"; else echo "PrivateVox ${tag}. Unsigned alpha builds; see the README for the one-time install steps."; fi
+            echo "PRIVATEVOX_NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and upload to the release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -94,7 +108,7 @@ jobs:
         with:
           tagName: ${{ inputs.tag || github.ref_name }}
           releaseName: "PrivateVox ${{ inputs.tag || github.ref_name }}"
-          releaseBody: "See the release notes above. Builds are unsigned alpha builds; follow the install steps in the notes."
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           prerelease: true
           tauriScript: tauri

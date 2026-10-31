@@ -1,10 +1,23 @@
 # PrivateVox
 
+[![Release builds](https://github.com/Drake0306/PrivateVox/actions/workflows/release.yml/badge.svg)](https://github.com/Drake0306/PrivateVox/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/Drake0306/PrivateVox?include_prereleases&label=release)](https://github.com/Drake0306/PrivateVox/releases)
+[![Licence: MIT](https://img.shields.io/badge/licence-MIT-0f766e.svg)](LICENSE)
+![Platforms](https://img.shields.io/badge/macOS%20%7C%20Windows%20%7C%20Linux-local%20only-5b6b69)
+
 Hold a key, talk, let go: the words land in whatever app is in front. Whisper runs on your own GPU, nothing leaves the machine, and every dictation is kept in a local history you can search, copy and delete.
+
+## Quick start
+
+1. Download the installer for your machine from the [Releases page](https://github.com/Drake0306/PrivateVox/releases): `.dmg` for a Mac with Apple Silicon, `.exe` or `.msi` for Windows, AppImage, `.deb` or `.rpm` for Linux. Builds are unsigned alphas: on macOS right-click → Open the first time; on Windows choose "More info → Run anyway" in SmartScreen.
+2. Start it. A small pill appears at the bottom of the screen and the Whisper model (574 MB) downloads once. On macOS, the Setup tab lists the two permissions to grant (Accessibility to paste, Input Monitoring for the hold key); Windows needs none.
+3. Put the cursor in any app, hold **Right ⌥ Option** (Mac) or **Right Alt** (Windows), speak, let go. The text is pasted where the cursor was. Click the pill for history and settings.
+
+Everything stays on your machine. The optional clean-up step uses a small language model you run yourself (Ollama, LM Studio or llama.cpp, on this machine or another one on your network); there is no account and no cloud.
 
 **Status:** alpha. macOS (Apple Silicon, Metal) is the platform it was built and used on. Windows builds with whisper.cpp's Vulkan backend, which runs on any recent AMD, NVIDIA or Intel GPU; the full test suites pass on a Windows PC with an AMD card, and the hold key and paste there are next to be checked by hand. See `docs/superpowers/specs/2026-10-28-whisper-harness-design.md` for the design, `docs/superpowers/plans/` for what is built when, and `docs/privatevox-roadmap.html` for the feature status table.
 
-## What works today (macOS)
+## What it does
 
 - Floating pill at the bottom of the screen above the Dock (drag it anywhere; it remembers), showing idle / listening / transcribing / pasted / error, visible on every space, never steals focus.
 - Push-to-talk on **Right Option**, toggle on **Ctrl+Shift+Space**, hold-or-toggle, and **Ctrl+Shift+Z** to undo the last paste; all rebindable from the Settings tab with a key recorder, applied without restart.
@@ -60,6 +73,7 @@ On an 8 GB Mac, `ollama pull qwen2.5:3b` is the recommended local model (about 2
 - **First-run walkthrough**: the Setup tab is a numbered list (model, microphone, the macOS grants where they exist, dictation key, polish LLM, say something) with a state for each.
 - **Crash report**: a panic writes `crash-<timestamp>.txt` next to the log with the version, OS, model and last pill state; Setup shows **Show report**.
 - **Tokens in the OS keychain**: host, remote and LLM endpoint tokens live in the macOS Keychain or the Windows Credential Manager; `settings.json` only holds `@keychain`.
+- **Windows, administrator windows**: Windows drops keystrokes sent to an app that runs as administrator. The pill warns while such a window is in front, and a dictation into it ends as "Copied (paste blocked)" with the text on the clipboard.
 
 ## Use your PC as the host
 
@@ -131,6 +145,12 @@ PRIVATEVOX_TEST_MODEL=~/path/to/ggml-large-v3-turbo-q5_0.bin cargo test -p priva
 - `src-tauri` — the app: pill and panel windows, tray, hotkeys, paste, pipeline coordinator, lifecycle.
 - `ui/` — plain HTML/CSS/JS, no bundler.
 - `spike/` — the throwaway engine benchmark; results in `docs/superpowers/spikes/`.
+
+## Feedback and contributing
+
+- Bugs and ideas: [GitHub issues](https://github.com/Drake0306/PrivateVox/issues). Say which OS and GPU, what you expected, and attach the log (`~/Library/Logs/com.drake0306.privatevox/privatevox.log` on macOS, `%LOCALAPPDATA%\com.drake0306.privatevox\logs\privatevox.log` on Windows). A crash leaves a `crash-<timestamp>.txt` next to the log; the Setup tab's "Show report" opens it.
+- Pull requests are welcome. Keep the three test suites green (`cargo test` per crate as above, the app crate with `--test-threads=1`), run `node scripts/check-panel-js.mjs ui/panel.html ui/pill.html` for the panel, and add a test with each change; the design document in `docs/superpowers/specs/` says why things are the way they are.
+- Where the project is and what is left: `docs/privatevox-roadmap.html` (open it in a browser).
 
 ## Credits
 

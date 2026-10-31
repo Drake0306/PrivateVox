@@ -98,6 +98,8 @@ pub enum Cmd {
     Notice(String),
     /// macOS Secure Event Input went on or off (design §18.12).
     SecureInput(bool),
+    /// Windows: the window in front belongs to an elevated process, so a paste into it would be dropped (§12).
+    ElevatedFront(bool),
     /// Settings → Microphone → Test: meter the input without recording (§4.5). `false` ends the test.
     MicTest(bool),
     /// 100 ms tick of a running mic test; the generation discards ticks of an ended test.
@@ -279,6 +281,8 @@ pub struct Coordinator {
     fell_back: Arc<AtomicBool>,
     /// macOS Secure Event Input is on: the pill warns that the hold key may not fire.
     secure_input: bool,
+    /// Windows: the app in front runs as administrator; the pill warns that the paste will only reach the clipboard.
+    elevated_front: bool,
     /// The mode of the dictation in flight, resolved once at Start from the per-app table (A4).
     dictation_mode: Mode,
     /// Set at start from the key that started it: the result is copied, not pasted (§4.2).
@@ -399,7 +403,7 @@ impl Coordinator {
             let s = settings.lock().map(|s| s.clone()).unwrap_or_default();
             (Machine::new(s.activation, Duration::from_millis(s.hold_threshold_ms)), s.compute)
         };
-        Coordinator { deps, settings, store, vad, emit, recording: None, queued: None, generation: 0, machine, pending_switch: None, last_paste: None, idle_tx: None, last_used_remote: false, fell_back: Arc::new(AtomicBool::new(false)), secure_input: false, dictation_mode: Mode::Clean, copy_only: false, total_memory: privatevox_core::memory::system_memory().0, mic_test: None, mic_gen: 0, mic_test_limit: MIC_TEST_LIMIT, compute }
+        Coordinator { deps, settings, store, vad, emit, recording: None, queued: None, generation: 0, machine, pending_switch: None, last_paste: None, idle_tx: None, last_used_remote: false, fell_back: Arc::new(AtomicBool::new(false)), secure_input: false, elevated_front: false, dictation_mode: Mode::Clean, copy_only: false, total_memory: privatevox_core::memory::system_memory().0, mic_test: None, mic_gen: 0, mic_test_limit: MIC_TEST_LIMIT, compute }
     }
 
     /// Settings → GPU / CPU changed (§9): move a resident model to the other device right away, so GPU memory is
@@ -496,10 +500,16 @@ impl Coordinator {
 
     fn idle(&self) {
         let settings = self.settings();
-        let warning = self.secure_input.then(|| match settings.toggle.combo.as_deref() {
-            Some(c) => format!("Secure input is on (a password field?). The hold key may not fire; use {c}"),
-            None => "Secure input is on (a password field?). The hold key may not fire until it is off".to_string(),
-        });
+        let warning = if self.secure_input {
+            Some(match settings.toggle.combo.as_deref() {
+                Some(c) => format!("Secure input is on (a password field?). The hold key may not fire; use {c}"),
+                None => "Secure input is on (a password field?). The hold key may not fire until it is off".to_string(),
+            })
+        } else if self.elevated_front {
+            Some("The app in front runs as administrator: Windows blocks pasting into it, so the text will be copied for you to paste".to_string())
+        } else {
+            None
+        };
         (self.emit)(PillState::Idle { hotkey_hint: hotkey_hint(&settings), warning });
     }
 
@@ -574,6 +584,12 @@ impl Coordinator {
                 Cmd::Rerun { id, model } => self.rerun(id, &model, &tx),
                 Cmd::SecureInput(on) => {
                     self.secure_input = on;
+                    if self.recording.is_none() {
+                        self.idle();
+                    }
+                }
+                Cmd::ElevatedFront(on) => {
+                    self.elevated_front = on;
                     if self.recording.is_none() {
                         self.idle();
                     }
@@ -2972,6 +2988,26 @@ mod tests {
         assert_eq!(h.settings.lock().unwrap().model_id, "large-v3-turbo", "the active model is restored after the re-run");
         let loaded: Vec<String> = loads.lock().unwrap().iter().map(|p| p.file_name().unwrap().to_string_lossy().to_string()).collect();
         assert!(loaded.iter().any(|f| f.contains("large-v3-q5_0")) && loaded.last().map(|f| f.contains("turbo")).unwrap_or(false), "{loaded:?}");
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
+    }
+
+    #[test]
+    fn idle_warning_follows_elevated_front_cmd() {
+        let h = harness(engine_saying("x"), capture_ok());
+        h.tx.send(Cmd::ElevatedFront(true)).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        let last = h.states.lock().unwrap().last().cloned().unwrap();
+        assert!(matches!(&last, PillState::Idle { warning: Some(w), .. } if w.contains("administrator") && w.contains("copied")), "{last:?}");
+        // Secure input, when both are on, is the more urgent warning (the key may not even fire).
+        h.tx.send(Cmd::SecureInput(true)).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        let last = h.states.lock().unwrap().last().cloned().unwrap();
+        assert!(matches!(&last, PillState::Idle { warning: Some(w), .. } if w.contains("Secure input")), "{last:?}");
+        h.tx.send(Cmd::SecureInput(false)).unwrap();
+        h.tx.send(Cmd::ElevatedFront(false)).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(matches!(h.states.lock().unwrap().last(), Some(PillState::Idle { warning: None, .. })));
         h.tx.send(Cmd::Quit).unwrap();
         h.join.join().unwrap();
     }

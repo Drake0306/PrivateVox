@@ -58,7 +58,7 @@ table.status td:last-child{white-space:nowrap}
   <p class="lede">What the design promised, what is built, what is next. Six phases are built: it dictates, switches models, shows its memory, cleans up the text with a local or LAN LLM, hands the work to a PC on the LAN, previews, auto-stops, takes spoken commands, and has every setting and safety net the design listed. Phase 6 was finished on the Windows PC, where all three test suites are green with the Vulkan engine and Roy has now run the app by hand: it works. What is left is short, and listed first.</p>
   <div class="summary">
     <div class="sum done"><div class="n">6 / 6</div><div class="k">plans built; Mac and Windows both run by hand</div></div>
-    <div class="sum next"><div class="n">1</div><div class="k">design item still to build (Windows elevated-window warning)</div></div>
+    <div class="sum next"><div class="n">0</div><div class="k">design items left to build</div></div>
     <div class="sum later"><div class="n">7</div><div class="k">installers once the 0.6.0 tag builds (dmg now from CI)</div></div>
     <div class="sum you"><div class="n">4</div><div class="k">things only you can do</div></div>
   </div>
@@ -71,7 +71,7 @@ table.status td:last-child{white-space:nowrap}
     <li><span class="mark you">!</span><div><b>Host mode for real: this PC as host, the Mac as client</b><small>Settings → Network on the PC: Act as host. On the Mac: Use a host, enter the PC's address, Test, Apply, dictate. Everything so far was tested with one Mac in both roles. If it works, decide on the host extras (C3).</small></div></li>
     <li><span class="mark you">!</span><div><b>GPU timing on the RX 9070</b><small>How fast Vulkan transcribes here, so the model recommendations can be tuned for PCs: <code>cargo test -p privatevox-engine --release --lib spike_timing -- --ignored --nocapture</code> with <code>PRIVATEVOX_TEST_MODEL</code> and <code>PRIVATEVOX_SPIKE_CLIPS</code> (details in <code>resume.conversation.md</code>; the Windows benchmark clip generator makes 16 kHz clips).</small></div></li>
     <li><span class="mark you">!</span><div><b>On the Mac: click the menu bar icon once</b><small>The phase 6 tray items (Model submenu, Load model now, Show pill, Launch at login) were never seen open by eye because the UI scripting failed that evening.</small></div></li>
-    <li><span class="mark next"></span><div><b>Build: Windows elevated-window warning (§12)</b><small>When the app in front runs as administrator, Windows refuses the paste. The pill should say so, as it does for secure input on the Mac. The last Windows item in the design document; half a session.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>Built: Windows elevated-window warning (§12)</b><small>When the app in front runs as administrator the pill says so and a dictation into it ends as "Copied (paste blocked)". Built and unit-tested on 31 Oct; to see it, run Notepad as administrator and dictate into it.</small></div></li>
     <li><span class="mark todo"></span><div><b>Later, if wanted</b><small>Translate to any language through the LLM (B2); host extras: shared dictionary, client-driven downloads, queue indicator (C3); Wayland hold key (C4); Linux parity (tokens in a keyring, a benchmark clip). Signing, notarisation and auto-update wait on an Apple Developer account and a Windows certificate (C2).</small></div></li>
   </ul></div>
 </section>
@@ -186,7 +186,7 @@ table.status td:last-child{white-space:nowrap}
     <li><span class="mark done">✓</span><div><b>Windows-aware screens</b><small>Setup skips the two Mac-only permissions and opens the Windows microphone settings page; tokens go to the Credential Manager; the Keys card names the hold keys for a PC keyboard with a Mac / Windows switch.</small></div></li>
     <li><span class="mark done">✓</span><div><b>Fixed: the memory strip showed RAM, no GPU</b><small>It now reads the card through DXGI ("AMD Radeon RX 9070 · 16 GB VRAM", what others hold) and has a GPU / CPU switch: CPU moves Whisper into system RAM and frees the GPU at once, and the bar follows.</small></div></li>
     <li><span class="mark you">!</span><div><b>Still to try by hand</b><small>This PC as the host for the Mac, and how fast the GPU transcribes (both in "What is left").</small></div></li>
-    <li><span class="mark next"></span><div><b>Still to build</b><small>The elevated-window warning (§12): a paste into an app running as administrator is refused by Windows and the pill should say so.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>Elevated-window warning</b><small>A paste into an app running as administrator is refused by Windows; the pill warns while such a window is in front and the dictation ends as copied-only (built 31 Oct, night).</small></div></li>
     <li><span class="mark todo"></span><div><b>Quirk, not a bug</b><small>With a host offline the Test button says "did not answer in time" rather than "nothing answered": Windows takes two seconds to refuse a connection. The local fallback is the same.</small></div></li>
   </ul></div>
 </section>
@@ -219,7 +219,7 @@ table.status td:last-child{white-space:nowrap}
         <tr><td>Crash report file and Show report</td><td>§10</td><td><span class="chip next">built · unit</span></td></tr>
         <tr><td>Worker process: crash and hang recovery, dies with the app</td><td>§10, §18.1</td><td><span class="chip done">built · live (macOS) · unit (Windows)</span></td></tr>
         <tr><td>Windows: hold key and paste</td><td>§12</td><td><span class="chip done">built · live (31 Oct)</span></td></tr>
-        <tr><td>Windows: elevated-window warning</td><td>§12</td><td><span class="chip next">to build</span></td></tr>
+        <tr><td>Windows: elevated-window warning</td><td>§12</td><td><span class="chip next">built · unit (try an administrator window)</span></td></tr>
         <tr><td>GPU memory strip reads the card (VRAM) on a PC; GPU / CPU switch</td><td>§9</td><td><span class="chip done">built · live (31 Oct)</span></td></tr>
         <tr><td>Keys named per keyboard, Mac / Windows switch</td><td>§4.1</td><td><span class="chip done">built · live (31 Oct)</span></td></tr>
         <tr><td>Vulkan timing on an AMD GPU</td><td>§12, §13</td><td><span class="chip you">pending · needs the PC</span></td></tr>
