@@ -15,8 +15,8 @@ Machines: Mac M1 8 GB (tasks 1–3, 29 Oct) and the Windows PC with an AMD GPU a
 | — | Windows pass, part 1: worker parent watch, benchmark clip, build wrapper, Unix-only tests | done (31 Oct, PC) | `e7059a2` | all three suites green on Windows |
 | 5 | Microphone level test | done (31 Oct, PC) | `d64f713` | unit test; not yet watched with a real microphone |
 | 6 | Paste method per app | done (31 Oct, PC) | `249942a` | unit tests (core + app) |
-| 7 | Q8_0 turbo offered from 12 GB | done (31 Oct, PC) | see git log | unit tests; the PC (32 GB) will show it, the 8 GB Mac will not |
-| 8 | Crash report file, Show report in Setup | not started | | |
+| 7 | Q8_0 turbo offered from 12 GB | done (31 Oct, PC) | `43b17ef` | unit tests; the PC (32 GB) will show it, the 8 GB Mac will not |
+| 8 | Crash report file, Show report in Setup | done (31 Oct, PC) | see git log | unit tests; live check with `PRIVATEVOX_DEBUG_SCRIPT=panic` pending |
 | 9 | First-run walkthrough in Setup | not started | | |
 | 10 | Keep the microphone warm | not started | | |
 | 11 | Tokens in the OS keychain | not started | | |
@@ -52,6 +52,14 @@ Machines: Mac M1 8 GB (tasks 1–3, 29 Oct) and the Windows PC with an AMD GPU a
 - App: `list_models` and the tray's Model submenu list `offered_catalog`, so the entry appears only on machines with ≥ 12 GB or where the file already exists (a file downloaded elsewhere still loads and can be deleted). `ModelRow.estimated_bytes` added so the panel has a size for models outside the tier table.
 - Panel: "Q8 · higher precision" badge on the card; short name `turbo q8` in rows.
 - Tests: `models::tests::q8_is_hidden_below_12gb_unless_present`, `catalog_has_four_entries_with_spec_sizes`, `memory::tests::q8_footprint_is_between_q5_and_f16`. The host's `/v1/models` still lists the full catalog (a client switching the host's model sees everything the host could download); left as is.
+
+### Task 8 — Crash report (31 Oct, Windows PC)
+
+- `src-tauri/src/crash.rs`: `report_text` (version, OS, model, last pill state, panic message), `write` (`crash-<unix ts>.txt`, a suffix when two land in the same second), `latest`, `install_hook` (panic hook that writes the report, then the default hook). Installed in setup with the log directory (`app_log_dir`, now carried in `AppPaths.log_dir`), reading the model id and the last pill state at panic time.
+- `permissions` reply gains `crash_report` (path of the newest report); new command `open_crash_report` opens it with the OS opener (`cmd /C start`, `open`, `xdg-open`). Deviation from the plan: no general `open_path(path)` command; the app only ever opens its own newest report, so nothing in the webview can ask the OS to open an arbitrary file.
+- Panel Setup: "Show report" on the stale-lock line when a report exists; a quieter line with the same button when a report exists without a stale lock. Debug script action `panic` for the live check (`PRIVATEVOX_DEBUG_SCRIPT=panic`: the helper thread panics, the app stays up, a report appears).
+- Found and fixed on the way: `AppPaths::model_file` built the file name as `ggml-<id>-q5_0.bin`, wrong for distil (`ggml-distil-large-v3.bin`) and for the new Q8 entry; it now asks the catalog. Before, a restart with distil selected started without a model path.
+- Tests: `crash::tests::report_text_has_version_os_model_state`, `write_and_latest_pick_the_newest`, `os_label_names_the_platform`.
 
 ## Windows PC notes (31 Oct)
 

@@ -29,6 +29,15 @@ pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+/// "windows 10.0.26300" / "macos 15.1" style label for logs and crash reports.
+pub fn os_label() -> String {
+    let name = std::env::consts::OS;
+    match sysinfo::System::os_version() {
+        Some(v) => format!("{name} {v}"),
+        None => name.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

@@ -182,7 +182,8 @@
           <div class="check"><span>Input Monitoring (needed for the hold key)</span><span><span id="pIm"></span> <button class="btn sm" data-priv="input_monitoring">Open setting</button></span></div>
           <div class="check"><span>Polish LLM</span><span id="pLlm"></span></div>
           <p class="muted">After granting Accessibility or Input Monitoring, quit PrivateVox from the menu bar and start it again.</p>
-          <p id="stale" class="err" hidden>The last session ended unexpectedly. Nothing was lost; history is saved after every dictation.</p>
+          <p id="stale" class="err" hidden>The last session ended unexpectedly. Nothing was lost; history is saved after every dictation. <button class="btn sm" id="crashShowStale" hidden title="Open the crash report written when the app went down">Show report</button></p>
+          <p id="crashLine" class="muted" hidden>A crash report exists from an earlier session. <button class="btn sm" id="crashShow">Show report</button></p>
         </div>
         <div class="card"><h3>Tools</h3><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="exportMd">Export history as Markdown</button><button class="btn" id="exportJson">Export history as JSON</button><button class="btn" id="dbgStart" title="Record without the hotkey">● Record</button><button class="btn" id="dbgStop" title="Stop recording">■ Stop</button></div></div>
       </div>
@@ -637,6 +638,9 @@
     $('pAcc').innerHTML = p.accessibility ? '<span class="ok">granted</span>' : '<span class="no">not granted</span>';
     $('pIm').innerHTML = p.input_monitoring ? '<span class="ok">granted</span>' : '<span class="no">not granted</span>';
     $('stale').hidden = !p.stale_lock;
+    $('crashShowStale').hidden = !p.crash_report;
+    $('crashLine').hidden = p.stale_lock || !p.crash_report;
+    for (const id of ['crashShowStale', 'crashShow']) $(id).onclick = async () => { try { await inv('open_crash_report'); } catch (e) { flash(String(e)); } };
     const st = await inv('llm_status');
     $('pLlm').innerHTML = !st.enabled ? '<span class="muted">off</span>' : st.selected ? `<span class="ok">${esc(st.selected.label)} ready</span>` : '<span class="no">none found</span> <span class="muted">Install Ollama and run <code>ollama pull qwen2.5:3b</code>, or add a LAN endpoint in Settings → Polish</span>';
     document.querySelectorAll('[data-priv]').forEach(b => b.onclick = () => inv('open_privacy', { pane: b.dataset.priv }));

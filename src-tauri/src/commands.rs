@@ -62,6 +62,8 @@ pub struct Permissions {
     pub input_monitoring: bool,
     pub model_present: bool,
     pub stale_lock: bool,
+    /// Path of the newest crash report in the log directory, if any (§10).
+    pub crash_report: Option<String>,
 }
 
 #[tauri::command]
@@ -72,6 +74,34 @@ pub fn permissions(state: State<'_, AppState>) -> Permissions {
         input_monitoring: crate::hotkeys::input_monitoring_granted(false),
         model_present: state.paths.model_file(&model_id).exists(),
         stale_lock: state.stale_lock,
+        crash_report: crate::crash::latest(&state.paths.log_dir).map(|p| p.to_string_lossy().to_string()),
+    }
+}
+
+/// Setup → "Show report": opens the newest crash report in the OS text viewer. Only files the app wrote under its
+/// own log directory can be opened this way.
+#[tauri::command]
+pub fn open_crash_report(state: State<'_, AppState>) -> Result<String, String> {
+    let path = crate::crash::latest(&state.paths.log_dir).ok_or("No crash report found")?;
+    open_in_os(&path)?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// Hands a file to the platform's default opener.
+fn open_in_os(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let status = std::process::Command::new("open").arg(path).status();
+    #[cfg(target_os = "windows")]
+    let status = {
+        use std::os::windows::process::CommandExt as _;
+        std::process::Command::new("cmd").args(["/C", "start", "", &path.to_string_lossy()]).creation_flags(0x0800_0000).status()
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let status = std::process::Command::new("xdg-open").arg(path).status();
+    match status {
+        Ok(s) if s.success() => Ok(()),
+        Ok(s) => Err(format!("opener exited with {s}")),
+        Err(e) => Err(format!("could not open {}: {e}", path.display())),
     }
 }
 

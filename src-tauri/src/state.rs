@@ -11,11 +11,13 @@ use std::sync::{Arc, Mutex};
 #[derive(Debug, Clone)]
 pub struct AppPaths {
     pub data_dir: PathBuf,
+    /// Tauri `app_log_dir`: the log file and the crash reports (§10).
+    pub log_dir: PathBuf,
 }
 
 impl AppPaths {
-    pub fn new(data_dir: PathBuf) -> Self {
-        AppPaths { data_dir }
+    pub fn new(data_dir: PathBuf, log_dir: PathBuf) -> Self {
+        AppPaths { data_dir, log_dir }
     }
     pub fn settings(&self) -> PathBuf {
         self.data_dir.join("settings.json")
@@ -32,9 +34,10 @@ impl AppPaths {
     pub fn models_dir(&self) -> PathBuf {
         self.data_dir.join("models")
     }
-    /// Model file for a model id, e.g. `large-v3-turbo` → `models/ggml-large-v3-turbo-q5_0.bin`.
+    /// Model file for a catalog id, e.g. `large-v3-turbo` → `models/ggml-large-v3-turbo-q5_0.bin`. Unknown ids
+    /// map to a q5_0 name so the caller sees "not present" rather than panicking.
     pub fn model_file(&self, model_id: &str) -> PathBuf {
-        self.models_dir().join(format!("ggml-{model_id}-q5_0.bin"))
+        privatevox_core::models::model_file(&self.models_dir(), model_id).unwrap_or_else(|| self.models_dir().join(format!("ggml-{model_id}-q5_0.bin")))
     }
 }
 

@@ -3,6 +3,7 @@
 pub mod adapters;
 pub mod benchmark;
 pub mod commands;
+pub mod crash;
 pub mod cues;
 mod discovery;
 mod frontmost;
@@ -106,6 +107,7 @@ pub fn run() {
             commands::current_pill_state,
             commands::open_privacy,
             commands::permissions,
+            commands::open_crash_report,
             commands::download_model,
             commands::list_models,
             commands::switch_model,
@@ -149,7 +151,8 @@ pub fn run() {
             let data_dir = app.path().app_data_dir()?;
             migrate_old_data_dir(&data_dir);
             std::fs::create_dir_all(&data_dir)?;
-            let paths = AppPaths::new(data_dir);
+            let log_dir = app.path().app_log_dir()?;
+            let paths = AppPaths::new(data_dir, log_dir);
 
             let (lockfile, stale) = LockFile::acquire(&paths.lock())?;
             if stale {
@@ -284,6 +287,16 @@ pub fn run() {
             };
 
             let last_state = Arc::new(laststate::LastState::default());
+            // Crash reports (§10): any panic writes crash-<ts>.txt next to the log with the model and the last pill state.
+            crash::install_hook(paths.log_dir.clone(), env!("CARGO_PKG_VERSION"), {
+                let settings = settings.clone();
+                let last_state = last_state.clone();
+                Arc::new(move || {
+                    let model = settings.try_lock().map(|s| s.model_id.clone()).unwrap_or_else(|_| "unknown".into());
+                    let state = last_state.current().and_then(|s| serde_json::to_string(&s).ok());
+                    (model, state)
+                })
+            });
             let handle = app.handle().clone();
             let recorder = last_state.clone();
             let emit = Box::new(move |s: PillState| {
@@ -377,6 +390,8 @@ pub fn run() {
                             "start" => Cmd::Start,
                             "stop" => Cmd::Stop,
                             "cancel" => Cmd::Cancel,
+                            // Exercises the crash report (§10): this helper thread panics; the hook writes the file.
+                            "panic" => panic!("debug script asked for a panic"),
                             // A tap of the hold key through the activation machine (toggle / hold-or-toggle modes).
                             "tap" => {
                                 let _ = tx.send(Cmd::Key(privatevox_core::hotkeys::Input::Down(privatevox_core::hotkeys::Binding::Ptt)));
