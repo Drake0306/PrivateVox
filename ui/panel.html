@@ -20,7 +20,7 @@
   <div class="scroll">
     <section class="tab" id="tab-history">
       <div class="gpu" id="gpu">
-        <div class="head"><h2 id="gpuTitle">GPU memory</h2><span class="lab">Detected</span><span class="box" id="machine">…</span><span class="lab">Polish LLM</span><select class="box" id="llmPick" title="Which LLM cleans up the text"><option value="off">Off</option></select></div>
+        <div class="head"><h2 id="gpuTitle">GPU memory</h2><span class="seg" id="computeSeg" role="group" aria-label="Run Whisper on" title="Where Whisper runs: the GPU's memory, or the CPU with the model in system RAM and nothing on the GPU"><button data-compute="gpu" aria-pressed="true">GPU</button><button data-compute="cpu" aria-pressed="false">CPU</button></span><span class="lab">Detected</span><span class="box" id="machine">…</span><span class="lab">Polish LLM</span><select class="box" id="llmPick" title="Which LLM cleans up the text"><option value="off">Off</option></select></div>
         <div class="meter" id="meter" role="img" aria-label="Memory usage"><i class="o"></i><i class="w"></i><i class="l"></i></div>
         <div class="ticks"><span>0</span><span id="tickMid"></span><span id="tickMax"></span></div>
         <div class="leg" id="memLeg"></div>
@@ -364,8 +364,12 @@
   async function loadMemory() {
     const [models, mem, machine, eps, llm] = await Promise.all([inv('list_models'), inv('memory_report'), inv('machine_label'), inv('list_llm_endpoints'), inv('llm_status')]);
     const onHost = !!mem.source_label;
-    $('gpuTitle').textContent = onHost ? 'GPU memory · on ' + mem.source_label : 'GPU memory';
-    $('machine').textContent = onHost ? (mem.adapter || mem.source_label) : machine;
+    // The bar describes whichever memory Whisper lives in: the card's VRAM, system RAM in CPU mode, unified memory on a Mac.
+    const kindTitle = { VRAM: 'GPU memory (VRAM)', RAM: 'System memory (CPU)', unified: 'Unified memory', shared: 'Shared memory (GPU uses system RAM)' }[mem.memory_kind] || 'Memory';
+    $('gpuTitle').textContent = onHost ? 'Memory · on ' + mem.source_label : kindTitle;
+    $('machine').textContent = onHost ? (mem.adapter || mem.source_label) : (mem.adapter || machine);
+    $('computeSeg').hidden = onHost;
+    $('computeSeg').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.compute === mem.device)));
     if (onHost) {
       try { const rm = (remoteModelsCache && Date.now() - remoteModelsCache.at < 30000) ? remoteModelsCache.value : (remoteModelsCache = { at: Date.now(), value: await inv('remote_models') }).value; $('modelPick').innerHTML = rm.models.map(m => `<option value="${m.id}" ${m.active ? 'selected' : ''} ${m.downloaded ? '' : 'disabled'}>${esc(m.id)} on ${esc(mem.source_label)}${m.downloaded ? '' : ' (not downloaded)'}</option>`).join(''); } catch (e) { /* keep the local list */ }
     }
@@ -404,6 +408,11 @@
       cards.appendChild(el);
     }
   }
+  document.querySelectorAll('#computeSeg button').forEach(b => b.onclick = async () => {
+    if (b.getAttribute('aria-pressed') === 'true') return;
+    try { await inv('set_compute', { gpu: b.dataset.compute === 'gpu' }); flash(b.dataset.compute === 'gpu' ? 'Whisper moves to the GPU' : 'Whisper moves to the CPU; the GPU is left alone'); } catch (e) { flash(String(e)); }
+    setTimeout(loadMemory, 300); setTimeout(loadMemory, 2500);
+  });
   $('modelPick').onchange = async (e) => { try { if (e.target.dataset.remote) { await inv('select_remote_model', { id: e.target.value }); flash('Asked the host to switch'); } else { await inv('switch_model', { id: e.target.value }); } } catch (err) { flash(String(err)); } };
   $('llmPick').onchange = async (e) => {
     try {

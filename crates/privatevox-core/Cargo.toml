@@ -36,3 +36,7 @@ libc = "0.2"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 whisper-rs = { version = "0.16.0", features = ["vulkan"] }
+
+# GPU memory figures for the strip (DXGI: adapter name, dedicated VRAM, budget, this process's usage).
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common"] }

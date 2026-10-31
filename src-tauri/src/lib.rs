@@ -117,6 +117,7 @@ pub fn run() {
             commands::delete_model,
             commands::benchmark_model,
             commands::memory_report,
+            commands::set_compute,
             commands::check_combo,
             commands::platform_keys,
             commands::debug_start,

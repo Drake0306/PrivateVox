@@ -111,6 +111,28 @@ pub enum PasteMethod {
     Type,
 }
 
+/// Where Whisper runs (design §9). `Gpu` puts the model in GPU memory (VRAM on a PC, unified memory on a Mac);
+/// `Cpu` keeps it in system RAM and never touches the GPU, for machines whose GPU is busy or too small.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Compute {
+    #[default]
+    Gpu,
+    Cpu,
+}
+
+impl Compute {
+    pub fn is_gpu(self) -> bool {
+        matches!(self, Compute::Gpu)
+    }
+    pub fn id(self) -> &'static str {
+        match self {
+            Compute::Gpu => "gpu",
+            Compute::Cpu => "cpu",
+        }
+    }
+}
+
 /// Serve transcription and polish to other PrivateVox instances on the LAN (design §8.6).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(default)]
@@ -169,6 +191,8 @@ pub struct Settings {
     pub max_clip_seconds: u32,
     pub paste_method: PasteMethod,
     pub flash_attention: bool,
+    /// GPU (default) or CPU for Whisper; switching reloads the model on the other device (§9).
+    pub compute: Compute,
     /// Last dragged pill position in physical pixels; `None` means bottom-centre above the Dock.
     pub pill_position: Option<(i32, i32)>,
     /// Remove filler words ("uh", "hmm"; "um" only in English) before saving and before the LLM (design §18.9).
@@ -236,6 +260,7 @@ impl Default for Settings {
             max_clip_seconds: 300,
             paste_method: PasteMethod::Clipboard,
             flash_attention: true,
+            compute: Compute::Gpu,
             pill_position: None,
             remove_fillers: true,
             mode: crate::polish::Mode::Clean,

@@ -290,6 +290,8 @@ pub struct Coordinator {
     mic_gen: u64,
     /// Tests shorten this; the app keeps `MIC_TEST_LIMIT`.
     pub mic_test_limit: Duration,
+    /// The device the resident model was loaded for; a settings change to the other one reloads it (§9).
+    compute: privatevox_core::settings::Compute,
 }
 
 /// The hold key as the pill names it ("right ⌥", or a combination), if one is set.
@@ -393,11 +395,41 @@ fn stop_hint(s: &Settings, stage: &privatevox_core::hotkeys::Stage) -> Option<St
 
 impl Coordinator {
     pub fn new(deps: Deps, settings: Arc<Mutex<Settings>>, store: Arc<Mutex<Store>>, vad: Vad, emit: Box<dyn Fn(PillState) + Send>) -> Self {
-        let machine = {
+        let (machine, compute) = {
             let s = settings.lock().map(|s| s.clone()).unwrap_or_default();
-            Machine::new(s.activation, Duration::from_millis(s.hold_threshold_ms))
+            (Machine::new(s.activation, Duration::from_millis(s.hold_threshold_ms)), s.compute)
         };
-        Coordinator { deps, settings, store, vad, emit, recording: None, queued: None, generation: 0, machine, pending_switch: None, last_paste: None, idle_tx: None, last_used_remote: false, fell_back: Arc::new(AtomicBool::new(false)), secure_input: false, dictation_mode: Mode::Clean, copy_only: false, total_memory: privatevox_core::memory::system_memory().0, mic_test: None, mic_gen: 0, mic_test_limit: MIC_TEST_LIMIT }
+        Coordinator { deps, settings, store, vad, emit, recording: None, queued: None, generation: 0, machine, pending_switch: None, last_paste: None, idle_tx: None, last_used_remote: false, fell_back: Arc::new(AtomicBool::new(false)), secure_input: false, dictation_mode: Mode::Clean, copy_only: false, total_memory: privatevox_core::memory::system_memory().0, mic_test: None, mic_gen: 0, mic_test_limit: MIC_TEST_LIMIT, compute }
+    }
+
+    /// Settings → GPU / CPU changed (§9): move a resident model to the other device right away, so GPU memory is
+    /// given back the moment the user picks CPU (and taken the moment they pick GPU). Deferred while recording;
+    /// the next load after that uses the new device anyway.
+    fn apply_compute(&mut self) {
+        let wanted = self.settings().compute;
+        if wanted == self.compute {
+            return;
+        }
+        self.compute = wanted;
+        if self.recording.is_some() {
+            return;
+        }
+        let Some(path) = self.deps.model_path.clone() else { return };
+        let loaded = self.deps.engine.try_lock().map(|e| e.is_loaded()).unwrap_or(false);
+        if !loaded {
+            return;
+        }
+        (self.emit)(PillState::LoadingModel { progress: None });
+        let flash = self.settings().flash_attention;
+        let result = self.deps.engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| {
+            e.unload()?;
+            e.set_use_gpu(wanted.is_gpu());
+            e.load(&path, flash)
+        });
+        match result {
+            Ok(info) => log::info!("whisper moved to the {} in {:?} ({} MB)", wanted.id(), info.duration, info.resident_bytes / 1_000_000),
+            Err(e) => self.error(&format!("Model failed to load on the {}: {e}", wanted.id())),
+        }
     }
 
     /// Unloads the current model and loads `id` from the models directory. Refused if the file is missing.
@@ -411,11 +443,15 @@ impl Coordinator {
             return;
         }
         (self.emit)(PillState::LoadingModel { progress: None });
-        let flash = self.settings().flash_attention;
+        let (flash, gpu) = {
+            let s = self.settings();
+            (s.flash_attention, s.compute.is_gpu())
+        };
         let result = self.deps.engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| {
             if e.is_loaded() {
                 e.unload()?;
             }
+            e.set_use_gpu(gpu);
             e.load(&path, flash)
         });
         match result {
@@ -514,6 +550,7 @@ impl Coordinator {
                     if let Ok(mut t) = self.deps.idle.lock() {
                         t.set_minutes(s.idle_unload_minutes, Instant::now());
                     }
+                    self.apply_compute();
                     if self.recording.is_none() {
                         self.idle();
                     }
@@ -742,13 +779,17 @@ impl Coordinator {
     fn preload_model(&mut self) {
         let Some(path) = self.deps.model_path.clone() else { return };
         let engine = self.deps.engine.clone();
-        let flash = self.settings().flash_attention;
+        let (flash, gpu) = {
+            let s = self.settings();
+            (s.flash_attention, s.compute.is_gpu())
+        };
         let idle = self.deps.idle.clone();
         std::thread::Builder::new()
             .name("privatevox-preload".into())
             .spawn(move || {
                 if let Ok(mut e) = engine.lock() {
                     if !e.is_loaded() {
+                        e.set_use_gpu(gpu);
                         match e.load(&path, flash) {
                             Ok(d) => {
                                 log::info!("model preloaded in {:?} ({} MB resident)", d.duration, d.resident_bytes / 1_000_000);
@@ -1504,7 +1545,14 @@ impl Coordinator {
                 return;
             };
             (self.emit)(PillState::LoadingModel { progress: None });
-            let load = self.deps.engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| if e.is_loaded() { Ok(LoadInfo { duration: Duration::ZERO, resident_bytes: 0 }) } else { e.load(&path, settings.flash_attention) });
+            let load = self.deps.engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| {
+                if e.is_loaded() {
+                    Ok(LoadInfo { duration: Duration::ZERO, resident_bytes: 0 })
+                } else {
+                    e.set_use_gpu(settings.compute.is_gpu());
+                    e.load(&path, settings.flash_attention)
+                }
+            });
             if let Err(e) = load {
                 self.error(&format!("Model failed to load: {e}"));
                 self.schedule_idle(tx);
@@ -1606,8 +1654,13 @@ mod tests {
         finals: Arc<Mutex<Vec<bool>>>,
         prompts: Arc<Mutex<Vec<Option<String>>>>,
         languages: Arc<Mutex<Vec<Option<String>>>>,
+        /// Every `set_use_gpu` call, in order.
+        devices: Arc<Mutex<Vec<bool>>>,
     }
     impl Engine for FakeEngine {
+        fn set_use_gpu(&mut self, gpu: bool) {
+            self.devices.lock().unwrap().push(gpu);
+        }
         fn load(&mut self, model: &Path, _flash: bool) -> anyhow::Result<LoadInfo> {
             *self.load_calls.lock().unwrap() += 1;
             self.loads.lock().unwrap().push(model.to_path_buf());
@@ -1812,7 +1865,7 @@ mod tests {
 
     #[test]
     fn pipeline_records_transcribes_pastes_and_stores() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         let (states, pasted, count) = run_once(h);
         assert_eq!(pasted, vec!["Hello.".to_string()]);
         assert_eq!(count, 1);
@@ -1823,7 +1876,7 @@ mod tests {
 
     #[test]
     fn pipeline_discards_clips_under_300ms() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default() }, FakeCapture { pcm: vec![0.3; 2_000], fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() }, FakeCapture { pcm: vec![0.3; 2_000], fail: false, die_after_start: false });
         let (states, pasted, count) = run_once(h);
         assert!(pasted.is_empty());
         assert_eq!(count, 0);
@@ -1832,7 +1885,7 @@ mod tests {
 
     #[test]
     fn pipeline_reports_silent_mic() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default() }, FakeCapture { pcm: vec![0.0; 16_000], fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() }, FakeCapture { pcm: vec![0.0; 16_000], fail: false, die_after_start: false });
         let (states, pasted, count) = run_once(h);
         assert!(pasted.is_empty());
         assert_eq!(count, 0);
@@ -1841,7 +1894,7 @@ mod tests {
 
     #[test]
     fn pipeline_queues_clip_until_engine_loaded() {
-        let h = harness(FakeEngine { load_delay: Duration::from_millis(300), decode_delay: Duration::ZERO, text: "Hello.".into(), loaded: false, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::from_millis(300), decode_delay: Duration::ZERO, text: "Hello.".into(), loaded: false, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         let (states, pasted, _) = run_once(h);
         assert_eq!(pasted, vec!["Hello.".to_string()]);
         assert!(kinds(&states).contains(&"loading_model"), "{:?}", kinds(&states));
@@ -1850,7 +1903,7 @@ mod tests {
     #[test]
     fn direct_stop_after_hotkey_start_keeps_hotkeys_working() {
         use privatevox_core::hotkeys::{Binding, Input};
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::Key(Input::Down(Binding::Ptt))).unwrap();
         h.tx.send(Cmd::Stop).unwrap(); // what the clip cap, the tray or the debug button sends
         h.tx.send(Cmd::Key(Input::Up(Binding::Ptt))).unwrap();
@@ -1865,7 +1918,7 @@ mod tests {
 
     #[test]
     fn pipeline_reports_device_loss_mid_recording() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: true });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: true });
         h.tx.send(Cmd::Start).unwrap();
         std::thread::sleep(Duration::from_millis(2300));
         h.tx.send(Cmd::Quit).unwrap();
@@ -1879,7 +1932,7 @@ mod tests {
     #[test]
     fn pipeline_starts_model_load_while_recording() {
         let calls = Arc::new(Mutex::new(0u32));
-        let h = harness(FakeEngine { load_delay: Duration::from_millis(200), decode_delay: Duration::ZERO, text: "Hello.".into(), loaded: false, load_calls: calls.clone(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::from_millis(200), decode_delay: Duration::ZERO, text: "Hello.".into(), loaded: false, load_calls: calls.clone(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::Start).unwrap();
         std::thread::sleep(Duration::from_millis(80));
         assert_eq!(*calls.lock().unwrap(), 1, "load must begin at Start, not after Stop");
@@ -1894,7 +1947,7 @@ mod tests {
     fn switch_unloads_then_loads_and_updates_settings() {
         let loads: Arc<Mutex<Vec<PathBuf>>> = Default::default();
         let unloads: Arc<Mutex<u32>> = Default::default();
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: unloads.clone(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: unloads.clone(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::SwitchModel("large-v3".into())).unwrap();
         std::thread::sleep(Duration::from_millis(200));
         h.tx.send(Cmd::Quit).unwrap();
@@ -1910,7 +1963,7 @@ mod tests {
     #[test]
     fn switch_during_recording_is_deferred() {
         let loads: Arc<Mutex<Vec<PathBuf>>> = Default::default();
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::Start).unwrap();
         h.tx.send(Cmd::SwitchModel("large-v3".into())).unwrap();
         std::thread::sleep(Duration::from_millis(150));
@@ -1926,7 +1979,7 @@ mod tests {
 
     #[test]
     fn switch_to_missing_model_is_refused() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         std::fs::remove_file(h._dir.path().join("models/ggml-distil-large-v3.bin")).unwrap();
         h.tx.send(Cmd::SwitchModel("distil-large-v3".into())).unwrap();
         std::thread::sleep(Duration::from_millis(150));
@@ -1938,7 +1991,7 @@ mod tests {
 
     #[test]
     fn benchmark_records_speed_for_active_model() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "bench".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "bench".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::Benchmark("large-v3-turbo".into())).unwrap();
         std::thread::sleep(Duration::from_millis(300));
         h.tx.send(Cmd::Quit).unwrap();
@@ -1967,7 +2020,7 @@ mod tests {
     #[test]
     fn long_clip_is_decoded_in_order_while_recording() {
         let decodes: Arc<Mutex<Vec<std::time::Instant>>> = Default::default();
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "{n}".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: decodes.clone(), finals: Default::default(), prompts: Default::default(), languages: Default::default() }, FakeCapture { pcm: long_fixture(90), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "{n}".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: decodes.clone(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() }, FakeCapture { pcm: long_fixture(90), fail: false, die_after_start: false });
         h.tx.send(Cmd::Start).unwrap();
         std::thread::sleep(Duration::from_millis(1500)); // a few scoring ticks
         let stop_at = std::time::Instant::now();
@@ -1986,7 +2039,7 @@ mod tests {
 
     #[test]
     fn listening_reports_loading_while_model_loads() {
-        let h = harness(FakeEngine { load_delay: Duration::from_millis(400), decode_delay: Duration::ZERO, text: "Hello.".into(), loaded: false, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::from_millis(400), decode_delay: Duration::ZERO, text: "Hello.".into(), loaded: false, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::Start).unwrap();
         std::thread::sleep(Duration::from_millis(250)); // a couple of ticks while the preload holds the engine
         h.tx.send(Cmd::Stop).unwrap();
@@ -2009,7 +2062,7 @@ mod tests {
 
     #[test]
     fn cap_countdown_then_stop() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "{n}".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default() }, FakeCapture { pcm: long_fixture(45), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "{n}".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() }, FakeCapture { pcm: long_fixture(45), fail: false, die_after_start: false });
         h.settings.lock().unwrap().max_clip_seconds = 40;
         h.tx.send(Cmd::Start).unwrap(); // the capture overfills the 40 s buffer at once → auto-stop
         std::thread::sleep(Duration::from_millis(800));
@@ -2021,7 +2074,7 @@ mod tests {
 
     #[test]
     fn undo_after_paste_sends_undo() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::Start).unwrap();
         h.tx.send(Cmd::Stop).unwrap();
         std::thread::sleep(Duration::from_millis(200));
@@ -2034,7 +2087,7 @@ mod tests {
 
     #[test]
     fn undo_refused_when_frontmost_changed_copies_again() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "Hello.".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::Start).unwrap();
         h.tx.send(Cmd::Stop).unwrap();
         std::thread::sleep(Duration::from_millis(200));
@@ -2051,7 +2104,7 @@ mod tests {
 
     #[test]
     fn paste_text_pastes_without_recording() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::PasteText("from history".into())).unwrap();
         std::thread::sleep(Duration::from_millis(100));
         h.tx.send(Cmd::Quit).unwrap();
@@ -2063,7 +2116,7 @@ mod tests {
     #[test]
     fn switch_requested_then_cancelled_is_applied() {
         let loads: Arc<Mutex<Vec<PathBuf>>> = Default::default();
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::Start).unwrap();
         h.tx.send(Cmd::SwitchModel("large-v3".into())).unwrap();
         h.tx.send(Cmd::Cancel).unwrap();
@@ -2079,7 +2132,7 @@ mod tests {
         let loads: Arc<Mutex<Vec<PathBuf>>> = Default::default();
         let unloads: Arc<Mutex<u32>> = Default::default();
         let decodes: Arc<Mutex<Vec<std::time::Instant>>> = Default::default();
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "{n}".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: unloads.clone(), decodes: decodes.clone(), finals: Default::default(), prompts: Default::default(), languages: Default::default() }, FakeCapture { pcm: long_fixture(150), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "{n}".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: unloads.clone(), decodes: decodes.clone(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() }, FakeCapture { pcm: long_fixture(150), fail: false, die_after_start: false });
         h.tx.send(Cmd::Start).unwrap();
         std::thread::sleep(Duration::from_millis(700)); // first scoring tick hands chunks to the worker
         h.tx.send(Cmd::PauseAndUnload).unwrap();
@@ -2102,7 +2155,7 @@ mod tests {
     #[test]
     fn benchmark_restores_previous_model() {
         let loads: Arc<Mutex<Vec<PathBuf>>> = Default::default();
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "bench".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "bench".into(), loaded: true, load_calls: Default::default(), loads: loads.clone(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() }, FakeCapture { pcm: fixture(), fail: false, die_after_start: false });
         h.tx.send(Cmd::Benchmark("large-v3".into())).unwrap();
         std::thread::sleep(Duration::from_millis(300));
         h.tx.send(Cmd::Quit).unwrap();
@@ -2126,7 +2179,7 @@ mod tests {
 
     #[test]
     fn pipeline_reports_capture_error() {
-        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default() }, FakeCapture { pcm: vec![], fail: true, die_after_start: false });
+        let h = harness(FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "x".into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() }, FakeCapture { pcm: vec![], fail: true, die_after_start: false });
         let (states, pasted, count) = run_once_waiting(h, Duration::from_millis(2300));
         assert!(pasted.is_empty());
         assert_eq!(count, 0);
@@ -2135,7 +2188,7 @@ mod tests {
     }
 
     fn engine_saying(text: &str) -> FakeEngine {
-        FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: text.into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default() }
+        FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: text.into(), loaded: true, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() }
     }
 
     fn capture_ok() -> FakeCapture {
@@ -2144,6 +2197,39 @@ mod tests {
 
     fn last_row(h: &Harness) -> privatevox_core::store::Dictation {
         h.store.lock().unwrap().list(1, 0).unwrap().remove(0)
+    }
+
+    #[test]
+    fn compute_switch_reloads_the_model_on_the_other_device() {
+        use privatevox_core::settings::Compute;
+        let engine = FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "x".into(), loaded: false, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() };
+        let (calls, unloads, devices) = (engine.load_calls.clone(), engine.unloads.clone(), engine.devices.clone());
+        let h = harness(engine, capture_ok());
+        // First load goes to the GPU (the default), set right before the load.
+        h.tx.send(Cmd::Resume).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(*calls.lock().unwrap(), 1);
+        assert_eq!(devices.lock().unwrap().clone(), vec![true]);
+        // Switching to CPU while the model is resident: unload, then reload on the CPU, without a dictation.
+        h.settings.lock().unwrap().compute = Compute::Cpu;
+        h.tx.send(Cmd::SettingsChanged).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(*unloads.lock().unwrap(), 1, "GPU memory is given back at once");
+        assert_eq!(*calls.lock().unwrap(), 2);
+        assert_eq!(devices.lock().unwrap().last().cloned(), Some(false));
+        assert!(matches!(h.states.lock().unwrap().last(), Some(PillState::Idle { .. })), "back to idle after the move");
+        // The same setting again changes nothing.
+        h.tx.send(Cmd::SettingsChanged).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(*calls.lock().unwrap(), 2);
+        // Back to GPU: another move.
+        h.settings.lock().unwrap().compute = Compute::Gpu;
+        h.tx.send(Cmd::SettingsChanged).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(*unloads.lock().unwrap(), 2);
+        assert_eq!(devices.lock().unwrap().last().cloned(), Some(true));
+        h.tx.send(Cmd::Quit).unwrap();
+        h.join.join().unwrap();
     }
 
     #[test]
@@ -2489,7 +2575,7 @@ mod tests {
     fn remote_dictation_marks_row_skips_local_load_and_polishes_on_the_host() {
         let host = FakeHost::start(HostBehaviour::Ok { text: "hello from pc".into(), polished: "Hello from PC.".into(), token: None });
         let remote = in_use(&host);
-        let e = FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "local".into(), loaded: false, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default() };
+        let e = FakeEngine { load_delay: Duration::ZERO, decode_delay: Duration::ZERO, text: "local".into(), loaded: false, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() };
         let loads = e.load_calls.clone();
         let h = harness_remote(e, capture_ok(), remote.clone());
         h.tx.send(Cmd::Start).unwrap();
@@ -3067,7 +3153,7 @@ mod tests {
     fn preview_skips_when_engine_busy() {
         use privatevox_core::preview::Preview;
         // The model is not loaded: the preload holds the engine lock for 5 s, so every preview tick must skip.
-        let e = FakeEngine { load_delay: Duration::from_secs(5), decode_delay: Duration::ZERO, text: "x".into(), loaded: false, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default() };
+        let e = FakeEngine { load_delay: Duration::from_secs(5), decode_delay: Duration::ZERO, text: "x".into(), loaded: false, load_calls: Default::default(), loads: Default::default(), unloads: Default::default(), decodes: Default::default(), finals: Default::default(), prompts: Default::default(), languages: Default::default(), devices: Default::default() };
         let decodes = e.decodes.clone();
         let h = harness(e, FakeCapture { pcm: long_fixture(12), fail: false, die_after_start: false });
         {

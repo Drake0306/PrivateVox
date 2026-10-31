@@ -89,14 +89,11 @@ pub fn run_worker() -> i32 {
     0
 }
 
-/// Resident set size of this process in bytes (0 if unavailable). On unified-memory Macs this includes
-/// the model's GPU buffers, which is what the memory strip wants.
+/// What the loaded model takes, in bytes (0 if unavailable): the larger of this process's resident set (the model
+/// in RAM, or in unified memory on a Mac) and its dedicated-VRAM usage (the model on a PC GPU, where the resident
+/// set says little). The strip shows this as the Whisper segment.
 pub fn resident_bytes() -> u64 {
-    let out = std::process::Command::new("ps").args(["-o", "rss=", "-p", &std::process::id().to_string()]).output();
-    match out {
-        Ok(o) => String::from_utf8_lossy(&o.stdout).trim().parse::<u64>().map(|kb| kb * 1024).unwrap_or(0),
-        Err(_) => 0,
-    }
+    privatevox_core::memory::process_resident_bytes().max(privatevox_core::memory::process_vram_bytes())
 }
 
 /// Exits the worker as soon as the parent is gone, even in the middle of a decode (the stdin EOF is only

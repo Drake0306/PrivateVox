@@ -58,6 +58,10 @@ impl Engine for RoutingEngine {
         self.local.load(model, flash_attn)
     }
 
+    fn set_use_gpu(&mut self, gpu: bool) {
+        self.local.set_use_gpu(gpu);
+    }
+
     fn unload(&mut self) -> Result<()> {
         self.local.unload()
     }

@@ -33,6 +33,9 @@ pub struct LoadInfo {
 
 pub trait Engine: Send {
     fn load(&mut self, model: &Path, flash_attn: bool) -> Result<LoadInfo>;
+    /// Where the next `load` puts the model: the GPU (default) or the CPU with the model in system RAM (§9).
+    /// Takes effect at the next load; the caller reloads when it wants a resident model moved.
+    fn set_use_gpu(&mut self, _gpu: bool) {}
     fn unload(&mut self) -> Result<()>;
     fn is_loaded(&self) -> bool;
     fn transcribe(&mut self, pcm: &[f32], opts: &DecodeOptions) -> Result<Transcript>;
@@ -64,6 +67,8 @@ pub struct WorkerEngine {
     stderr_tail: Arc<Mutex<VecDeque<String>>>,
     /// Current worker pid (0 when none), readable without the engine lock so an exit path can kill a busy worker.
     pid: Arc<AtomicU32>,
+    /// Device for the next load (§9): GPU unless the user switched Whisper to the CPU.
+    use_gpu: bool,
 }
 
 /// A mutex-free handle to the worker's pid.
@@ -110,6 +115,7 @@ impl WorkerEngine {
             last_load: None,
             stderr_tail: Arc::new(Mutex::new(VecDeque::new())),
             pid: Arc::new(AtomicU32::new(0)),
+            use_gpu: true,
         }
     }
 
@@ -234,7 +240,7 @@ impl WorkerEngine {
 
     fn send_load(&mut self, path: &Path, flash_attn: bool) -> Result<LoadInfo> {
         let t = Instant::now();
-        self.send(&Request::Load { model_path: path.to_path_buf(), flash_attn, use_gpu: true })?;
+        self.send(&Request::Load { model_path: path.to_path_buf(), flash_attn, use_gpu: self.use_gpu })?;
         match self.recv(LOAD_DEADLINE) {
             Ok(Response::Loaded { resident_bytes, .. }) => {
                 self.loaded = true;
@@ -256,6 +262,10 @@ impl WorkerEngine {
 }
 
 impl Engine for WorkerEngine {
+    fn set_use_gpu(&mut self, gpu: bool) {
+        self.use_gpu = gpu;
+    }
+
     fn load(&mut self, model: &Path, flash_attn: bool) -> Result<LoadInfo> {
         self.model = Some((model.to_path_buf(), flash_attn));
         if !self.worker_alive() {

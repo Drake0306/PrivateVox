@@ -4011,6 +4011,7 @@ dependencies = [
  "tiny_http",
  "tokio",
  "whisper-rs",
+ "windows 0.61.3",
 ]
 
 [[package]]

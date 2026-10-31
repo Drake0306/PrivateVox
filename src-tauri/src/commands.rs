@@ -352,24 +352,9 @@ pub fn whisper_languages() -> Vec<(String, String)> {
 
 /// "Apple M1 · 8 GB unified" style label for the memory strip.
 #[tauri::command]
-pub fn machine_label() -> String {
-    let (total, _) = privatevox_core::memory::system_memory();
-    let gb = (total as f64 / 1_073_741_824.0).round() as u64;
-    #[cfg(target_os = "macos")]
-    {
-        let chip = std::process::Command::new("sysctl")
-            .args(["-n", "machdep.cpu.brand_string"])
-            .output()
-            .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "Mac".into());
-        format!("{chip} · {gb} GB unified")
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        format!("This machine · {gb} GB")
-    }
+pub fn machine_label(state: State<'_, AppState>) -> String {
+    let compute = state.settings.lock().map(|s| s.compute).unwrap_or_default();
+    privatevox_core::memory::local_memory(compute.is_gpu(), 0, 0).label
 }
 
 #[tauri::command]
@@ -551,7 +536,9 @@ pub fn benchmark_model(state: State<'_, AppState>, id: String) -> Result<(), Str
 }
 
 /// Builds the strip's input: measured footprints from the store, "others" = system used minus what we hold.
-pub fn build_memory_input(store: &privatevox_core::store::Store, selected: &str, ours_resident: u64, system: (u64, u64), llm_bytes: u64) -> privatevox_core::memory::MemoryInput {
+/// `memory` is (total, used by everything else): what `local_memory` worked out for the device in use, with our own
+/// model and the local LLM already taken out of "others" so they are not counted twice.
+pub fn build_memory_input(store: &privatevox_core::store::Store, selected: &str, memory: (u64, u64), llm_bytes: u64) -> privatevox_core::memory::MemoryInput {
     let mut footprints = std::collections::HashMap::new();
     for m in privatevox_core::models::catalog() {
         if let Ok(Some(st)) = store.model_stats(m.id) {
@@ -560,14 +547,7 @@ pub fn build_memory_input(store: &privatevox_core::store::Store, selected: &str,
             }
         }
     }
-    // `llm_bytes` is the local LLM already resident, so it is ours too; without this it would count twice.
-    privatevox_core::memory::MemoryInput {
-        total: system.0,
-        used_by_others: system.1.saturating_sub(ours_resident).saturating_sub(llm_bytes),
-        footprints,
-        llm_bytes,
-        selected: selected.to_string(),
-    }
+    privatevox_core::memory::MemoryInput { total: memory.0, used_by_others: memory.1, footprints, llm_bytes, selected: selected.to_string() }
 }
 
 #[tauri::command]
@@ -589,8 +569,24 @@ pub fn memory_report(state: State<'_, AppState>) -> Result<privatevox_core::memo
     let store = state.store.lock().map_err(|e| e.to_string())?;
     // The polish LLM counts only when its endpoint is on this machine and reports a loaded model (§9).
     let llm_bytes = state.polisher.resident_local_bytes(std::time::Instant::now());
-    let input = build_memory_input(&store, &selected, ours, privatevox_core::memory::system_memory(), llm_bytes);
-    Ok(privatevox_core::memory::budget(&input))
+    // GPU mode on a PC describes the card's memory; CPU mode (and a Mac) the system memory (§9).
+    let compute = state.settings.lock().map(|s| s.compute).unwrap_or_default();
+    let local = privatevox_core::memory::local_memory(compute.is_gpu(), ours, llm_bytes);
+    let input = build_memory_input(&store, &selected, (local.total, local.used_by_others), llm_bytes);
+    let mut report = privatevox_core::memory::budget(&input);
+    report.adapter = Some(local.label);
+    report.memory_kind = local.kind;
+    report.device = local.device;
+    Ok(report)
+}
+
+/// Settings → GPU / CPU for Whisper (§9). The coordinator moves a resident model at once.
+#[tauri::command]
+pub fn set_compute(state: State<'_, AppState>, gpu: bool) -> Result<(), String> {
+    use privatevox_core::settings::Compute;
+    crate::llm_commands::edit_settings(&state, |s| s.compute = if gpu { Compute::Gpu } else { Compute::Cpu })?;
+    state.send(Cmd::SettingsChanged);
+    Ok(())
 }
 
 /// Normalises a key combination ("ctrl+shift+space" → "Ctrl+Shift+Space") and checks the shortcut plugin
@@ -705,22 +701,22 @@ mod memory_tests {
         let dir = tempfile::tempdir().unwrap();
         let mut store = Store::open(&dir.path().join("privatevox.sqlite")).unwrap();
         store.set_model_stats("large-v3-turbo", &ModelStats { load_ms: None, speed_x: None, mem_bytes: Some(703_000_000) }).unwrap();
-        let input = build_memory_input(&store, "large-v3-turbo", 0, (16_000_000_000, 4_000_000_000), 0);
+        let input = build_memory_input(&store, "large-v3-turbo", (16_000_000_000, 4_000_000_000), 0);
         assert_eq!(input.footprints.get("large-v3-turbo"), Some(&703_000_000));
-        assert_eq!(input.used_by_others, 4_000_000_000, "nothing of ours resident: others = used");
+        assert_eq!(input.used_by_others, 4_000_000_000);
         let report = privatevox_core::memory::budget(&input);
         assert_eq!(report.selected_bytes, 703_000_000);
-        // With turbo resident (703 MB counted in `used`), others must exclude it.
-        let input2 = build_memory_input(&store, "large-v3-turbo", 703_000_000, (16_000_000_000, 4_000_000_000), 0);
-        assert_eq!(input2.used_by_others, 4_000_000_000 - 703_000_000);
     }
 
     #[test]
     fn resident_llm_is_not_counted_twice() {
+        use privatevox_core::memory::local_memory_from;
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(&dir.path().join("privatevox.sqlite")).unwrap();
-        // 2 GB of the 6 GB in use is the local LLM; it must move from "other apps" into the LLM segment, not be added on top.
-        let input = build_memory_input(&store, "large-v3-turbo", 700_000_000, (8_000_000_000, 6_000_000_000), 2_000_000_000);
+        // 2 GB of the 6 GB in use is the local LLM and 700 MB is our model; both must leave "other apps" (local_memory
+        // does that), the LLM going into its own segment rather than on top.
+        let local = local_memory_from(false, None, (8_000_000_000, 6_000_000_000), 700_000_000, 2_000_000_000, "cpu", "macos");
+        let input = build_memory_input(&store, "large-v3-turbo", (local.total, local.used_by_others), 2_000_000_000);
         assert_eq!(input.used_by_others, 6_000_000_000 - 700_000_000 - 2_000_000_000);
         assert_eq!(input.llm_bytes, 2_000_000_000);
         let report = privatevox_core::memory::budget(&input);

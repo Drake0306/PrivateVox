@@ -64,8 +64,137 @@ pub struct MemoryReport {
     pub tier_bytes: HashMap<String, u64>,
     /// Set when the figures describe a host on the LAN rather than this machine ("On PC").
     pub source_label: Option<String>,
-    /// The host's adapter name, when the figures come from a host.
+    /// What the figures describe: the GPU adapter ("AMD Radeon RX 9070 · 16 GB VRAM"), the chip on a Mac, or the CPU
+    /// in CPU mode; also the host's adapter when the figures come from a host.
     pub adapter: Option<String>,
+    /// Which memory the bar shows: `VRAM`, `RAM`, `unified` (Apple Silicon), `shared` (a GPU without its own memory)
+    /// or `host`.
+    pub memory_kind: &'static str,
+    /// Where Whisper runs for these figures: `gpu` or `cpu`.
+    pub device: &'static str,
+}
+
+/// A GPU with its own memory, as the platform reports it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GpuMemory {
+    pub name: String,
+    /// Dedicated video memory.
+    pub total: u64,
+    /// What the OS says this process may still use: total minus the other processes' usage and the OS reserve.
+    pub budget: u64,
+    /// This process's own usage of the dedicated memory.
+    pub process_usage: u64,
+}
+
+/// The local figures behind the strip: which memory, how much, how much others hold, and a label for the box.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LocalMemory {
+    pub total: u64,
+    pub used_by_others: u64,
+    pub kind: &'static str,
+    pub device: &'static str,
+    pub label: String,
+}
+
+fn gb(bytes: u64) -> u64 {
+    (bytes as f64 / 1_073_741_824.0).round() as u64
+}
+
+/// Pure part of `local_memory`: decides which memory the strip describes.
+/// - GPU mode with a dedicated GPU: VRAM. Others = total − budget − ours − local LLM (the budget already excludes
+///   what other processes hold, and our worker and Ollama are other processes from this one's point of view).
+/// - GPU mode on a Mac: unified memory, the RAM figures.
+/// - GPU mode without a dedicated GPU (integrated graphics): the RAM figures, labelled "shared".
+/// - CPU mode anywhere: RAM.
+pub fn local_memory_from(compute_gpu: bool, gpu: Option<&GpuMemory>, ram: (u64, u64), ours: u64, llm_bytes: u64, cpu_name: &str, os: &str) -> LocalMemory {
+    let (ram_total, ram_used) = ram;
+    let ram_others = ram_used.saturating_sub(ours).saturating_sub(llm_bytes);
+    if !compute_gpu {
+        let unit = if os == "macos" { "unified" } else { "RAM" };
+        return LocalMemory { total: ram_total, used_by_others: ram_others, kind: if os == "macos" { "unified" } else { "RAM" }, device: "cpu", label: format!("CPU · {cpu_name} · {} GB {unit}", gb(ram_total)) };
+    }
+    if os == "macos" {
+        return LocalMemory { total: ram_total, used_by_others: ram_others, kind: "unified", device: "gpu", label: format!("{cpu_name} · {} GB unified", gb(ram_total)) };
+    }
+    match gpu {
+        Some(g) if g.total >= 1_000_000_000 => {
+            let taken = g.total.saturating_sub(g.budget);
+            LocalMemory { total: g.total, used_by_others: taken.saturating_sub(ours).saturating_sub(llm_bytes), kind: "VRAM", device: "gpu", label: format!("{} · {} GB VRAM", g.name, gb(g.total)) }
+        }
+        Some(g) => LocalMemory { total: ram_total, used_by_others: ram_others, kind: "shared", device: "gpu", label: format!("{} · shares {} GB RAM", g.name, gb(ram_total)) },
+        None => LocalMemory { total: ram_total, used_by_others: ram_others, kind: "shared", device: "gpu", label: format!("GPU · {cpu_name} · {} GB shared", gb(ram_total)) },
+    }
+}
+
+/// The strip's local figures for this machine right now.
+pub fn local_memory(compute_gpu: bool, ours: u64, llm_bytes: u64) -> LocalMemory {
+    let gpu = if compute_gpu { gpu_memory() } else { None };
+    local_memory_from(compute_gpu, gpu.as_ref(), system_memory(), ours, llm_bytes, &cpu_name(), std::env::consts::OS)
+}
+
+/// The processor's marketing name ("Apple M1", "AMD Ryzen 9 7950X 16-Core Processor"), or "CPU".
+pub fn cpu_name() -> String {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing());
+    sys.cpus().first().map(|c| c.brand().trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| "CPU".into())
+}
+
+/// This process's resident set in bytes (0 if unknown). On a unified-memory Mac this includes the model's GPU
+/// buffers; on a PC in GPU mode the model sits in VRAM instead, see `process_vram_bytes`.
+pub fn process_resident_bytes() -> u64 {
+    let pid = sysinfo::Pid::from_u32(std::process::id());
+    let mut sys = sysinfo::System::new();
+    sys.refresh_processes_specifics(sysinfo::ProcessesToUpdate::Some(&[pid]), true, sysinfo::ProcessRefreshKind::nothing().with_memory());
+    sys.process(pid).map(|p| p.memory()).unwrap_or(0)
+}
+
+/// The dedicated GPU with the most memory, with the OS budget for this process (Windows, through DXGI).
+#[cfg(windows)]
+pub fn gpu_memory() -> Option<GpuMemory> {
+    use windows::core::Interface;
+    use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIAdapter3, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, DXGI_QUERY_VIDEO_MEMORY_INFO};
+    // SAFETY: plain DXGI calls on objects we own; every result is checked.
+    unsafe {
+        let factory: IDXGIFactory1 = CreateDXGIFactory1().ok()?;
+        let mut best: Option<GpuMemory> = None;
+        let mut i = 0;
+        while let Ok(adapter) = factory.EnumAdapters1(i) {
+            i += 1;
+            let Ok(desc) = adapter.GetDesc1() else { continue };
+            if desc.Flags & (DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32) != 0 {
+                continue;
+            }
+            let name = String::from_utf16_lossy(&desc.Description).trim_end_matches('\0').trim().to_string();
+            let total = desc.DedicatedVideoMemory as u64;
+            let (budget, process_usage) = match adapter.cast::<IDXGIAdapter3>() {
+                Ok(a3) => {
+                    let mut info = DXGI_QUERY_VIDEO_MEMORY_INFO::default();
+                    if a3.QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &mut info).is_ok() {
+                        (info.Budget, info.CurrentUsage)
+                    } else {
+                        (total, 0)
+                    }
+                }
+                Err(_) => (total, 0),
+            };
+            let g = GpuMemory { name, total, budget, process_usage };
+            if best.as_ref().map(|b| g.total > b.total).unwrap_or(true) {
+                best = Some(g);
+            }
+        }
+        best
+    }
+}
+
+#[cfg(not(windows))]
+pub fn gpu_memory() -> Option<GpuMemory> {
+    None
+}
+
+/// This process's dedicated-VRAM usage (Windows), 0 elsewhere. The worker reports it as the model's footprint in
+/// GPU mode, where the resident set says little.
+pub fn process_vram_bytes() -> u64 {
+    gpu_memory().map(|g| g.process_usage).unwrap_or(0)
 }
 
 fn footprint(input: &MemoryInput, id: &str) -> u64 {
@@ -94,6 +223,7 @@ pub fn budget_from_host(status: &crate::net::StatusReply, label: &str) -> Memory
     let mut report = budget(&input);
     report.source_label = Some(label.to_string());
     report.adapter = Some(status.gpu.name.clone());
+    report.memory_kind = "host";
     report
 }
 
@@ -131,6 +261,8 @@ pub fn budget(input: &MemoryInput) -> MemoryReport {
         tier_bytes,
         source_label: None,
         adapter: None,
+        memory_kind: "RAM",
+        device: "gpu",
     }
 }
 
@@ -176,6 +308,46 @@ mod tests {
     use std::collections::HashMap;
 
     const GB: u64 = 1_000_000_000;
+
+    #[test]
+    fn local_memory_picks_vram_ram_or_unified() {
+        // Sizes in GiB, as cards and RAM sticks report them; the label rounds to whole GB on that basis.
+        const GB: u64 = 1 << 30;
+        let gpu = GpuMemory { name: "AMD Radeon RX 9070".into(), total: 16 * GB, budget: 13 * GB, process_usage: 0 };
+        let ram = (32 * GB, 12 * GB);
+        // GPU mode on a PC with a dedicated card: VRAM; others = total − budget − ours − LLM.
+        let m = local_memory_from(true, Some(&gpu), ram, 1 * GB, 2 * GB, "AMD Ryzen 9", "windows");
+        assert_eq!((m.total, m.used_by_others, m.kind, m.device), (16 * GB, 0, "VRAM", "gpu"), "3 GB taken, 1 GB ours, 2 GB LLM: nothing left for 'others'");
+        assert_eq!(m.label, "AMD Radeon RX 9070 · 16 GB VRAM");
+        let m = local_memory_from(true, Some(&gpu), ram, 0, 0, "AMD Ryzen 9", "windows");
+        assert_eq!(m.used_by_others, 3 * GB);
+        // CPU mode on the same PC: RAM, the GPU is not consulted; others = used − ours − LLM.
+        let m = local_memory_from(false, Some(&gpu), ram, 1 * GB, 2 * GB, "AMD Ryzen 9", "windows");
+        assert_eq!((m.total, m.used_by_others, m.kind, m.device), (32 * GB, 9 * GB, "RAM", "cpu"));
+        assert_eq!(m.label, "CPU · AMD Ryzen 9 · 32 GB RAM");
+        // A Mac: unified memory whichever mode, the chip in the label.
+        let m = local_memory_from(true, None, (8 * GB, 5 * GB), 1 * GB, 0, "Apple M1", "macos");
+        assert_eq!((m.total, m.used_by_others, m.kind, m.device), (8 * GB, 4 * GB, "unified", "gpu"));
+        assert_eq!(m.label, "Apple M1 · 8 GB unified");
+        assert_eq!(local_memory_from(false, None, (8 * GB, 5 * GB), 0, 0, "Apple M1", "macos").label, "CPU · Apple M1 · 8 GB unified");
+        // Integrated graphics with no memory of its own: the RAM figures, labelled shared.
+        let igpu = GpuMemory { name: "Intel Iris Xe".into(), total: 128_000_000, budget: 100_000_000, process_usage: 0 };
+        let m = local_memory_from(true, Some(&igpu), ram, 0, 0, "Intel Core i7", "windows");
+        assert_eq!((m.total, m.kind), (32 * GB, "shared"));
+        assert_eq!(local_memory_from(true, None, ram, 0, 0, "x", "linux").kind, "shared");
+    }
+
+    /// What this machine reports; run with `--ignored --nocapture` to see the figures.
+    #[test]
+    #[ignore = "prints this machine's GPU and memory figures"]
+    fn prints_this_machines_memory() {
+        println!("gpu: {:?}", gpu_memory());
+        println!("ram: {:?}", system_memory());
+        println!("cpu: {}", cpu_name());
+        println!("gpu mode: {:?}", local_memory(true, 0, 0));
+        println!("cpu mode: {:?}", local_memory(false, 0, 0));
+        println!("this process: rss {} vram {}", process_resident_bytes(), process_vram_bytes());
+    }
 
     #[test]
     fn q8_footprint_is_between_q5_and_f16() {

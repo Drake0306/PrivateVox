@@ -215,18 +215,22 @@ pub fn deps_from_state(app: &tauri::AppHandle, state: &crate::state::AppState) -
 /// The host's specifications as `GET /v1/status` reports them.
 pub fn host_status(state: &crate::state::AppState) -> StatusReply {
     let s = state.settings.lock().map(|s| s.clone()).unwrap_or_default();
-    let (total, used) = privatevox_core::memory::system_memory();
     let (loaded, resident) = match state.engine.try_lock() {
         Ok(e) => (e.is_loaded(), e.resident_bytes()),
         Err(_) => (true, state.store.lock().ok().and_then(|st| st.model_stats(&s.model_id).ok().flatten()).and_then(|st| st.mem_bytes).unwrap_or(0)),
     };
     let now = Instant::now();
     let selected = state.polisher.selected(now);
+    // The memory the host's Whisper lives in (VRAM on a PC in GPU mode); `used` includes the host's own models, as
+    // the client's `budget_from_host` expects.
+    let polish_resident = state.polisher.resident_local_bytes(now);
+    let local = privatevox_core::memory::local_memory(s.compute.is_gpu(), resident, polish_resident);
+    let (total, used) = (local.total, local.used_by_others + resident + polish_resident);
     StatusReply {
         name: crate::remote::machine_name(&s),
         version: privatevox_core::version().to_string(),
         platform: std::env::consts::OS.into(),
-        gpu: GpuInfo { name: crate::commands::machine_label(), total_bytes: total, used_bytes: used },
+        gpu: GpuInfo { name: local.label, total_bytes: total, used_bytes: used },
         whisper: WhisperInfo { model: s.model_id.clone(), loaded, resident_bytes: resident },
         polish: PolishInfo {
             enabled: state.polisher.enabled(),
@@ -346,6 +350,7 @@ impl Inner {
                     self.deps.engine.lock().map_err(|e| anyhow::anyhow!("{e}")).and_then(|mut e| {
                         if !e.is_loaded() {
                             let path = self.deps.model_path.lock().ok().and_then(|p| p.clone()).ok_or_else(|| anyhow::anyhow!("no model on the host"))?;
+                            e.set_use_gpu(settings.compute.is_gpu());
                             e.load(&path, settings.flash_attention)?;
                         }
                         e.transcribe(&s, &opts)
