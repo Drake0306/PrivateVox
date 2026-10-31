@@ -21,7 +21,7 @@ Machines: Mac M1 8 GB (tasks 1–3, 29 Oct) and the Windows PC with an AMD GPU a
 | 10 | Keep the microphone warm | done (31 Oct, PC) | `e3ed33a` | core unit test; the `mic: reused warm stream` log line not yet seen live |
 | 11 | Tokens in the OS keychain | done (31 Oct, PC) | `913e088` | unit tests with the memory store; real Credential Manager / Keychain round trip not yet watched |
 | 12 | macOS in the release CI | done (31 Oct, PC) | `f4856b7` | verified on the next tag build (Task 13) |
-| 13 | Live check, docs, roadmap status table, 0.6.0-alpha.1 | docs done; live check and tag pending | see git log | README, CHANGELOG, release notes, roadmap Feature status table, version 0.6.0. The live check on the PC and the `v0.6.0-alpha.1` tag are the owner's (see below). |
+| 13 | Live check, docs, roadmap status table, 0.6.0-alpha.1 | live check done by Roy on the PC (31 Oct, evening); tag pending | see git log | README, CHANGELOG, release notes, roadmap Feature status table, version 0.6.0. Roy ran the app on the PC by hand and reported it working. The `v0.6.0-alpha.1` tag is the owner's. |
 
 ## Task notes
 

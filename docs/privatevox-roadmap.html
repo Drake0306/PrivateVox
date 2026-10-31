@@ -53,23 +53,26 @@ table.status td:last-child{white-space:nowrap}
 </style>
 
 <header class="wrap">
-  <div class="eyebrow">Status · 31 Oct 2026 · 0.6.0-alpha.1, phase 6 built</div>
+  <div class="eyebrow">Status · 31 Oct 2026, evening · 0.6.0-alpha.1 on main, phase 6 built, Windows running</div>
   <h1 style="margin-top:.4rem">PrivateVox Roadmap</h1>
-  <p class="lede">What the design promised, what is built, what is next. Six phases are built: it dictates, switches models, shows its memory, cleans up the text with a local or LAN LLM, hands the work to a PC on the LAN, previews, auto-stops, takes spoken commands, and now has every setting and safety net the design listed. Phase 6 was finished on the Windows PC, where all three test suites are green with the Vulkan engine. What is left needs a person at the PC and an Apple Developer account.</p>
+  <p class="lede">What the design promised, what is built, what is next. Six phases are built: it dictates, switches models, shows its memory, cleans up the text with a local or LAN LLM, hands the work to a PC on the LAN, previews, auto-stops, takes spoken commands, and has every setting and safety net the design listed. Phase 6 was finished on the Windows PC, where all three test suites are green with the Vulkan engine and Roy has now run the app by hand: it works. What is left is short, and listed first.</p>
   <div class="summary">
-    <div class="sum done"><div class="n">6 / 6</div><div class="k">plans built (5 on the Mac, phase 6 on the PC)</div></div>
-    <div class="sum next"><div class="n">PC</div><div class="k">left: hold key, paste, host run and GPU timing by hand</div></div>
+    <div class="sum done"><div class="n">6 / 6</div><div class="k">plans built; Mac and Windows both run by hand</div></div>
+    <div class="sum next"><div class="n">1</div><div class="k">design item still to build (Windows elevated-window warning)</div></div>
     <div class="sum later"><div class="n">7</div><div class="k">installers once the 0.6.0 tag builds (dmg now from CI)</div></div>
-    <div class="sum you"><div class="n">3</div><div class="k">things only you can do</div></div>
+    <div class="sum you"><div class="n">4</div><div class="k">things only you can do</div></div>
   </div>
 </header>
 
 <section class="wrap">
-  <h2>On your side <span class="chip you">needs you</span></h2>
+  <h2>What is left <span class="chip next">31 Oct, evening</span></h2>
   <div class="phase"><ul class="list">
-    <li><span class="mark you">!</span><div><b>Tag <code>v0.6.0-alpha.1</code> on <code>main</code></b><small>Phase 6 (tasks 4–12, the Windows fixes, the docs and the version bump) is merged into <code>main</code>. The tag starts the release workflow, which now builds the dmg too.</small></div></li>
-    <li><span class="mark you">!</span><div><b>Run PrivateVox on the PC by hand</b><small><code>pwsh scripts/win-cargo.ps1 tauri dev</code> (or the installer from the release). Check: Right Alt hold and paste into a few apps, the Q8 model card, the mic meter, Clear all, host mode PC→Mac, and <code>PRIVATEVOX_DEBUG_SCRIPT=panic</code> for a crash report. Then the Vulkan timing test from the resume notes.</small></div></li>
-    <li><span class="mark you">!</span><div><b>On the Mac: click the menu bar icon once</b><small>Task 3's tray items (Model submenu, Load model now, Show pill, Launch at login) were never seen open by eye because the UI scripting failed that evening.</small></div></li>
+    <li><span class="mark you">!</span><div><b>Tag <code>v0.6.0-alpha.1</code> on <code>main</code></b><small>Everything from today is merged into <code>main</code>. The tag starts the release workflow: Windows, Linux and, for the first time, the macOS dmg from CI. Watch the three jobs; the dmg job is the untested one.</small></div></li>
+    <li><span class="mark you">!</span><div><b>Host mode for real: this PC as host, the Mac as client</b><small>Settings → Network on the PC: Act as host. On the Mac: Use a host, enter the PC's address, Test, Apply, dictate. Everything so far was tested with one Mac in both roles. If it works, decide on the host extras (C3).</small></div></li>
+    <li><span class="mark you">!</span><div><b>GPU timing on the RX 9070</b><small>How fast Vulkan transcribes here, so the model recommendations can be tuned for PCs: <code>cargo test -p privatevox-engine --release --lib spike_timing -- --ignored --nocapture</code> with <code>PRIVATEVOX_TEST_MODEL</code> and <code>PRIVATEVOX_SPIKE_CLIPS</code> (details in <code>resume.conversation.md</code>; the Windows benchmark clip generator makes 16 kHz clips).</small></div></li>
+    <li><span class="mark you">!</span><div><b>On the Mac: click the menu bar icon once</b><small>The phase 6 tray items (Model submenu, Load model now, Show pill, Launch at login) were never seen open by eye because the UI scripting failed that evening.</small></div></li>
+    <li><span class="mark next"></span><div><b>Build: Windows elevated-window warning (§12)</b><small>When the app in front runs as administrator, Windows refuses the paste. The pill should say so, as it does for secure input on the Mac. The last Windows item in the design document; half a session.</small></div></li>
+    <li><span class="mark todo"></span><div><b>Later, if wanted</b><small>Translate to any language through the LLM (B2); host extras: shared dictionary, client-driven downloads, queue indicator (C3); Wayland hold key (C4); Linux parity (tokens in a keyring, a benchmark clip). Signing, notarisation and auto-update wait on an Apple Developer account and a Windows certificate (C2).</small></div></li>
   </ul></div>
 </section>
 
@@ -127,7 +130,7 @@ table.status td:last-child{white-space:nowrap}
     <li><span class="mark done">✓</span><div><b>Keep audio clips</b><small>Off by default; replay next to the transcript; re-run with a bigger model.</small></div></li>
     <li><span class="mark done">✓</span><div><b>Receipt-sequenced paste and secure-input detection</b><small>Restore the clipboard only after the target app actually read it; keep hotkeys alive next to password fields.</small></div></li>
     <li><span class="mark done">✓</span><div><b>Long-form document view</b><small>Open as document on long rows: paragraphs, Copy all, Markdown export.</small></div></li>
-    <li><span class="mark next"></span><div><b>Windows on an AMD GPU (Vulkan)</b><small>Half done on 31 Oct: the workspace builds on the PC, all suites pass, the worker now dies with the app on Windows, Benchmark has a clip. Still by hand: the installer, hold key and paste checks, Vulkan timing, which LLM runtime serves the 7B model fastest.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>Windows on an AMD GPU (Vulkan)</b><small>Done on 31 Oct: builds on the PC, all suites pass, the worker dies with the app, Benchmark has a clip, the strip reads the card, and Roy ran it by hand. Still open: Vulkan timing numbers and which LLM runtime serves the 7B model fastest (see "What is left").</small></div></li>
     <li><span class="mark todo"></span><div><b>Open-source release pass</b><small>Notarised .dmg (needs an Apple Developer account), README for strangers, CI badges.</small></div></li>
     <li><span class="mark done">✓</span><div><b>Deferred review minors</b><small>From the phase 2 and 3 reviews, listed in the ledgers under <code>docs/superpowers/plans/</code>.</small></div></li>
   </ul></div>
@@ -167,21 +170,23 @@ table.status td:last-child{white-space:nowrap}
     <li><span class="mark done">✓</span><div><b>10 · Keep the microphone warm</b><small>20 s window (0–300), reuse logged, timer close; one lock around stream and state.</small></div></li>
     <li><span class="mark done">✓</span><div><b>11 · Tokens in the OS keychain</b><small>Keychain / Credential Manager; <code>@keychain</code> in the file; a refusing store keeps the token rather than losing it.</small></div></li>
     <li><span class="mark done">✓</span><div><b>12 · macOS in the release CI</b><small>macos-14 runner; first real run on the 0.6.0 tag.</small></div></li>
-    <li><span class="mark next"></span><div><b>13 · Live check, docs, release</b><small>Docs, changelog, release notes and this table are done; the live check on the PC and the tag are yours (see "On your side").</small></div></li>
+    <li><span class="mark next"></span><div><b>13 · Live check, docs, release</b><small>Docs, changelog, release notes and this page are done; Roy's PC run on 31 Oct is the live check. Left: the tag (see "What is left").</small></div></li>
   </ul></div>
 </section>
 
 <section class="wrap">
-  <h2>Windows status <span class="chip next">31 Oct</span></h2>
-  <p class="muted" style="margin:0 0 .6rem">First real pass on a Windows PC with an AMD GPU (Vulkan, so any recent AMD, NVIDIA or Intel card). Nothing is known to be broken; what is left is checks by a person, not fixes.</p>
+  <h2>Windows status <span class="chip done">running · 31 Oct</span></h2>
+  <p class="muted" style="margin:0 0 .6rem">First real pass on a Windows PC with an AMD GPU (Vulkan, so any recent AMD, NVIDIA or Intel card). Roy ran the app by hand on the evening of 31 Oct and it works. Nothing is known to be broken.</p>
   <div class="phase"><ul class="list">
-    <li><span class="mark done">✓</span><div><b>Builds and passes every test on Windows</b><small>Core, engine and app suites green with the Vulkan engine. On Windows the Tauri CLI runs cargo through <code>scripts/win-cargo.cmd</code> (MSVC environment, Ninja, short target dir), so a plain <code>cargo tauri dev</code> works; other cargo commands go through <code>pwsh scripts/win-cargo.ps1 …</code>. Two machine quirks are handled: a <code>CMAKE</code> variable pointing at a folder ("Access is denied") and MSVC's long-path limit inside whisper.cpp's shader step.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>Runs on the PC, checked by hand</b><small>Dictation, the pill and the panel, the GPU memory strip with the card named, the GPU / CPU switch and the Windows key names, all seen working by Roy on 31 Oct.</small></div></li>
+    <li><span class="mark done">✓</span><div><b>Builds and passes every test on Windows</b><small>Core, engine and app suites green with the Vulkan engine. On Windows the Tauri CLI runs cargo through <code>scripts/win-cargo.cmd</code> (MSVC environment, Ninja, short target dir), so a plain <code>cargo tauri dev</code> works; other cargo commands go through <code>pwsh scripts/win-cargo.ps1 …</code>. Handled on the way: a <code>CMAKE</code> variable pointing at a folder ("Access is denied"), MSVC's long-path limit inside whisper.cpp's shader step, and dev sessions that left the app running (the wrapper now ends the app with the session and clears a leftover before a build).</small></div></li>
     <li><span class="mark done">✓</span><div><b>Fixed: the engine kept running after the app died</b><small>On Windows a force-quit left the speech engine alive holding GPU memory. It now exits the moment the app is gone.</small></div></li>
     <li><span class="mark done">✓</span><div><b>Fixed: Benchmark had nothing to measure</b><small>The 30 s test clip was made with a Mac-only voice; Windows Speech makes it now.</small></div></li>
     <li><span class="mark done">✓</span><div><b>Fixed on both platforms</b><small>Paste method changes needed a restart; the English-only model looked missing after a restart (wrong file name); an unplugged microphone could be silently reused.</small></div></li>
     <li><span class="mark done">✓</span><div><b>Windows-aware screens</b><small>Setup skips the two Mac-only permissions and opens the Windows microphone settings page; tokens go to the Credential Manager; the Keys card names the hold keys for a PC keyboard with a Mac / Windows switch.</small></div></li>
     <li><span class="mark done">✓</span><div><b>Fixed: the memory strip showed RAM, no GPU</b><small>It now reads the card through DXGI ("AMD Radeon RX 9070 · 16 GB VRAM", what others hold) and has a GPU / CPU switch: CPU moves Whisper into system RAM and frees the GPU at once, and the bar follows.</small></div></li>
-    <li><span class="mark you">!</span><div><b>Not yet confirmed by a person</b><small>Right Alt hold and the text landing in another app; the pill and panel on screen; this PC as the host for the Mac; how fast the GPU transcribes.</small></div></li>
+    <li><span class="mark you">!</span><div><b>Still to try by hand</b><small>This PC as the host for the Mac, and how fast the GPU transcribes (both in "What is left").</small></div></li>
+    <li><span class="mark next"></span><div><b>Still to build</b><small>The elevated-window warning (§12): a paste into an app running as administrator is refused by Windows and the pill should say so.</small></div></li>
     <li><span class="mark todo"></span><div><b>Quirk, not a bug</b><small>With a host offline the Test button says "did not answer in time" rather than "nothing answered": Windows takes two seconds to refuse a connection. The local fallback is the same.</small></div></li>
   </ul></div>
 </section>
@@ -213,7 +218,10 @@ table.status td:last-child{white-space:nowrap}
         <tr><td>Real PC → Mac host run</td><td>§8.6</td><td><span class="chip you">pending · needs the PC</span></td></tr>
         <tr><td>Crash report file and Show report</td><td>§10</td><td><span class="chip next">built · unit</span></td></tr>
         <tr><td>Worker process: crash and hang recovery, dies with the app</td><td>§10, §18.1</td><td><span class="chip done">built · live (macOS) · unit (Windows)</span></td></tr>
-        <tr><td>Windows: hold key, paste, elevated-target detection</td><td>§12</td><td><span class="chip you">pending · needs the PC</span></td></tr>
+        <tr><td>Windows: hold key and paste</td><td>§12</td><td><span class="chip done">built · live (31 Oct)</span></td></tr>
+        <tr><td>Windows: elevated-window warning</td><td>§12</td><td><span class="chip next">to build</span></td></tr>
+        <tr><td>GPU memory strip reads the card (VRAM) on a PC; GPU / CPU switch</td><td>§9</td><td><span class="chip done">built · live (31 Oct)</span></td></tr>
+        <tr><td>Keys named per keyboard, Mac / Windows switch</td><td>§4.1</td><td><span class="chip done">built · live (31 Oct)</span></td></tr>
         <tr><td>Vulkan timing on an AMD GPU</td><td>§12, §13</td><td><span class="chip you">pending · needs the PC</span></td></tr>
         <tr><td>macOS dmg from CI</td><td>§13</td><td><span class="chip next">built · verified on the next tag</span></td></tr>
         <tr><td>Notarised dmg, signed Windows build, auto-update</td><td>§13, C2</td><td><span class="chip you">pending · needs an account</span></td></tr>
