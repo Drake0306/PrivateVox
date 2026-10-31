@@ -9,6 +9,37 @@
 #        pwsh scripts/win-cargo.ps1 tauri dev
 $ErrorActionPreference = 'Stop'
 
+# Put this shell, cargo and the app it starts into one Windows job that dies with this shell. The Tauri CLI uses this
+# script as its cargo runner and stops a dev session by killing the runner process only; without the job, cargo and
+# PrivateVox would outlive it (and the next build would fail with "failed to remove privatevox.exe: Access is denied").
+try {
+    Add-Type -Name Job -Namespace PvxWin -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+public static extern System.IntPtr CreateJobObjectW(System.IntPtr attrs, string name);
+[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool SetInformationJobObject(System.IntPtr job, int infoClass, System.IntPtr info, uint size);
+[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool AssignProcessToJobObject(System.IntPtr job, System.IntPtr process);
+[System.Runtime.InteropServices.DllImport("kernel32.dll")]
+public static extern System.IntPtr GetCurrentProcess();
+'@
+    $job = [PvxWin.Job]::CreateJobObjectW([IntPtr]::Zero, $null)
+    if ($job -ne [IntPtr]::Zero) {
+        # JOBOBJECT_EXTENDED_LIMIT_INFORMATION (144 bytes on x64) with BasicLimitInformation.LimitFlags at offset 16
+        # = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE (0x2000); JobObjectExtendedLimitInformation = 9.
+        $size = 144
+        $buf = [System.Runtime.InteropServices.Marshal]::AllocHGlobal($size)
+        try {
+            for ($i = 0; $i -lt $size; $i++) { [System.Runtime.InteropServices.Marshal]::WriteByte($buf, $i, 0) }
+            [System.Runtime.InteropServices.Marshal]::WriteInt32($buf, 16, 0x2000)
+            if ([PvxWin.Job]::SetInformationJobObject($job, 9, $buf, $size)) {
+                [void][PvxWin.Job]::AssignProcessToJobObject($job, [PvxWin.Job]::GetCurrentProcess())
+                $script:PvxJobHandle = $job  # keep the handle alive for the life of this shell
+            }
+        } finally { [System.Runtime.InteropServices.Marshal]::FreeHGlobal($buf) }
+    }
+} catch { Write-Warning "win-cargo: could not set up the process job ($_); a stopped dev session may leave the app running" }
+
 if (-not $env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR = 'D:\t' }
 if (-not (Test-Path (Split-Path $env:CARGO_TARGET_DIR -Qualifier))) { $env:CARGO_TARGET_DIR = Join-Path $env:LOCALAPPDATA 'pvx-target' }
 if (-not $env:CMAKE_GENERATOR) { $env:CMAKE_GENERATOR = 'Ninja' }
