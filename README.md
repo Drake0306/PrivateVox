@@ -81,6 +81,8 @@ macOS asks for three things. PrivateVox's **Setup** tab (click the pill, then Se
 
 After granting Accessibility or Input Monitoring, quit PrivateVox from the menu bar and start it again. See `docs/dev/permissions.md` to reset grants while developing.
 
+Host, remote and LLM endpoint tokens are kept in the macOS Keychain (Windows: Credential Manager); `settings.json` only holds `@keychain` in their place. A debug binary is not signed, so macOS asks for keychain access again after every rebuild; the bundled app (`cargo tauri build --debug`) is asked once. Grants and Keychain entries both key on the binary's identity, which is why developing from the bundled app is less noisy.
+
 ### Tests
 
 ```bash

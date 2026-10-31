@@ -33,7 +33,13 @@ base64 = "0.22"
 local-ip-address = "0.6"
 mdns-sd = "0.13"
 
+# Host, remote and endpoint tokens live in the OS keychain (design §8.5): Keychain on macOS, Credential Manager on
+# Windows. Linux keeps them in settings.json for now (the secret service needs libdbus and a running daemon).
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
 tauri-nspanel = "2.1.1"
 objc2 = "0.6.5"
 objc2-foundation = "0.3.2"

@@ -18,8 +18,8 @@ Machines: Mac M1 8 GB (tasks 1–3, 29 Oct) and the Windows PC with an AMD GPU a
 | 7 | Q8_0 turbo offered from 12 GB | done (31 Oct, PC) | `43b17ef` | unit tests; the PC (32 GB) will show it, the 8 GB Mac will not |
 | 8 | Crash report file, Show report in Setup | done (31 Oct, PC) | `ce1f6b3` | unit tests; live check with `PRIVATEVOX_DEBUG_SCRIPT=panic` pending |
 | 9 | First-run walkthrough in Setup | done (31 Oct, PC) | `aaa0e82` | unit tests; Setup tab not yet seen running |
-| 10 | Keep the microphone warm | done (31 Oct, PC) | see git log | core unit test; the `mic: reused warm stream` log line not yet seen live |
-| 11 | Tokens in the OS keychain | not started | | |
+| 10 | Keep the microphone warm | done (31 Oct, PC) | `e3ed33a` | core unit test; the `mic: reused warm stream` log line not yet seen live |
+| 11 | Tokens in the OS keychain | done (31 Oct, PC) | see git log | unit tests with the memory store; real Credential Manager / Keychain round trip not yet watched |
 | 12 | macOS in the release CI | not started | | |
 | 13 | Live check, docs, roadmap status table, 0.6.0-alpha.1 | not started | | |
 
@@ -74,6 +74,13 @@ Machines: Mac M1 8 GB (tasks 1–3, 29 Oct) and the Windows PC with an AMD GPU a
 - App: `MicCapture` keeps the cpal stream open after a stop with delivery paused (the callbacks forward into a swappable sink), reuses it on the next start (`mic: reused warm stream` in the log), and a timer thread closes it when the window passes (`mic: closed (20 s idle)`). A newer stop re-arms the window (generation counter); a changed input device forces a fresh open; the stream, the device and the timing state sit behind one lock so the timer and a start cannot race. The mic test (Task 5) goes through the same adapter and benefits too.
 - Panel: "Keep the microphone open after a dictation (s, 0–300)" in Keys and activation.
 - Tests: `warmmic::tests::stream_is_reused_within_the_window_and_closed_after`, `zero_window_closes_at_once`, `settings::tests::validate_bounds_mic_lazy_close`. Known trade-off (as in Handy): the OS microphone indicator stays on for the window after a dictation.
+
+### Task 11 — Tokens in the OS keychain (31 Oct, Windows PC)
+
+- `src-tauri/src/secrets.rs`: `SecretStore` trait with `KeyringStore` (keyring 3: macOS Keychain, Windows Credential Manager; service `com.drake0306.privatevox`, keys `host`, `remote`, `endpoint:<id>`), `MemoryStore` (tests) and `NoStore` (Linux, until the secret service is wired; tokens stay in the file there). `stash` moves the tokens out and leaves `@keychain`; a store that refuses leaves the token in the file with a warning rather than losing it; a cleared token deletes its entry; `unstash` fills them back, a placeholder without an entry becomes "no token" with a warning.
+- Every settings write in the app goes through `secrets::save` (apply_settings, the post-switch save, the pill-position save) and the startup load through `secrets::load`, so in memory the settings are always whole and only the file is redacted. `get_settings` to the panel is unchanged (the panel still shows the real token in its field).
+- README: the macOS note about unsigned debug builds and keychain prompts.
+- Tests: `secrets::tests::tokens_leave_settings_json_and_come_back`, `a_store_that_refuses_keeps_the_token_in_the_file`, `stash_is_idempotent_on_already_stashed_settings`. Known gap: an endpoint removed from the list leaves its entry in the keychain (harmless; cleaned up when the same id is re-added).
 
 ## Windows PC notes (31 Oct)
 

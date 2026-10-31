@@ -620,7 +620,8 @@ pub fn check_combo(combo: String) -> Result<String, String> {
 /// Shared by the command and its test: validate, persist, swap in.
 pub fn apply_settings(current: &std::sync::Mutex<Settings>, path: &std::path::Path, new: Settings) -> Result<(), String> {
     new.validate()?;
-    new.save(path).map_err(|e| e.to_string())?;
+    // Tokens go to the OS keychain; the file keeps placeholders (§8.5). In memory `new` stays whole.
+    crate::secrets::save(&new, path, &*crate::secrets::platform_store()).map_err(|e| e.to_string())?;
     let mut s = current.lock().map_err(|e| e.to_string())?;
     *s = new;
     Ok(())

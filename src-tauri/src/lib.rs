@@ -18,6 +18,7 @@ pub mod paste;
 pub mod pipeline;
 mod net_commands;
 mod remote;
+pub mod secrets;
 mod secure_input;
 pub mod setup;
 pub mod state;
@@ -162,7 +163,8 @@ pub fn run() {
             }
             *lock.lock().unwrap() = Some(lockfile);
 
-            let settings = Settings::load(&paths.settings()).unwrap_or_else(|e| {
+            // Tokens come back from the OS keychain (§8.5); the file only holds "@keychain" placeholders.
+            let settings = secrets::load(&paths.settings(), &*secrets::platform_store()).unwrap_or_else(|e| {
                 log::warn!("settings unreadable, using defaults: {e}");
                 Settings::default()
             });
@@ -223,7 +225,7 @@ pub fn run() {
                 idle: idle.clone(),
                 on_model_switched: Box::new(move |id, info| {
                     if let Ok(s) = switched_settings.lock() {
-                        if let Err(e) = s.save(&switched_paths.settings()) {
+                        if let Err(e) = secrets::save(&s, &switched_paths.settings(), &*secrets::platform_store()) {
                             log::warn!("save settings after switch: {e}");
                         }
                     }
@@ -452,7 +454,7 @@ pub fn run() {
                         _ => None,
                     };
                     if let Some(snapshot) = changed {
-                        if let Err(e) = snapshot.save(&settings_path) {
+                        if let Err(e) = secrets::save(&snapshot, &settings_path, &*secrets::platform_store()) {
                             log::warn!("save pill position: {e}");
                         }
                     }
